@@ -87,3 +87,4 @@ export function CustomAlert({ type, title, message, onClose, className = '' }: A
     </div>
   )
 }
+

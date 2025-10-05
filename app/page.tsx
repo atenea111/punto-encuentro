@@ -11,6 +11,10 @@ import { CustomAlert } from "@/components/CustomAlert"
 import { useAuth } from "@/hooks/useAuth"
 import { useServices } from "@/hooks/useServices"
 import { useBookings } from "@/hooks/useBookings"
+import { useRoles } from "@/hooks/useRoles"
+import { useCategories } from "@/hooks/useCategories"
+import { useUsers } from "@/hooks/useUsers"
+import { useAnalytics } from "@/hooks/useAnalytics"
 import {
   Search,
   Star,
@@ -32,13 +36,14 @@ import {
 } from "lucide-react"
 
 export default function HomePage() {
-  const { user, signIn, signUp, logout } = useAuth()
+  const { user, signIn, signUp, logout, loading: authLoading } = useAuth()
   const { services, loading: servicesLoading, searchServices, createService } = useServices()
   const { createBooking, getBookingsByClient } = useBookings()
+  const { isAdmin, loading: rolesLoading } = useRoles()
   
   const [userType, setUserType] = useState<"client" | "provider" | null>(null)
   const [clientFlow, setClientFlow] = useState<
-    "onboarding" | "login" | "register" | "home" | "profile" | "service-detail" | "booking" | "payment"
+    "onboarding" | "login" | "register" | "home" | "profile" | "agenda" | "service-detail" | "booking" | "payment"
   >("onboarding")
   const [providerFlow, setProviderFlow] = useState<
     | "onboarding"
@@ -58,6 +63,101 @@ export default function HomePage() {
   const [searchTerm, setSearchTerm] = useState("")
   const [authError, setAuthError] = useState("")
   const [authSuccess, setAuthSuccess] = useState("")
+
+  // Persistir tipo de usuario en localStorage
+  useEffect(() => {
+    if (userType) {
+      localStorage.setItem('userType', userType)
+    }
+  }, [userType])
+
+  // Cargar tipo de usuario desde localStorage al inicializar
+  useEffect(() => {
+    const savedUserType = localStorage.getItem('userType') as "client" | "provider" | null
+    if (savedUserType && user) {
+      setUserType(savedUserType)
+    }
+  }, [user])
+
+  // Limpiar localStorage al cerrar sesión
+  useEffect(() => {
+    if (!user) {
+      localStorage.removeItem('userType')
+      setUserType(null)
+    }
+  }, [user])
+
+  // Mostrar loading mientras se verifica la autenticación
+  if (authLoading || rolesLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Cargando...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Debug: Log del estado de roles
+  console.log('User:', user?.email)
+  console.log('isAdmin:', isAdmin)
+  console.log('rolesLoading:', rolesLoading)
+
+  // Si el usuario es admin, mostrar panel de administración
+  if (user && isAdmin) {
+    console.log('Mostrando panel de admin para:', user.email)
+    return <AdminDashboard user={user} logout={logout} />
+  }
+
+  // Si el usuario está logueado pero no se ha seleccionado tipo de usuario, mostrar selección
+  if (user && !userType) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="max-w-md w-full bg-white rounded-lg shadow-md p-6">
+          <div className="text-center mb-6">
+            <img 
+              src="/logonuevo.jpeg" 
+              alt="Punto Encuentro" 
+              className="w-20 h-20 mx-auto mb-4 rounded-lg object-cover"
+            />
+            <h1 className="text-2xl font-bold text-gray-900 mb-2">¡Bienvenido de vuelta!</h1>
+            <p className="text-gray-600">Selecciona cómo quieres usar la aplicación</p>
+          </div>
+          
+          <div className="space-y-4">
+            <Button 
+              onClick={() => setUserType("client")} 
+              className="w-full h-16 text-lg"
+              variant="outline"
+            >
+              <User className="w-6 h-6 mr-2" />
+              Soy Cliente
+            </Button>
+            
+            <Button 
+              onClick={() => setUserType("provider")} 
+              className="w-full h-16 text-lg"
+              variant="outline"
+            >
+              <Building2 className="w-6 h-6 mr-2" />
+              Soy Proveedor
+            </Button>
+          </div>
+          
+          <div className="mt-6 text-center">
+            <Button 
+              variant="ghost" 
+              onClick={logout}
+              className="text-sm text-gray-500"
+            >
+              Cerrar sesión
+            </Button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (userType === "client") {
     return (
@@ -108,7 +208,11 @@ export default function HomePage() {
       <div className="w-full max-w-4xl space-y-8">
         {/* Logo y descripción */}
         <div className="text-center">
-          <LogoText size="lg" className="mb-6" />
+          <img 
+            src="/logonuevo.jpeg" 
+            alt="Punto Encuentro" 
+            className="w-32 h-32 mx-auto mb-6 rounded-lg object-cover"
+          />
           <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
             Un espacio para encontrar, ofrecer y ayudarnos entre todos.
           </p>
@@ -200,7 +304,7 @@ function ProviderFlow({
   }
 
   if (flow === "dashboard") {
-    return <ProviderDashboard setFlow={setFlow} user={user} />
+    return <ProviderDashboard setFlow={setFlow} user={user} services={services} />
   }
 
   if (flow === "profile") {
@@ -288,12 +392,17 @@ function ClientFlow({
         searchTerm={searchTerm}
         setSearchTerm={setSearchTerm}
         searchServices={searchServices}
+        user={user}
       />
     )
   }
 
   if (flow === "profile") {
     return <ClientProfile setFlow={setFlow} user={user} />
+  }
+
+  if (flow === "agenda") {
+    return <ClientAgenda setFlow={setFlow} user={user} />
   }
 
   if (flow === "service-detail") {
@@ -392,6 +501,11 @@ function ClientLogin({ setFlow, signIn, setAuthError, authError, setAuthSuccess,
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
       <div className="w-full max-w-sm space-y-8">
         <div className="text-center">
+          <img 
+            src="/logonuevo.jpeg" 
+            alt="Punto Encuentro" 
+            className="w-24 h-24 mx-auto mb-4 rounded-lg object-cover"
+          />
           <h1 className="text-3xl font-bold text-primary mb-2">Punto Encuentro</h1>
           <p className="text-muted-foreground">Inicia sesión en tu cuenta</p>
         </div>
@@ -499,6 +613,11 @@ function ClientRegister({ setFlow, signUp, setAuthError, authError, setAuthSucce
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
       <div className="w-full max-w-sm space-y-8">
         <div className="text-center">
+          <img 
+            src="/logonuevo.jpeg" 
+            alt="Punto Encuentro" 
+            className="w-24 h-24 mx-auto mb-4 rounded-lg object-cover"
+          />
           <h1 className="text-3xl font-bold text-primary mb-2">Punto Encuentro</h1>
           <p className="text-muted-foreground">Crea tu cuenta</p>
         </div>
@@ -586,7 +705,8 @@ function ClientHome({
   services,
   searchTerm,
   setSearchTerm,
-  searchServices
+  searchServices,
+  user
 }: { 
   setFlow: (flow: string) => void
   setSelectedService: (service: any) => void
@@ -594,6 +714,7 @@ function ClientHome({
   searchTerm: string
   setSearchTerm: (term: string) => void
   searchServices: (term: string) => any[]
+  user: any
 }) {
   const [activeTab, setActiveTab] = useState("inicio")
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
@@ -671,82 +792,7 @@ function ClientHome({
   }
 
   if (activeTab === "agenda") {
-    const calendarDays = generateCalendar()
-    const today = new Date()
-    const monthNames = [
-      "Enero",
-      "Febrero",
-      "Marzo",
-      "Abril",
-      "Mayo",
-      "Junio",
-      "Julio",
-      "Agosto",
-      "Septiembre",
-      "Octubre",
-      "Noviembre",
-      "Diciembre",
-    ]
-
-    return (
-      <div className="min-h-screen bg-gray-50">
-        <div className="bg-white shadow-sm p-4">
-          <h1 className="text-xl font-bold text-primary text-center">Agenda</h1>
-        </div>
-        <div className="p-4">
-          <div className="bg-white rounded-lg p-4 mb-4">
-            <h2 className="text-lg font-semibold mb-4 text-center">
-              {monthNames[today.getMonth()]} {today.getFullYear()}
-            </h2>
-            <div className="grid grid-cols-7 gap-1 mb-2">
-              {["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"].map((day) => (
-                <div key={day} className="text-center text-sm font-medium text-gray-500 py-2">
-                  {day}
-                </div>
-              ))}
-            </div>
-            <div className="grid grid-cols-7 gap-1">
-              {calendarDays.map((date, index) => {
-                const isCurrentMonth = date.getMonth() === today.getMonth()
-                const isToday = date.toDateString() === today.toDateString()
-                return (
-                  <div
-                    key={index}
-                    className={`
-                      text-center py-2 text-sm cursor-pointer rounded
-                      ${isCurrentMonth ? "text-gray-900" : "text-gray-300"}
-                      ${isToday ? "bg-primary text-white" : "hover:bg-gray-100"}
-                    `}
-                  >
-                    {date.getDate()}
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-          <div className="text-center text-gray-500 py-8">
-            <div className="text-4xl mb-2">📅</div>
-            <p>No hay citas programadas</p>
-          </div>
-        </div>
-        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200">
-          <div className="flex justify-around py-2">
-            <button onClick={() => setActiveTab("inicio")} className="flex flex-col items-center py-2 px-4">
-              <div className="text-gray-400 mb-1">🏠</div>
-              <span className="text-xs text-gray-400">Inicio</span>
-            </button>
-            <button onClick={() => setActiveTab("agenda")} className="flex flex-col items-center py-2 px-4">
-              <div className="text-primary mb-1">📅</div>
-              <span className="text-xs text-primary">Agenda</span>
-            </button>
-            <button onClick={() => setActiveTab("perfil")} className="flex flex-col items-center py-2 px-4">
-              <div className="text-gray-400 mb-1">👤</div>
-              <span className="text-xs text-gray-400">Perfil</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    )
+    return <ClientAgenda setFlow={setFlow} user={user} />
   }
 
   if (activeTab === "perfil") {
@@ -1606,10 +1652,16 @@ function ClientProfile({ setFlow, user }: { setFlow: (flow: string) => void; use
           <CardContent className="p-6 space-y-4">
             <div className="text-center">
               <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-3">
-                <span className="text-2xl font-bold text-primary">JP</span>
+                <span className="text-2xl font-bold text-primary">
+                  {(user?.displayName?.charAt(0) || user?.email?.charAt(0) || 'U').toUpperCase()}
+                </span>
               </div>
-              <h2 className="text-xl font-semibold">Juan Pérez</h2>
-              <p className="text-muted-foreground">juanperez@test.com</p>
+              <h2 className="text-xl font-semibold">
+                {user?.displayName || 'Usuario'}
+              </h2>
+              <p className="text-muted-foreground">
+                {user?.email || 'Sin email'}
+              </p>
             </div>
 
             <Button variant="outline" className="w-full bg-transparent">
@@ -1624,15 +1676,16 @@ function ClientProfile({ setFlow, user }: { setFlow: (flow: string) => void; use
             <div className="space-y-2">
               {user ? (
                 (() => {
-                  const userBookings = getBookingsByClient(user.uid)
+                  const userBookings = getBookingsByClient(user.uid) || []
+                  console.log('User bookings:', userBookings) // Debug log
                   return userBookings.length > 0 ? (
                     userBookings.slice(0, 3).map((booking) => (
                       <div key={booking.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
                         <Clock className="h-4 w-4 text-muted-foreground" />
                         <div className="flex-1">
-                          <p className="font-medium">{booking.serviceName}</p>
+                          <p className="font-medium">{booking.serviceName || 'Servicio'}</p>
                           <p className="text-sm text-muted-foreground">
-                            {booking.date} - {booking.time}
+                            {booking.date || 'Fecha no disponible'} - {booking.time || 'Hora no disponible'}
                           </p>
                           <div className="flex items-center gap-2 mt-1">
                             <span className={`text-xs px-2 py-1 rounded ${
@@ -1644,10 +1697,11 @@ function ClientProfile({ setFlow, user }: { setFlow: (flow: string) => void; use
                               {booking.status === 'confirmed' ? 'Confirmada' :
                                booking.status === 'pending' ? 'Pendiente' :
                                booking.status === 'cancelled' ? 'Cancelada' :
-                               'Completada'}
+                               booking.status === 'completed' ? 'Completada' :
+                               'Desconocido'}
                             </span>
                             <span className="text-xs text-muted-foreground">
-                              ${booking.price}
+                              ${booking.price || 0}
                             </span>
                           </div>
                         </div>
@@ -1674,6 +1728,264 @@ function ClientProfile({ setFlow, user }: { setFlow: (flow: string) => void; use
         <Button variant="destructive" className="w-full" onClick={() => window.location.reload()}>
           Cerrar sesión
         </Button>
+      </div>
+    </div>
+  )
+}
+
+function ClientAgenda({ setFlow, user }: { setFlow: (flow: string) => void; user: any }) {
+  const { getBookingsByClient } = useBookings()
+  const [selectedDate, setSelectedDate] = useState<string>("")
+  const [currentMonth, setCurrentMonth] = useState(new Date())
+
+  // Obtener reservas del cliente
+  const clientBookings = getBookingsByClient(user?.uid) || []
+
+  // Generar días del mes actual
+  const generateCalendarDays = () => {
+    const year = currentMonth.getFullYear()
+    const month = currentMonth.getMonth()
+    const firstDay = new Date(year, month, 1)
+    const lastDay = new Date(year, month + 1, 0)
+    const daysInMonth = lastDay.getDate()
+    const startingDayOfWeek = firstDay.getDay()
+
+    const days = []
+    
+    // Días del mes anterior (para completar la semana)
+    for (let i = startingDayOfWeek - 1; i >= 0; i--) {
+      const prevMonth = new Date(year, month, -i)
+      days.push({
+        date: prevMonth.getDate(),
+        fullDate: prevMonth.toISOString().split('T')[0],
+        isCurrentMonth: false,
+        bookings: []
+      })
+    }
+
+    // Días del mes actual
+    for (let day = 1; day <= daysInMonth; day++) {
+      const fullDate = new Date(year, month, day).toISOString().split('T')[0]
+      const dayBookings = clientBookings.filter(booking => 
+        booking.date === fullDate
+      )
+      
+      days.push({
+        date: day,
+        fullDate,
+        isCurrentMonth: true,
+        bookings: dayBookings
+      })
+    }
+
+    // Completar con días del siguiente mes
+    const remainingDays = 42 - days.length
+    for (let day = 1; day <= remainingDays; day++) {
+      const nextMonth = new Date(year, month + 1, day)
+      days.push({
+        date: day,
+        fullDate: nextMonth.toISOString().split('T')[0],
+        isCurrentMonth: false,
+        bookings: []
+      })
+    }
+
+    return days
+  }
+
+  const calendarDays = generateCalendarDays()
+  const selectedDateBookings = selectedDate ? 
+    clientBookings.filter(booking => booking.date === selectedDate) : []
+
+  const navigateMonth = (direction: 'prev' | 'next') => {
+    setCurrentMonth(prev => {
+      const newMonth = new Date(prev)
+      if (direction === 'prev') {
+        newMonth.setMonth(prev.getMonth() - 1)
+      } else {
+        newMonth.setMonth(prev.getMonth() + 1)
+      }
+      return newMonth
+    })
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <div className="bg-white shadow-sm p-4">
+        <div className="flex items-center gap-3 mb-4">
+          <Button variant="ghost" size="sm" onClick={() => setFlow("home")}>
+            ← Volver
+          </Button>
+          <h1 className="text-xl font-bold">Mis Reservas</h1>
+        </div>
+      </div>
+
+      <div className="p-4 space-y-6">
+        {/* Calendario */}
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold">Calendario</h3>
+              <div className="flex items-center gap-2">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => navigateMonth('prev')}
+                >
+                  ←
+                </Button>
+                <span className="font-medium min-w-[120px] text-center">
+                  {currentMonth.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}
+                </span>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => navigateMonth('next')}
+                >
+                  →
+                </Button>
+              </div>
+            </div>
+
+            {/* Días de la semana */}
+            <div className="grid grid-cols-7 gap-1 mb-2">
+              {['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'].map(day => (
+                <div key={day} className="text-center text-sm font-medium text-gray-500 p-2">
+                  {day}
+                </div>
+              ))}
+            </div>
+
+            {/* Días del calendario */}
+            <div className="grid grid-cols-7 gap-1">
+              {calendarDays.map((day, index) => (
+                <button
+                  key={index}
+                  onClick={() => {
+                    if (day.isCurrentMonth) {
+                      setSelectedDate(day.fullDate)
+                    }
+                  }}
+                  className={`
+                    p-2 text-sm rounded-lg transition-colors
+                    ${day.isCurrentMonth 
+                      ? 'text-gray-900 hover:bg-gray-100' 
+                      : 'text-gray-400'
+                    }
+                    ${selectedDate === day.fullDate 
+                      ? 'bg-primary text-white hover:bg-primary/90' 
+                      : ''
+                    }
+                    ${day.bookings.length > 0 && day.isCurrentMonth
+                      ? 'bg-blue-50 text-blue-800 hover:bg-blue-100'
+                      : ''
+                    }
+                  `}
+                >
+                  <div className="flex flex-col items-center">
+                    <span>{day.date}</span>
+                    {day.bookings.length > 0 && day.isCurrentMonth && (
+                      <div className="w-1 h-1 bg-blue-600 rounded-full mt-1"></div>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Reservas del día seleccionado */}
+        {selectedDate && (
+          <Card>
+            <CardContent className="p-4">
+              <h3 className="font-semibold mb-3">
+                Reservas del {new Date(selectedDate).toLocaleDateString('es-ES', { 
+                  weekday: 'long', 
+                  year: 'numeric', 
+                  month: 'long', 
+                  day: 'numeric' 
+                })}
+              </h3>
+              <div className="space-y-3">
+                {selectedDateBookings.length > 0 ? (
+                  selectedDateBookings.map((booking) => (
+                    <div key={booking.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                      <Clock className="h-4 w-4 text-muted-foreground" />
+                      <div className="flex-1">
+                        <p className="font-medium">{booking.serviceName}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {booking.time} - {booking.providerName}
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          ${booking.price}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <span className={`text-xs px-2 py-1 rounded-full ${
+                          booking.status === 'confirmed' 
+                            ? 'bg-green-100 text-green-800'
+                            : booking.status === 'pending'
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : 'bg-red-100 text-red-800'
+                        }`}>
+                          {booking.status === 'confirmed' ? 'Confirmada' :
+                           booking.status === 'pending' ? 'Pendiente' :
+                           booking.status === 'cancelled' ? 'Cancelada' : 'Completada'}
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                    <p>No tienes reservas para este día</p>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Todas las reservas */}
+        <Card>
+          <CardContent className="p-4">
+            <h3 className="font-semibold mb-3">Todas mis reservas</h3>
+            <div className="space-y-3">
+              {clientBookings.length > 0 ? (
+                clientBookings.slice(0, 10).map((booking) => (
+                  <div key={booking.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                    <Clock className="h-4 w-4 text-muted-foreground" />
+                    <div className="flex-1">
+                      <p className="font-medium">{booking.serviceName}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {new Date(booking.date).toLocaleDateString('es-ES')} - {booking.time}
+                      </p>
+                      <p className="text-sm text-muted-foreground">{booking.providerName}</p>
+                    </div>
+                    <div className="text-right">
+                      <span className={`text-xs px-2 py-1 rounded-full ${
+                        booking.status === 'confirmed' 
+                          ? 'bg-green-100 text-green-800'
+                          : booking.status === 'pending'
+                          ? 'bg-yellow-100 text-yellow-800'
+                          : 'bg-red-100 text-red-800'
+                      }`}>
+                        {booking.status === 'confirmed' ? 'Confirmada' :
+                         booking.status === 'pending' ? 'Pendiente' :
+                         booking.status === 'cancelled' ? 'Cancelada' : 'Completada'}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p>No tienes reservas programadas</p>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   )
@@ -1745,6 +2057,11 @@ function ProviderLogin({
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
       <div className="w-full max-w-sm space-y-8">
         <div className="text-center">
+          <img 
+            src="/logonuevo.jpeg" 
+            alt="Punto Encuentro" 
+            className="w-24 h-24 mx-auto mb-4 rounded-lg object-cover"
+          />
           <h1 className="text-3xl font-bold text-primary mb-2">Punto Encuentro</h1>
           <p className="text-muted-foreground">Inicia sesión como proveedor</p>
         </div>
@@ -1860,6 +2177,11 @@ function ProviderRegister({
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
       <div className="w-full max-w-sm space-y-8">
         <div className="text-center">
+          <img 
+            src="/logonuevo.jpeg" 
+            alt="Punto Encuentro" 
+            className="w-24 h-24 mx-auto mb-4 rounded-lg object-cover"
+          />
           <h1 className="text-3xl font-bold text-primary mb-2">Punto Encuentro</h1>
           <p className="text-muted-foreground">Registra tu negocio</p>
         </div>
@@ -1956,10 +2278,10 @@ function ProviderDashboard({ setFlow, user, services }: { setFlow: (flow: string
   const { getBookingsByProvider } = useBookings()
   
   // Filtrar servicios del proveedor actual
-  const providerServices = services.filter(service => service.providerId === user?.uid)
+  const providerServices = (services || []).filter(service => service.providerId === user?.uid)
   
   // Obtener reservas del proveedor
-  const providerBookings = getBookingsByProvider(user?.uid)
+  const providerBookings = getBookingsByProvider(user?.uid) || []
   
   // Calcular estadísticas
   const totalClients = new Set(providerBookings.map(booking => booking.clientId)).size
@@ -2456,35 +2778,81 @@ function ProviderProfile({ setFlow, user }: { setFlow: (flow: string) => void; u
   )
 }
 
-function ProviderAgenda({ setFlow }: { setFlow: (flow: string) => void }) {
-  const appointments = [
-    {
-      id: 1,
-      client: "Juan Pérez",
-      date: "25/08",
-      time: "15:00",
-      service: "Masaje relajante",
-      status: "confirmado",
-    },
-    {
-      id: 2,
-      client: "María López",
-      date: "26/08",
-      time: "11:00",
-      service: "Masaje descontracturante",
-      status: "pendiente",
-    },
-    {
-      id: 3,
-      client: "Carlos Ruiz",
-      date: "27/08",
-      time: "16:30",
-      service: "Masaje relajante",
-      status: "confirmado",
-    },
-  ]
+function ProviderAgenda({ setFlow, user }: { setFlow: (flow: string) => void; user: any }) {
+  const { getBookingsByProvider } = useBookings()
+  const [selectedDate, setSelectedDate] = useState<string>("")
+  const [currentMonth, setCurrentMonth] = useState(new Date())
 
-  const availableSlots = ["09:00", "10:30", "14:00", "17:00"]
+  // Obtener reservas del proveedor
+  const providerBookings = getBookingsByProvider(user?.uid) || []
+
+  // Generar días del mes actual
+  const generateCalendarDays = () => {
+    const year = currentMonth.getFullYear()
+    const month = currentMonth.getMonth()
+    const firstDay = new Date(year, month, 1)
+    const lastDay = new Date(year, month + 1, 0)
+    const daysInMonth = lastDay.getDate()
+    const startingDayOfWeek = firstDay.getDay()
+
+    const days = []
+    
+    // Días del mes anterior (para completar la semana)
+    for (let i = startingDayOfWeek - 1; i >= 0; i--) {
+      const prevMonth = new Date(year, month, -i)
+      days.push({
+        date: prevMonth.getDate(),
+        fullDate: prevMonth.toISOString().split('T')[0],
+        isCurrentMonth: false,
+        bookings: []
+      })
+    }
+
+    // Días del mes actual
+    for (let day = 1; day <= daysInMonth; day++) {
+      const fullDate = new Date(year, month, day).toISOString().split('T')[0]
+      const dayBookings = providerBookings.filter(booking => 
+        booking.date === fullDate
+      )
+      
+      days.push({
+        date: day,
+        fullDate,
+        isCurrentMonth: true,
+        bookings: dayBookings
+      })
+    }
+
+    // Completar con días del siguiente mes
+    const remainingDays = 42 - days.length
+    for (let day = 1; day <= remainingDays; day++) {
+      const nextMonth = new Date(year, month + 1, day)
+      days.push({
+        date: day,
+        fullDate: nextMonth.toISOString().split('T')[0],
+        isCurrentMonth: false,
+        bookings: []
+      })
+    }
+
+    return days
+  }
+
+  const calendarDays = generateCalendarDays()
+  const selectedDateBookings = selectedDate ? 
+    providerBookings.filter(booking => booking.date === selectedDate) : []
+
+  const navigateMonth = (direction: 'prev' | 'next') => {
+    setCurrentMonth(prev => {
+      const newMonth = new Date(prev)
+      if (direction === 'prev') {
+        newMonth.setMonth(prev.getMonth() - 1)
+      } else {
+        newMonth.setMonth(prev.getMonth() + 1)
+      }
+      return newMonth
+    })
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -2497,35 +2865,169 @@ function ProviderAgenda({ setFlow }: { setFlow: (flow: string) => void }) {
         </div>
       </div>
 
-      <div className="p-4 space-y-4">
-        {/* Appointments */}
+      <div className="p-4 space-y-6">
+        {/* Calendario */}
         <Card>
           <CardContent className="p-4">
-            <h3 className="font-semibold mb-3">Turnos programados</h3>
-            <div className="space-y-3">
-              {appointments.map((appointment) => (
-                <div key={appointment.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                  <Clock className="h-4 w-4 text-muted-foreground" />
-                  <div className="flex-1">
-                    <p className="font-medium">{appointment.client}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {appointment.date} - {appointment.time}
-                    </p>
-                    <p className="text-sm text-muted-foreground">{appointment.service}</p>
-                  </div>
-                  <div className="text-right">
-                    <span
-                      className={`text-xs px-2 py-1 rounded-full ${
-                        appointment.status === "confirmado"
-                          ? "bg-green-100 text-green-800"
-                          : "bg-yellow-100 text-yellow-800"
-                      }`}
-                    >
-                      {appointment.status}
-                    </span>
-                  </div>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold">Calendario</h3>
+              <div className="flex items-center gap-2">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => navigateMonth('prev')}
+                >
+                  ←
+                </Button>
+                <span className="font-medium min-w-[120px] text-center">
+                  {currentMonth.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}
+                </span>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => navigateMonth('next')}
+                >
+                  →
+                </Button>
+              </div>
+            </div>
+
+            {/* Días de la semana */}
+            <div className="grid grid-cols-7 gap-1 mb-2">
+              {['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'].map(day => (
+                <div key={day} className="text-center text-sm font-medium text-gray-500 p-2">
+                  {day}
                 </div>
               ))}
+            </div>
+
+            {/* Días del calendario */}
+            <div className="grid grid-cols-7 gap-1">
+              {calendarDays.map((day, index) => (
+                <button
+                  key={index}
+                  onClick={() => {
+                    if (day.isCurrentMonth) {
+                      setSelectedDate(day.fullDate)
+                    }
+                  }}
+                  className={`
+                    p-2 text-sm rounded-lg transition-colors
+                    ${day.isCurrentMonth 
+                      ? 'text-gray-900 hover:bg-gray-100' 
+                      : 'text-gray-400'
+                    }
+                    ${selectedDate === day.fullDate 
+                      ? 'bg-primary text-white hover:bg-primary/90' 
+                      : ''
+                    }
+                    ${day.bookings.length > 0 && day.isCurrentMonth
+                      ? 'bg-green-50 text-green-800 hover:bg-green-100'
+                      : ''
+                    }
+                  `}
+                >
+                  <div className="flex flex-col items-center">
+                    <span>{day.date}</span>
+                    {day.bookings.length > 0 && day.isCurrentMonth && (
+                      <div className="w-1 h-1 bg-green-600 rounded-full mt-1"></div>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Citas del día seleccionado */}
+        {selectedDate && (
+          <Card>
+            <CardContent className="p-4">
+              <h3 className="font-semibold mb-3">
+                Citas del {new Date(selectedDate).toLocaleDateString('es-ES', { 
+                  weekday: 'long', 
+                  year: 'numeric', 
+                  month: 'long', 
+                  day: 'numeric' 
+                })}
+              </h3>
+              <div className="space-y-3">
+                {selectedDateBookings.length > 0 ? (
+                  selectedDateBookings.map((booking) => (
+                    <div key={booking.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                      <Clock className="h-4 w-4 text-muted-foreground" />
+                      <div className="flex-1">
+                        <p className="font-medium">{booking.clientName}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {booking.time} - {booking.serviceName}
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          ${booking.price}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <span className={`text-xs px-2 py-1 rounded-full ${
+                          booking.status === 'confirmed' 
+                            ? 'bg-green-100 text-green-800'
+                            : booking.status === 'pending'
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : 'bg-red-100 text-red-800'
+                        }`}>
+                          {booking.status === 'confirmed' ? 'Confirmada' :
+                           booking.status === 'pending' ? 'Pendiente' :
+                           booking.status === 'cancelled' ? 'Cancelada' : 'Completada'}
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                    <p>No hay citas programadas para este día</p>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Todas las citas */}
+        <Card>
+          <CardContent className="p-4">
+            <h3 className="font-semibold mb-3">Todas las citas</h3>
+            <div className="space-y-3">
+              {providerBookings.length > 0 ? (
+                providerBookings.slice(0, 10).map((booking) => (
+                  <div key={booking.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                    <Clock className="h-4 w-4 text-muted-foreground" />
+                    <div className="flex-1">
+                      <p className="font-medium">{booking.clientName}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {new Date(booking.date).toLocaleDateString('es-ES')} - {booking.time}
+                      </p>
+                      <p className="text-sm text-muted-foreground">{booking.serviceName}</p>
+                    </div>
+                    <div className="text-right">
+                      <span className={`text-xs px-2 py-1 rounded-full ${
+                        booking.status === 'confirmed' 
+                          ? 'bg-green-100 text-green-800'
+                          : booking.status === 'pending'
+                          ? 'bg-yellow-100 text-yellow-800'
+                          : 'bg-red-100 text-red-800'
+                      }`}>
+                        {booking.status === 'confirmed' ? 'Confirmada' :
+                         booking.status === 'pending' ? 'Pendiente' :
+                         booking.status === 'cancelled' ? 'Cancelada' : 'Completada'}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p>No tienes citas programadas</p>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -3060,6 +3562,1094 @@ function ProviderSubscription({ setFlow }: { setFlow: (flow: string) => void }) 
           <p>Puedes cancelar tu suscripción en cualquier momento.</p>
         </div>
       </div>
+    </div>
+  )
+}
+
+function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ success: boolean }> }) {
+  const { categories, loading: categoriesLoading, createCategory, updateCategory, deleteCategory, toggleCategoryStatus } = useCategories()
+  const { services } = useServices()
+  const { bookings } = useBookings()
+  const { users, loading: usersLoading, updateUserRole, toggleUserStatus, deleteUser, getUsersByRole } = useUsers()
+  const { analytics, loading: analyticsLoading } = useAnalytics()
+  
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'categories' | 'users' | 'services' | 'analytics' | 'settings'>('dashboard')
+  const [showCreateCategory, setShowCreateCategory] = useState(false)
+  const [newCategory, setNewCategory] = useState({
+    name: '',
+    icon: '',
+    description: '',
+    active: true
+  })
+  const [editingCategory, setEditingCategory] = useState<any>(null)
+  const [editingUser, setEditingUser] = useState<any>(null)
+  const [userFilter, setUserFilter] = useState<'all' | 'client' | 'provider' | 'admin'>('all')
+  const [serviceFilter, setServiceFilter] = useState<'all' | 'active' | 'inactive'>('all')
+  
+  // Estados para configuración
+  const [settings, setSettings] = useState({
+    emailNotifications: true,
+    pushNotifications: true,
+    appointmentReminders: true,
+    autoAcceptBookings: false,
+    emailVerificationRequired: true,
+    openRegistration: true,
+    sessionTimeout: 60,
+    commissionRate: 10,
+    minPrice: 50,
+    maxPrice: 10000,
+    appName: 'Punto Encuentro',
+    appDescription: 'Plataforma de servicios profesionales',
+    appEmail: 'contacto@puntoencuentro.com'
+  })
+
+  const handleCreateCategory = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!newCategory.name || !newCategory.icon) return
+
+    const result = await createCategory(newCategory)
+    if (result.success) {
+      setNewCategory({ name: '', icon: '', description: '', active: true })
+      setShowCreateCategory(false)
+    }
+  }
+
+  const handleEditCategory = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingCategory) return
+
+    const result = await updateCategory(editingCategory.id, editingCategory)
+    if (result.success) {
+      setEditingCategory(null)
+    }
+  }
+
+  const handleDeleteCategory = async (id: string) => {
+    if (confirm('¿Estás seguro de que quieres eliminar esta categoría?')) {
+      await deleteCategory(id)
+    }
+  }
+
+  const handleUpdateUserRole = async (userId: string, newRole: string) => {
+    const result = await updateUserRole(userId, newRole as any)
+    if (result.success) {
+      setEditingUser(null)
+    }
+  }
+
+  const handleToggleUserStatus = async (userId: string) => {
+    await toggleUserStatus(userId)
+  }
+
+  const handleDeleteUser = async (userId: string) => {
+    if (confirm('¿Estás seguro de que quieres eliminar este usuario?')) {
+      await deleteUser(userId)
+    }
+  }
+
+  const filteredUsers = userFilter === 'all' 
+    ? users 
+    : getUsersByRole(userFilter as any)
+
+  const filteredServices = serviceFilter === 'all' 
+    ? services 
+    : services.filter(service => 
+        serviceFilter === 'active' ? (service as any).active !== false : (service as any).active === false
+      )
+
+  // Funciones para configuración
+  const handleSettingChange = (key: string, value: any) => {
+    setSettings(prev => ({ ...prev, [key]: value }))
+  }
+
+  const saveSettings = async (section: string) => {
+    try {
+      // Aquí se guardaría en Firebase o base de datos
+      console.log(`Guardando configuración de ${section}:`, settings)
+      alert(`✅ Configuración de ${section} guardada exitosamente`)
+    } catch (error) {
+      console.error('Error guardando configuración:', error)
+      alert('❌ Error al guardar la configuración')
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <div className="bg-white shadow-sm p-4">
+        <div className="flex items-center justify-between">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-lg md:text-xl font-bold text-primary truncate">Panel de Administración</h1>
+            <p className="text-xs md:text-sm text-muted-foreground truncate">Bienvenido, {user?.displayName || user?.email}</p>
+          </div>
+          <Button 
+            variant="outline" 
+            size="sm"
+            onClick={async () => {
+              const result = await logout()
+              if (result.success) {
+                localStorage.removeItem('userType')
+                window.location.reload()
+              }
+            }}
+            className="ml-2 flex-shrink-0"
+          >
+            <span className="hidden sm:inline">Cerrar sesión</span>
+            <span className="sm:hidden">Salir</span>
+          </Button>
+        </div>
+      </div>
+
+      {/* Navigation */}
+      <div className="bg-white border-b border-gray-200">
+        <div className="flex w-full">
+          {[
+            { id: 'dashboard', label: 'Dashboard', icon: '📊' },
+            { id: 'categories', label: 'Categorías', icon: '📁' },
+            { id: 'users', label: 'Usuarios', icon: '👥' },
+            { id: 'services', label: 'Servicios', icon: '🛠️' },
+            { id: 'analytics', label: 'Analytics', icon: '📈' },
+            { id: 'settings', label: 'Configuración', icon: '⚙️' }
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
+              className={`flex-1 py-3 px-1 md:py-4 md:px-2 border-b-2 font-medium text-xs md:text-sm ${
+                activeTab === tab.id
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <div className="flex flex-col items-center space-y-1">
+                <span className="text-lg md:text-xl">{tab.icon}</span>
+                <span className="hidden sm:block text-xs md:text-sm">{tab.label}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="p-3 md:p-6">
+        {activeTab === 'dashboard' && (
+          <div className="space-y-4 md:space-y-6">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
+              <Card>
+                <CardContent className="p-3 md:p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs md:text-sm font-medium text-gray-600">Total Usuarios</p>
+                      <p className="text-lg md:text-2xl font-bold text-primary">{analytics.totalUsers}</p>
+                    </div>
+                    <div className="text-lg md:text-2xl">👥</div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="p-3 md:p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs md:text-sm font-medium text-gray-600">Categorías</p>
+                      <p className="text-lg md:text-2xl font-bold text-primary">{categories.length}</p>
+                    </div>
+                    <div className="text-lg md:text-2xl">📁</div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="p-3 md:p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs md:text-sm font-medium text-gray-600">Servicios</p>
+                      <p className="text-lg md:text-2xl font-bold text-primary">{analytics.totalServices}</p>
+                    </div>
+                    <div className="text-lg md:text-2xl">🛠️</div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="p-3 md:p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs md:text-sm font-medium text-gray-600">Reservas</p>
+                      <p className="text-lg md:text-2xl font-bold text-primary">{analytics.totalBookings}</p>
+                    </div>
+                    <div className="text-lg md:text-2xl">📅</div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 md:gap-4">
+              <Card>
+                <CardContent className="p-3 md:p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs md:text-sm font-medium text-gray-600">Clientes</p>
+                      <p className="text-lg md:text-2xl font-bold text-green-600">{analytics.totalClients}</p>
+                    </div>
+                    <div className="text-lg md:text-2xl">👤</div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="p-3 md:p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs md:text-sm font-medium text-gray-600">Proveedores</p>
+                      <p className="text-lg md:text-2xl font-bold text-blue-600">{analytics.totalProviders}</p>
+                    </div>
+                    <div className="text-lg md:text-2xl">🏢</div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="p-3 md:p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs md:text-sm font-medium text-gray-600">Ingresos</p>
+                      <p className="text-sm md:text-2xl font-bold text-green-600">${analytics.totalRevenue.toLocaleString()}</p>
+                    </div>
+                    <div className="text-lg md:text-2xl">💰</div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'categories' && (
+          <div className="space-y-4 md:space-y-6">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+              <h2 className="text-lg font-semibold">Gestión de Categorías</h2>
+              <Button 
+                onClick={() => setShowCreateCategory(true)}
+                className="w-full sm:w-auto"
+                size="sm"
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                Nueva Categoría
+              </Button>
+            </div>
+
+            {/* Lista de categorías */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
+              {categoriesLoading ? (
+                <div className="col-span-full text-center py-8">
+                  <div className="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-4"></div>
+                  <p className="text-muted-foreground">Cargando categorías...</p>
+                </div>
+              ) : (
+                categories.map(category => (
+                  <Card key={category.id}>
+                    <CardContent className="p-3 md:p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center space-x-2 min-w-0 flex-1">
+                          <span className="text-xl md:text-2xl flex-shrink-0">{category.icon}</span>
+                          <h3 className="font-semibold truncate">{category.name}</h3>
+                        </div>
+                        <div className="flex space-x-1 flex-shrink-0">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setEditingCategory(category)}
+                            className="p-1 md:p-2"
+                          >
+                            <span className="text-xs md:text-sm">✏️</span>
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleDeleteCategory(category.id)}
+                            className="p-1 md:p-2"
+                          >
+                            <span className="text-xs md:text-sm">🗑️</span>
+                          </Button>
+                        </div>
+                      </div>
+                      {category.description && (
+                        <p className="text-xs md:text-sm text-gray-600 mb-2 line-clamp-2">{category.description}</p>
+                      )}
+                      <div className="flex items-center justify-between">
+                        <span className={`text-xs px-2 py-1 rounded-full ${
+                          category.active 
+                            ? 'bg-green-100 text-green-800' 
+                            : 'bg-red-100 text-red-800'
+                        }`}>
+                          {category.active ? 'Activa' : 'Inactiva'}
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => toggleCategoryStatus(category.id)}
+                          className="text-xs"
+                        >
+                          {category.active ? 'Desactivar' : 'Activar'}
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'users' && (
+          <div className="space-y-4 md:space-y-6">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+              <h2 className="text-lg font-semibold">Gestión de Usuarios</h2>
+              <div className="flex space-x-2">
+                <select 
+                  value={userFilter} 
+                  onChange={(e) => setUserFilter(e.target.value as any)}
+                  className="px-3 py-2 border border-gray-300 rounded-md text-sm w-full sm:w-auto"
+                >
+                  <option value="all">Todos</option>
+                  <option value="client">Clientes</option>
+                  <option value="provider">Proveedores</option>
+                  <option value="admin">Admins</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Lista de usuarios - Vista móvil */}
+            <div className="block md:hidden">
+              <div className="space-y-3">
+                {usersLoading ? (
+                  <div className="text-center py-8">
+                    <div className="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-4"></div>
+                    <p className="text-muted-foreground">Cargando usuarios...</p>
+                  </div>
+                ) : (
+                  filteredUsers.map(user => (
+                    <Card key={user.id}>
+                      <CardContent className="p-4">
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex items-center space-x-3 min-w-0 flex-1">
+                            <div className="h-10 w-10 rounded-full bg-primary text-white flex items-center justify-center flex-shrink-0">
+                              {(user.displayName?.charAt(0) || user.email?.charAt(0) || 'U').toUpperCase()}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-sm font-medium text-gray-900 truncate">
+                                {user.displayName || 'Sin nombre'}
+                              </div>
+                              <div className="text-xs text-gray-500 truncate">{user.email || 'Sin email'}</div>
+                            </div>
+                          </div>
+                          <div className="flex space-x-1 flex-shrink-0">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setEditingUser(user)}
+                              className="p-1"
+                            >
+                              <span className="text-xs">✏️</span>
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleToggleUserStatus(user.id)}
+                              className="p-1"
+                            >
+                              <span className="text-xs">{user.isActive ? '🚫' : '✅'}</span>
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleDeleteUser(user.id)}
+                              className="p-1"
+                            >
+                              <span className="text-xs">🗑️</span>
+                            </Button>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center justify-between">
+                          <div className="flex space-x-2">
+                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                              user.role === 'admin' ? 'bg-purple-100 text-purple-800' :
+                              user.role === 'provider' ? 'bg-blue-100 text-blue-800' :
+                              'bg-green-100 text-green-800'
+                            }`}>
+                              {user.role === 'admin' ? 'Admin' : 
+                               user.role === 'provider' ? 'Proveedor' : 'Cliente'}
+                            </span>
+                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                              user.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                            }`}>
+                              {user.isActive ? 'Activo' : 'Inactivo'}
+                            </span>
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {user.createdAt.toLocaleDateString()}
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Lista de usuarios - Vista desktop */}
+            <div className="hidden md:block bg-white rounded-lg shadow">
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Usuario</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rol</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Registro</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {usersLoading ? (
+                      <tr>
+                        <td colSpan={5} className="px-6 py-4 text-center">
+                          <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full mx-auto mb-2"></div>
+                          <p className="text-muted-foreground">Cargando usuarios...</p>
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredUsers.map(user => (
+                        <tr key={user.id}>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex items-center">
+                              <div className="flex-shrink-0 h-10 w-10">
+                                <div className="h-10 w-10 rounded-full bg-primary text-white flex items-center justify-center">
+                                  {(user.displayName?.charAt(0) || user.email?.charAt(0) || 'U').toUpperCase()}
+                                </div>
+                              </div>
+                              <div className="ml-4">
+                                <div className="text-sm font-medium text-gray-900">
+                                  {user.displayName || 'Sin nombre'}
+                                </div>
+                                <div className="text-sm text-gray-500">{user.email || 'Sin email'}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                              user.role === 'admin' ? 'bg-purple-100 text-purple-800' :
+                              user.role === 'provider' ? 'bg-blue-100 text-blue-800' :
+                              'bg-green-100 text-green-800'
+                            }`}>
+                              {user.role === 'admin' ? 'Admin' : 
+                               user.role === 'provider' ? 'Proveedor' : 'Cliente'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                              user.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                            }`}>
+                              {user.isActive ? 'Activo' : 'Inactivo'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {user.createdAt.toLocaleDateString()}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                            <div className="flex space-x-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setEditingUser(user)}
+                              >
+                                ✏️
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleToggleUserStatus(user.id)}
+                              >
+                                {user.isActive ? '🚫' : '✅'}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleDeleteUser(user.id)}
+                              >
+                                🗑️
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'services' && (
+          <div className="space-y-4 md:space-y-6">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+              <h2 className="text-lg font-semibold">Gestión de Servicios</h2>
+              <div className="flex space-x-2">
+                <select 
+                  value={serviceFilter} 
+                  onChange={(e) => setServiceFilter(e.target.value as any)}
+                  className="px-3 py-2 border border-gray-300 rounded-md text-sm w-full sm:w-auto"
+                >
+                  <option value="all">Todos</option>
+                  <option value="active">Activos</option>
+                  <option value="inactive">Inactivos</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Lista de servicios */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
+              {filteredServices.map(service => (
+                <Card key={service.id}>
+                  <CardContent className="p-3 md:p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="font-semibold text-sm md:text-lg truncate flex-1 mr-2">{service.name}</h3>
+                      <span className={`text-xs px-2 py-1 rounded-full flex-shrink-0 ${
+                        (service as any).active !== false 
+                          ? 'bg-green-100 text-green-800' 
+                          : 'bg-red-100 text-red-800'
+                      }`}>
+                        {(service as any).active !== false ? 'Activo' : 'Inactivo'}
+                      </span>
+                    </div>
+                    
+                    <p className="text-xs md:text-sm text-gray-600 mb-3 line-clamp-2">{service.description}</p>
+                    
+                    <div className="space-y-1 md:space-y-2 mb-4">
+                      <div className="flex justify-between text-xs md:text-sm">
+                        <span className="text-gray-500">Proveedor:</span>
+                        <span className="font-medium truncate ml-2">{service.providerName}</span>
+                      </div>
+                      <div className="flex justify-between text-xs md:text-sm">
+                        <span className="text-gray-500">Precio:</span>
+                        <span className="font-medium">${service.price}</span>
+                      </div>
+                      <div className="flex justify-between text-xs md:text-sm">
+                        <span className="text-gray-500">Duración:</span>
+                        <span className="font-medium">{(service as any).duration || 60} min</span>
+                      </div>
+                    </div>
+                    
+                    <div className="flex space-x-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="flex-1 text-xs"
+                      >
+                        ✏️ Editar
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="flex-1 text-xs"
+                      >
+                        {(service as any).active !== false ? '🚫' : '✅'} {(service as any).active !== false ? 'Desactivar' : 'Activar'}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'analytics' && (
+          <div className="space-y-4 md:space-y-6">
+            <h2 className="text-lg font-semibold">Analytics y Reportes</h2>
+            
+            {/* Métricas principales */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
+              <Card>
+                <CardContent className="p-3 md:p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs md:text-sm font-medium text-gray-600">Usuarios Activos</p>
+                      <p className="text-lg md:text-2xl font-bold text-green-600">{analytics.activeUsers}</p>
+                    </div>
+                    <div className="text-lg md:text-2xl">👥</div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="p-3 md:p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs md:text-sm font-medium text-gray-600">Usuarios Inactivos</p>
+                      <p className="text-lg md:text-2xl font-bold text-red-600">{analytics.inactiveUsers}</p>
+                    </div>
+                    <div className="text-lg md:text-2xl">🚫</div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="p-3 md:p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs md:text-sm font-medium text-gray-600">Ingresos Totales</p>
+                      <p className="text-sm md:text-2xl font-bold text-green-600">${analytics.totalRevenue.toLocaleString()}</p>
+                    </div>
+                    <div className="text-lg md:text-2xl">💰</div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="p-3 md:p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs md:text-sm font-medium text-gray-600">Reservas Totales</p>
+                      <p className="text-lg md:text-2xl font-bold text-blue-600">{analytics.totalBookings}</p>
+                    </div>
+                    <div className="text-lg md:text-2xl">📅</div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Servicios más populares */}
+            <Card>
+              <CardContent className="p-4 md:p-6">
+                <h3 className="text-lg font-semibold mb-4">Servicios Más Populares</h3>
+                <div className="space-y-3">
+                  {analytics.topServices.map((service, index) => (
+                    <div key={index} className="flex items-center justify-between">
+                      <div className="flex items-center space-x-3 min-w-0 flex-1">
+                        <span className="text-sm font-medium text-gray-500 flex-shrink-0">#{index + 1}</span>
+                        <span className="text-sm font-medium truncate">{service.name}</span>
+                      </div>
+                      <span className="text-sm text-gray-500 flex-shrink-0">{service.bookings} reservas</span>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Reservas recientes */}
+            <Card>
+              <CardContent className="p-4 md:p-6">
+                <h3 className="text-lg font-semibold mb-4">Reservas Recientes</h3>
+                <div className="space-y-3">
+                  {analytics.recentBookings.slice(0, 5).map((booking, index) => (
+                    <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-sm truncate">{booking.serviceName}</p>
+                        <p className="text-xs text-gray-500 truncate">{booking.clientName}</p>
+                      </div>
+                      <div className="text-right flex-shrink-0 ml-2">
+                        <p className="font-medium text-sm">${booking.price}</p>
+                        <p className="text-xs text-gray-500">{booking.status}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {activeTab === 'settings' && (
+          <div className="space-y-4 md:space-y-6">
+            <h2 className="text-lg font-semibold">Configuración General</h2>
+            
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
+              {/* Configuración de la aplicación */}
+              <Card>
+                <CardContent className="p-4 md:p-6">
+                  <h3 className="text-lg font-semibold mb-4">Configuración de la Aplicación</h3>
+                  <div className="space-y-4">
+                    <div>
+                      <Label htmlFor="app-name">Nombre de la Aplicación</Label>
+                      <Input 
+                        id="app-name" 
+                        value={settings.appName}
+                        onChange={(e) => handleSettingChange('appName', e.target.value)}
+                        className="text-sm" 
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="app-description">Descripción</Label>
+                      <Input 
+                        id="app-description" 
+                        value={settings.appDescription}
+                        onChange={(e) => handleSettingChange('appDescription', e.target.value)}
+                        className="text-sm" 
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="app-email">Email de Contacto</Label>
+                      <Input 
+                        id="app-email" 
+                        value={settings.appEmail}
+                        onChange={(e) => handleSettingChange('appEmail', e.target.value)}
+                        className="text-sm" 
+                      />
+                    </div>
+                    <Button 
+                      onClick={() => saveSettings('aplicación')}
+                      className="w-full text-sm"
+                    >
+                      Guardar Configuración
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Configuración de notificaciones */}
+              <Card>
+                <CardContent className="p-4 md:p-6">
+                  <h3 className="text-lg font-semibold mb-4">Notificaciones</h3>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-sm font-medium">Notificaciones por email</span>
+                        <p className="text-xs text-gray-500">Recibe notificaciones de nuevas reservas</p>
+                      </div>
+                      <button
+                        onClick={() => handleSettingChange('emailNotifications', !settings.emailNotifications)}
+                        className={`px-3 py-1 rounded-full text-xs font-medium ${
+                          settings.emailNotifications 
+                            ? 'bg-green-100 text-green-800' 
+                            : 'bg-gray-100 text-gray-800'
+                        }`}
+                      >
+                        {settings.emailNotifications ? 'Activar' : 'Desactivar'}
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-sm font-medium">Notificaciones push</span>
+                        <p className="text-xs text-gray-500">Notificaciones en tiempo real</p>
+                      </div>
+                      <button
+                        onClick={() => handleSettingChange('pushNotifications', !settings.pushNotifications)}
+                        className={`px-3 py-1 rounded-full text-xs font-medium ${
+                          settings.pushNotifications 
+                            ? 'bg-green-100 text-green-800' 
+                            : 'bg-gray-100 text-gray-800'
+                        }`}
+                      >
+                        {settings.pushNotifications ? 'Activar' : 'Desactivar'}
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-sm font-medium">Recordatorios de citas</span>
+                        <p className="text-xs text-gray-500">Recordatorios automáticos</p>
+                      </div>
+                      <button
+                        onClick={() => handleSettingChange('appointmentReminders', !settings.appointmentReminders)}
+                        className={`px-3 py-1 rounded-full text-xs font-medium ${
+                          settings.appointmentReminders 
+                            ? 'bg-green-100 text-green-800' 
+                            : 'bg-gray-100 text-gray-800'
+                        }`}
+                      >
+                        {settings.appointmentReminders ? 'Activar' : 'Desactivar'}
+                      </button>
+                    </div>
+                    <Button 
+                      onClick={() => saveSettings('notificaciones')}
+                      className="w-full text-sm"
+                    >
+                      Guardar Preferencias
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Configuración de pagos */}
+              <Card>
+                <CardContent className="p-4 md:p-6">
+                  <h3 className="text-lg font-semibold mb-4">Configuración de Pagos</h3>
+                  <div className="space-y-4">
+                    <div>
+                      <Label htmlFor="commission-rate">Tasa de Comisión (%)</Label>
+                      <Input 
+                        id="commission-rate" 
+                        type="number" 
+                        value={settings.commissionRate}
+                        onChange={(e) => handleSettingChange('commissionRate', parseInt(e.target.value))}
+                        className="text-sm" 
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="min-price">Precio Mínimo de Servicio</Label>
+                      <Input 
+                        id="min-price" 
+                        type="number" 
+                        value={settings.minPrice}
+                        onChange={(e) => handleSettingChange('minPrice', parseInt(e.target.value))}
+                        className="text-sm" 
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="max-price">Precio Máximo de Servicio</Label>
+                      <Input 
+                        id="max-price" 
+                        type="number" 
+                        value={settings.maxPrice}
+                        onChange={(e) => handleSettingChange('maxPrice', parseInt(e.target.value))}
+                        className="text-sm" 
+                      />
+                    </div>
+                    <Button 
+                      onClick={() => saveSettings('pagos')}
+                      className="w-full text-sm"
+                    >
+                      Guardar Configuración
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Configuración de seguridad */}
+              <Card>
+                <CardContent className="p-4 md:p-6">
+                  <h3 className="text-lg font-semibold mb-4">Seguridad</h3>
+                  <div className="space-y-4">
+                    <div>
+                      <Label htmlFor="session-timeout">Timeout de Sesión (minutos)</Label>
+                      <Input 
+                        id="session-timeout" 
+                        type="number" 
+                        value={settings.sessionTimeout}
+                        onChange={(e) => handleSettingChange('sessionTimeout', parseInt(e.target.value))}
+                        className="text-sm" 
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-sm font-medium">Verificación de email obligatoria</span>
+                        <p className="text-xs text-gray-500">Los usuarios deben verificar su email</p>
+                      </div>
+                      <button
+                        onClick={() => handleSettingChange('emailVerificationRequired', !settings.emailVerificationRequired)}
+                        className={`px-3 py-1 rounded-full text-xs font-medium ${
+                          settings.emailVerificationRequired 
+                            ? 'bg-green-100 text-green-800' 
+                            : 'bg-gray-100 text-gray-800'
+                        }`}
+                      >
+                        {settings.emailVerificationRequired ? 'Activar' : 'Desactivar'}
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-sm font-medium">Registro abierto</span>
+                        <p className="text-xs text-gray-500">Cualquiera puede registrarse</p>
+                      </div>
+                      <button
+                        onClick={() => handleSettingChange('openRegistration', !settings.openRegistration)}
+                        className={`px-3 py-1 rounded-full text-xs font-medium ${
+                          settings.openRegistration 
+                            ? 'bg-green-100 text-green-800' 
+                            : 'bg-gray-100 text-gray-800'
+                        }`}
+                      >
+                        {settings.openRegistration ? 'Activar' : 'Desactivar'}
+                      </button>
+                    </div>
+                    <Button 
+                      onClick={() => saveSettings('seguridad')}
+                      className="w-full text-sm"
+                    >
+                      Guardar Configuración
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Modal Crear Categoría */}
+      {showCreateCategory && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <Card className="w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <CardContent className="p-4 md:p-6">
+              <h3 className="text-lg font-semibold mb-4">Nueva Categoría</h3>
+              <form onSubmit={handleCreateCategory} className="space-y-4">
+                <div>
+                  <Label htmlFor="name">Nombre</Label>
+                  <Input
+                    id="name"
+                    value={newCategory.name}
+                    onChange={(e) => setNewCategory(prev => ({ ...prev, name: e.target.value }))}
+                    placeholder="Ej: Belleza"
+                    required
+                    className="text-sm"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="icon">Icono</Label>
+                  <Input
+                    id="icon"
+                    value={newCategory.icon}
+                    onChange={(e) => setNewCategory(prev => ({ ...prev, icon: e.target.value }))}
+                    placeholder="Ej: 💄"
+                    required
+                    className="text-sm"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="description">Descripción</Label>
+                  <Input
+                    id="description"
+                    value={newCategory.description}
+                    onChange={(e) => setNewCategory(prev => ({ ...prev, description: e.target.value }))}
+                    placeholder="Descripción opcional"
+                    className="text-sm"
+                  />
+                </div>
+                <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
+                  <Button type="submit" className="flex-1 text-sm">
+                    Crear Categoría
+                  </Button>
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    onClick={() => setShowCreateCategory(false)}
+                    className="flex-1 text-sm"
+                  >
+                    Cancelar
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Modal Editar Categoría */}
+      {editingCategory && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <Card className="w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <CardContent className="p-4 md:p-6">
+              <h3 className="text-lg font-semibold mb-4">Editar Categoría</h3>
+              <form onSubmit={handleEditCategory} className="space-y-4">
+                <div>
+                  <Label htmlFor="edit-name">Nombre</Label>
+                  <Input
+                    id="edit-name"
+                    value={editingCategory.name}
+                    onChange={(e) => setEditingCategory((prev: any) => ({ ...prev, name: e.target.value }))}
+                    required
+                    className="text-sm"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="edit-icon">Icono</Label>
+                  <Input
+                    id="edit-icon"
+                    value={editingCategory.icon}
+                    onChange={(e) => setEditingCategory((prev: any) => ({ ...prev, icon: e.target.value }))}
+                    required
+                    className="text-sm"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="edit-description">Descripción</Label>
+                  <Input
+                    id="edit-description"
+                    value={editingCategory.description || ''}
+                    onChange={(e) => setEditingCategory((prev: any) => ({ ...prev, description: e.target.value }))}
+                    className="text-sm"
+                  />
+                </div>
+                <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
+                  <Button type="submit" className="flex-1 text-sm">
+                    Guardar Cambios
+                  </Button>
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    onClick={() => setEditingCategory(null)}
+                    className="flex-1 text-sm"
+                  >
+                    Cancelar
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Modal Editar Usuario */}
+      {editingUser && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <Card className="w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <CardContent className="p-4 md:p-6">
+              <h3 className="text-lg font-semibold mb-4">Editar Usuario</h3>
+              <form onSubmit={(e) => {
+                e.preventDefault()
+                const formData = new FormData(e.target as HTMLFormElement)
+                const newRole = formData.get('role') as string
+                handleUpdateUserRole(editingUser.id, newRole)
+              }} className="space-y-4">
+                <div>
+                  <Label htmlFor="user-name">Nombre</Label>
+                  <Input
+                    id="user-name"
+                    value={editingUser.displayName || ''}
+                    disabled
+                    className="text-sm"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="user-email">Email</Label>
+                  <Input
+                    id="user-email"
+                    value={editingUser.email}
+                    disabled
+                    className="text-sm"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="user-role">Rol</Label>
+                  <select
+                    name="role"
+                    id="user-role"
+                    defaultValue={editingUser.role}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                  >
+                    <option value="client">Cliente</option>
+                    <option value="provider">Proveedor</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </div>
+                <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
+                  <Button type="submit" className="flex-1 text-sm">
+                    Guardar Cambios
+                  </Button>
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    onClick={() => setEditingUser(null)}
+                    className="flex-1 text-sm"
+                  >
+                    Cancelar
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   )
 }

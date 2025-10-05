@@ -68,26 +68,26 @@ export function useAnalytics() {
       const totalServices = services.length
       const totalBookings = bookings.length
       const totalRevenue = bookings
-        .filter(booking => booking.paymentStatus === 'paid')
-        .reduce((sum, booking) => sum + (booking.price || 0), 0)
+        .filter((booking: any) => booking.paymentStatus === 'paid')
+        .reduce((sum: number, booking: any) => sum + (booking.price || 0), 0)
       
       const activeUsers = users.filter((user: any) => user.isActive !== false).length
       const inactiveUsers = users.filter((user: any) => user.isActive === false).length
       
       // Reservas recientes (últimas 10)
       const recentBookings = bookings
-        .sort((a, b) => new Date(b.createdAt?.toDate?.() || b.createdAt).getTime() - new Date(a.createdAt?.toDate?.() || a.createdAt).getTime())
+        .sort((a: any, b: any) => new Date((b as any).createdAt?.toDate?.() || (b as any).createdAt).getTime() - new Date((a as any).createdAt?.toDate?.() || (a as any).createdAt).getTime())
         .slice(0, 10)
       
       // Servicios más populares
-      const serviceCounts = services.reduce((acc, service) => {
-        const bookingsForService = bookings.filter(booking => booking.serviceId === service.id)
+      const serviceCounts = services.reduce((acc: any, service: any) => {
+        const bookingsForService = bookings.filter((booking: any) => (booking as any).serviceId === service.id)
         acc[service.name] = bookingsForService.length
         return acc
       }, {} as Record<string, number>)
       
       const topServices = Object.entries(serviceCounts)
-        .sort(([,a], [,b]) => b - a)
+        .sort(([,a], [,b]) => (b as number) - (a as number))
         .slice(0, 5)
         .map(([name, count]) => ({ name, bookings: count }))
       
@@ -99,8 +99,8 @@ export function useAnalytics() {
         const dayStart = new Date(date.setHours(0, 0, 0, 0))
         const dayEnd = new Date(date.setHours(23, 59, 59, 999))
         
-        const usersOnDay = users.filter(user => {
-          const createdAt = user.createdAt?.toDate?.() || user.createdAt
+        const usersOnDay = users.filter((user: any) => {
+          const createdAt = (user as any).createdAt?.toDate?.() || (user as any).createdAt
           return createdAt >= dayStart && createdAt <= dayEnd
         }).length
         
@@ -118,7 +118,7 @@ export function useAnalytics() {
         const dayStart = new Date(date.setHours(0, 0, 0, 0))
         const dayEnd = new Date(date.setHours(23, 59, 59, 999))
         
-        const bookingsOnDay = bookings.filter(booking => {
+        const bookingsOnDay = bookings.filter((booking: any) => {
           const createdAt = booking.createdAt?.toDate?.() || booking.createdAt
           return createdAt >= dayStart && createdAt <= dayEnd
         }).length

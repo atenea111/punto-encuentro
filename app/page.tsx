@@ -12,6 +12,8 @@ import { useAuth } from "@/hooks/useAuth"
 import { useServices } from "@/hooks/useServices"
 import { useBookings } from "@/hooks/useBookings"
 import { useRoles } from "@/hooks/useRoles"
+import { useAdminDashboard } from "@/hooks/useAdminDashboard"
+import { useReports } from "@/hooks/useReports"
 import { useCategories } from "@/hooks/useCategories"
 import { useUsers } from "@/hooks/useUsers"
 import { useAnalytics } from "@/hooks/useAnalytics"
@@ -3572,8 +3574,20 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
   const { bookings } = useBookings()
   const { users, loading: usersLoading, updateUserRole, toggleUserStatus, deleteUser, getUsersByRole } = useUsers()
   const { analytics, loading: analyticsLoading } = useAnalytics()
+  const { stats, loading: dashboardLoading, refresh } = useAdminDashboard()
   
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'categories' | 'users' | 'services' | 'analytics' | 'settings'>('dashboard')
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'categories' | 'users' | 'services' | 'analytics' | 'reports' | 'settings'>('dashboard')
+  const [showAlerts, setShowAlerts] = useState(false)
+  const [reportType, setReportType] = useState<'daily' | 'weekly' | 'monthly'>('daily')
+  const { dailyReport, weeklyReport, monthlyReport, loading: reportsLoading, generateDailyReport, generateWeeklyReport, generateMonthlyReport } = useReports()
+  
+  // Generar informe diario automáticamente cuando se abre la pestaña de informes
+  useEffect(() => {
+    if (activeTab === 'reports' && reportType === 'daily' && !dailyReport && !reportsLoading) {
+      generateDailyReport()
+    }
+  }, [activeTab, reportType, dailyReport, reportsLoading])
+
   const [showCreateCategory, setShowCreateCategory] = useState(false)
   const [newCategory, setNewCategory] = useState({
     name: '',
@@ -3709,6 +3723,7 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
             { id: 'users', label: 'Usuarios', icon: '👥' },
             { id: 'services', label: 'Servicios', icon: '🛠️' },
             { id: 'analytics', label: 'Analytics', icon: '📈' },
+            { id: 'reports', label: 'Informes', icon: '📄' },
             { id: 'settings', label: 'Configuración', icon: '⚙️' }
           ].map(tab => (
             <button
@@ -3733,93 +3748,181 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
       <div className="p-3 md:p-6">
         {activeTab === 'dashboard' && (
           <div className="space-y-4 md:space-y-6">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
-              <Card>
-                <CardContent className="p-3 md:p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs md:text-sm font-medium text-gray-600">Total Usuarios</p>
-                      <p className="text-lg md:text-2xl font-bold text-primary">{analytics.totalUsers}</p>
-                    </div>
-                    <div className="text-lg md:text-2xl">👥</div>
-                  </div>
-                </CardContent>
-              </Card>
+            {dashboardLoading ? (
+              <div className="text-center py-8">
+                <div className="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-4"></div>
+                <p className="text-muted-foreground">Cargando estadísticas...</p>
+              </div>
+            ) : (
+              <>
+                {/* Botón de Alertas */}
+                <div className="flex justify-end">
+                  <Button 
+                    onClick={() => setShowAlerts(!showAlerts)}
+                    variant={stats.alerts.length > 0 ? "default" : "outline"}
+                    className="relative"
+                  >
+                    🔔 Alertas
+                    {stats.alerts.length > 0 && (
+                      <span className="ml-2 px-2 py-0.5 bg-red-500 text-white text-xs rounded-full">
+                        {stats.alerts.reduce((sum, alert) => sum + alert.count, 0)}
+                      </span>
+                    )}
+                  </Button>
+                </div>
 
-              <Card>
-                <CardContent className="p-3 md:p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs md:text-sm font-medium text-gray-600">Categorías</p>
-                      <p className="text-lg md:text-2xl font-bold text-primary">{categories.length}</p>
-                    </div>
-                    <div className="text-lg md:text-2xl">📁</div>
-                  </div>
-                </CardContent>
-              </Card>
+                {/* Panel de Alertas */}
+                {showAlerts && (
+                  <Card className={stats.alerts.length > 0 ? "border-yellow-200 bg-yellow-50" : "border-gray-200 bg-gray-50"}>
+                    <CardContent className="p-4">
+                      <h3 className="font-semibold mb-3">⚠️ Alertas que necesitan atención</h3>
+                      {stats.alerts.length > 0 ? (
+                        <div className="space-y-2">
+                          {stats.alerts.map((alert, index) => (
+                            <div key={index} className="flex items-center justify-between p-2 bg-white rounded">
+                              <span className="text-sm">{alert.message}</span>
+                              <span className="px-2 py-1 bg-red-100 text-red-800 text-xs font-semibold rounded-full">
+                                {alert.count}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-gray-500 text-center py-4">✅ No hay alertas pendientes</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
 
-              <Card>
-                <CardContent className="p-3 md:p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs md:text-sm font-medium text-gray-600">Servicios</p>
-                      <p className="text-lg md:text-2xl font-bold text-primary">{analytics.totalServices}</p>
-                    </div>
-                    <div className="text-lg md:text-2xl">🛠️</div>
-                  </div>
-                </CardContent>
-              </Card>
+                {/* Usuarios */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Card>
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-gray-600">Usuarios activos hoy</p>
+                          <p className="text-2xl font-bold text-primary">{stats.activeUsersToday}</p>
+                        </div>
+                        <div className="text-3xl">👥</div>
+                      </div>
+                    </CardContent>
+                  </Card>
 
-              <Card>
-                <CardContent className="p-3 md:p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs md:text-sm font-medium text-gray-600">Reservas</p>
-                      <p className="text-lg md:text-2xl font-bold text-primary">{analytics.totalBookings}</p>
-                    </div>
-                    <div className="text-lg md:text-2xl">📅</div>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
+                  <Card>
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-gray-600">Nuevos esta semana</p>
+                          <p className="text-2xl font-bold text-green-600">{stats.newUsersThisWeek}</p>
+                        </div>
+                        <div className="text-3xl">🆕</div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 md:gap-4">
-              <Card>
-                <CardContent className="p-3 md:p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs md:text-sm font-medium text-gray-600">Clientes</p>
-                      <p className="text-lg md:text-2xl font-bold text-green-600">{analytics.totalClients}</p>
-                    </div>
-                    <div className="text-lg md:text-2xl">👤</div>
-                  </div>
-                </CardContent>
-              </Card>
+                {/* Comercios */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Card>
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-gray-600">Comercios activos</p>
+                          <p className="text-2xl font-bold text-blue-600">{stats.activeBusinesses}</p>
+                        </div>
+                        <div className="text-3xl">🏪</div>
+                      </div>
+                    </CardContent>
+                  </Card>
 
-              <Card>
-                <CardContent className="p-3 md:p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs md:text-sm font-medium text-gray-600">Proveedores</p>
-                      <p className="text-lg md:text-2xl font-bold text-blue-600">{analytics.totalProviders}</p>
-                    </div>
-                    <div className="text-lg md:text-2xl">🏢</div>
-                  </div>
-                </CardContent>
-              </Card>
+                  <Card>
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-gray-600">Pendientes de verificación</p>
+                          <p className="text-2xl font-bold text-yellow-600">{stats.businessesPendingVerification}</p>
+                        </div>
+                        <div className="text-3xl">⏳</div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
 
-              <Card>
-                <CardContent className="p-3 md:p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs md:text-sm font-medium text-gray-600">Ingresos</p>
-                      <p className="text-sm md:text-2xl font-bold text-green-600">${analytics.totalRevenue.toLocaleString()}</p>
+                {/* Publicaciones */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <Card>
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-gray-600">Publicaciones nuevas</p>
+                          <p className="text-2xl font-bold text-green-600">{stats.newPublications}</p>
+                        </div>
+                        <div className="text-3xl">✨</div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-gray-600">Pendientes</p>
+                          <p className="text-2xl font-bold text-yellow-600">{stats.pendingPublications}</p>
+                        </div>
+                        <div className="text-3xl">📋</div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-gray-600">Denunciadas</p>
+                          <p className="text-2xl font-bold text-red-600">{stats.reportedPublications}</p>
+                        </div>
+                        <div className="text-3xl">🚨</div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* Chats */}
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-gray-600">Chats iniciados</p>
+                        <p className="text-2xl font-bold text-purple-600">{stats.chatsInitiated}</p>
+                      </div>
+                      <div className="text-3xl">💬</div>
                     </div>
-                    <div className="text-lg md:text-2xl">💰</div>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
+                  </CardContent>
+                </Card>
+
+                {/* Top 5 Búsquedas del día */}
+                <Card>
+                  <CardContent className="p-4">
+                    <h3 className="text-lg font-semibold mb-4">🔍 Top 5 búsquedas del día</h3>
+                    {stats.topSearches.length > 0 ? (
+                      <div className="space-y-2">
+                        {stats.topSearches.map((search, index) => (
+                          <div key={index} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                            <div className="flex items-center space-x-3">
+                              <span className="text-lg font-bold text-primary">#{index + 1}</span>
+                              <span className="text-sm">{search.term}</span>
+                            </div>
+                            <span className="text-sm text-gray-500">{search.count} búsquedas</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-gray-500 text-center py-4">No hay búsquedas registradas hoy</p>
+                    )}
+                  </CardContent>
+                </Card>
+              </>
+            )}
           </div>
         )}
 
@@ -4161,6 +4264,268 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                 </Card>
               ))}
             </div>
+          </div>
+        )}
+
+        {activeTab === 'reports' && (
+          <div className="space-y-4 md:space-y-6">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+              <h2 className="text-lg font-semibold">Informes</h2>
+              <div className="flex gap-2">
+                <Button
+                  variant={reportType === 'daily' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => {
+                    setReportType('daily')
+                    generateDailyReport()
+                  }}
+                >
+                  Diario
+                </Button>
+                <Button
+                  variant={reportType === 'weekly' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => {
+                    setReportType('weekly')
+                    generateWeeklyReport()
+                  }}
+                >
+                  Semanal
+                </Button>
+                <Button
+                  variant={reportType === 'monthly' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => {
+                    setReportType('monthly')
+                    generateMonthlyReport()
+                  }}
+                >
+                  Mensual
+                </Button>
+              </div>
+            </div>
+
+            {reportsLoading ? (
+              <div className="text-center py-8">
+                <div className="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-4"></div>
+                <p className="text-muted-foreground">Generando informe...</p>
+              </div>
+            ) : (
+              <>
+                {/* Informe Diario */}
+                {reportType === 'daily' && dailyReport && (
+                  <div className="space-y-4">
+                    <Card>
+                      <CardContent className="p-4">
+                        <h3 className="text-lg font-semibold mb-4">📅 Informe Diario - {new Date(dailyReport.date).toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</h3>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                          <div className="text-center">
+                            <p className="text-2xl font-bold text-primary">{dailyReport.activeUsers}</p>
+                            <p className="text-sm text-gray-600">Usuarios activos</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-2xl font-bold text-green-600">{dailyReport.newPublications}</p>
+                            <p className="text-sm text-gray-600">Publicaciones nuevas</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-2xl font-bold text-purple-600">{dailyReport.chatsInitiated}</p>
+                            <p className="text-sm text-gray-600">Chats iniciados</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-2xl font-bold text-red-600">{dailyReport.reports}</p>
+                            <p className="text-sm text-gray-600">Denuncias</p>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                )}
+
+                {/* Informe Semanal */}
+                {reportType === 'weekly' && weeklyReport && (
+                  <div className="space-y-4">
+                    <Card>
+                      <CardContent className="p-4">
+                        <h3 className="text-lg font-semibold mb-4">📊 Informe Semanal - {weeklyReport.week}</h3>
+                        
+                        {/* Ranking de búsquedas por ciudad */}
+                        <div className="mb-6">
+                          <h4 className="font-semibold mb-3">🔍 Ranking de búsquedas por ciudad</h4>
+                          {weeklyReport.topSearchesByCity.length > 0 ? (
+                            <div className="space-y-4">
+                              {weeklyReport.topSearchesByCity.map((cityData, index) => (
+                                <Card key={index} className="bg-gray-50">
+                                  <CardContent className="p-4">
+                                    <h5 className="font-medium mb-2">{cityData.city}</h5>
+                                    <div className="space-y-1">
+                                      {cityData.searches.slice(0, 5).map((search, idx) => (
+                                        <div key={idx} className="flex items-center justify-between text-sm">
+                                          <span>#{idx + 1} {search.term}</span>
+                                          <span className="text-gray-500">{search.count} búsquedas</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </CardContent>
+                                </Card>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-sm text-gray-500">No hay datos de búsquedas por ciudad</p>
+                          )}
+                        </div>
+
+                        {/* Promociones con mejor rendimiento */}
+                        <div className="mb-6">
+                          <h4 className="font-semibold mb-3">⭐ Promociones con mejor rendimiento</h4>
+                          {weeklyReport.bestPerformingPromos.length > 0 ? (
+                            <div className="space-y-2">
+                              {weeklyReport.bestPerformingPromos.map((promo, index) => (
+                                <div key={promo.id} className="flex items-center justify-between p-3 bg-green-50 rounded">
+                                  <div className="flex items-center space-x-3">
+                                    <span className="text-lg font-bold text-green-600">#{index + 1}</span>
+                                    <span className="text-sm font-medium">{promo.name}</span>
+                                  </div>
+                                  <span className="text-sm text-green-600 font-semibold">{promo.performance.toFixed(2)}%</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-sm text-gray-500">No hay promociones activas</p>
+                          )}
+                        </div>
+
+                        {/* Promociones con peor rendimiento */}
+                        <div>
+                          <h4 className="font-semibold mb-3">📉 Promociones con peor rendimiento</h4>
+                          {weeklyReport.worstPerformingPromos.length > 0 ? (
+                            <div className="space-y-2">
+                              {weeklyReport.worstPerformingPromos.map((promo, index) => (
+                                <div key={promo.id} className="flex items-center justify-between p-3 bg-red-50 rounded">
+                                  <div className="flex items-center space-x-3">
+                                    <span className="text-lg font-bold text-red-600">#{index + 1}</span>
+                                    <span className="text-sm font-medium">{promo.name}</span>
+                                  </div>
+                                  <span className="text-sm text-red-600 font-semibold">{promo.performance.toFixed(2)}%</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-sm text-gray-500">No hay promociones con bajo rendimiento</p>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                )}
+
+                {/* Informe Mensual */}
+                {reportType === 'monthly' && monthlyReport && (
+                  <div className="space-y-4">
+                    <Card>
+                      <CardContent className="p-4">
+                        <h3 className="text-lg font-semibold mb-4">📈 Informe Mensual - {monthlyReport.month}</h3>
+                        
+                        {/* Crecimiento general */}
+                        <div className="mb-6">
+                          <h4 className="font-semibold mb-3">📊 Crecimiento General</h4>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <div className="text-center p-3 bg-blue-50 rounded">
+                              <p className="text-2xl font-bold text-blue-600">{monthlyReport.userGrowth > 0 ? '+' : ''}{monthlyReport.userGrowth.toFixed(1)}%</p>
+                              <p className="text-sm text-gray-600">Crecimiento</p>
+                            </div>
+                            <div className="text-center p-3 bg-green-50 rounded">
+                              <p className="text-2xl font-bold text-green-600">{monthlyReport.totalUsers}</p>
+                              <p className="text-sm text-gray-600">Total usuarios</p>
+                            </div>
+                            <div className="text-center p-3 bg-purple-50 rounded">
+                              <p className="text-2xl font-bold text-purple-600">{monthlyReport.newUsers}</p>
+                              <p className="text-sm text-gray-600">Nuevos usuarios</p>
+                            </div>
+                            <div className="text-center p-3 bg-orange-50 rounded">
+                              <p className="text-2xl font-bold text-orange-600">{monthlyReport.returningUsers}</p>
+                              <p className="text-sm text-gray-600">Usuarios que volvieron</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Retención de usuarios */}
+                        <div className="mb-6">
+                          <h4 className="font-semibold mb-3">🔄 Retención de Usuarios</h4>
+                          <Card className="bg-gradient-to-r from-purple-50 to-pink-50">
+                            <CardContent className="p-4">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <p className="text-sm text-gray-600">Tasa de retención</p>
+                                  <p className="text-3xl font-bold text-purple-600">{monthlyReport.userRetention.toFixed(1)}%</p>
+                                  <p className="text-xs text-gray-500 mt-1">
+                                    {monthlyReport.returningUsers} de {monthlyReport.totalUsers} usuarios volvieron este mes
+                                  </p>
+                                </div>
+                                <div className="text-4xl">🔄</div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        </div>
+
+                        {/* Resumen de promociones */}
+                        <div>
+                          <h4 className="font-semibold mb-3">🎯 Resumen de Promociones</h4>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <Card>
+                              <CardContent className="p-4 text-center">
+                                <p className="text-2xl font-bold text-primary">{monthlyReport.promoSummary.total}</p>
+                                <p className="text-sm text-gray-600">Total promociones</p>
+                              </CardContent>
+                            </Card>
+                            <Card>
+                              <CardContent className="p-4 text-center">
+                                <p className="text-2xl font-bold text-green-600">{monthlyReport.promoSummary.active}</p>
+                                <p className="text-sm text-gray-600">Activas</p>
+                              </CardContent>
+                            </Card>
+                            <Card>
+                              <CardContent className="p-4 text-center">
+                                <p className="text-2xl font-bold text-gray-600">{monthlyReport.promoSummary.completed}</p>
+                                <p className="text-sm text-gray-600">Completadas</p>
+                              </CardContent>
+                            </Card>
+                            <Card>
+                              <CardContent className="p-4 text-center">
+                                <p className="text-2xl font-bold text-green-600">${monthlyReport.promoSummary.totalRevenue.toLocaleString()}</p>
+                                <p className="text-sm text-gray-600">Ingresos totales</p>
+                              </CardContent>
+                            </Card>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                )}
+
+                {/* Mensaje cuando no hay informe generado */}
+                {reportType === 'daily' && !dailyReport && (
+                  <Card>
+                    <CardContent className="p-8 text-center">
+                      <p className="text-gray-500">Haz clic en "Diario" para generar el informe del día</p>
+                    </CardContent>
+                  </Card>
+                )}
+                {reportType === 'weekly' && !weeklyReport && (
+                  <Card>
+                    <CardContent className="p-8 text-center">
+                      <p className="text-gray-500">Haz clic en "Semanal" para generar el informe de la semana</p>
+                    </CardContent>
+                  </Card>
+                )}
+                {reportType === 'monthly' && !monthlyReport && (
+                  <Card>
+                    <CardContent className="p-8 text-center">
+                      <p className="text-gray-500">Haz clic en "Mensual" para generar el informe del mes</p>
+                    </CardContent>
+                  </Card>
+                )}
+              </>
+            )}
           </div>
         )}
 

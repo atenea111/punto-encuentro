@@ -4,15 +4,19 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --background: oklch(1 0 0);
+  /* Fondo con petróleo de baja opacidad */
+  --background: oklch(0.98 0.01 200);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  /* Updated primary color to purple #7E57C2 for Punto Encuentro branding */
-  --primary: oklch(0.55 0.15 285);
+  /* Color petróleo como primary - basado en bandera de Carmen de Areco */
+  --primary: oklch(0.35 0.08 200);
   --primary-foreground: oklch(1 0 0);
+  /* Color naranja para botones rectangulares */
+  --orange: oklch(0.65 0.18 45);
+  --orange-foreground: oklch(1 0 0);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
@@ -47,9 +51,11 @@
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.145 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  /* Updated dark mode primary to maintain purple branding */
-  --primary: oklch(0.65 0.15 285);
+  /* Color petróleo en modo oscuro */
+  --primary: oklch(0.45 0.08 200);
   --primary-foreground: oklch(0.145 0 0);
+  --orange: oklch(0.7 0.18 45);
+  --orange-foreground: oklch(0.145 0 0);
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
@@ -101,6 +107,8 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
+  --color-orange: var(--orange);
+  --color-orange-foreground: var(--orange-foreground);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -121,6 +129,8 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* Fondo con petróleo de baja opacidad */
+    background-color: oklch(0.98 0.01 200);
   }
 }
 

@@ -68,6 +68,16 @@ export function useBookings() {
         createdAt: new Date(),
         updatedAt: new Date()
       })
+      
+      // Actualizar la lista local de reservas
+      const newBooking: Booking = {
+        id: docRef.id,
+        ...bookingData,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+      setBookings(prev => [newBooking, ...prev])
+      
       return { success: true, id: docRef.id }
     } catch (error: any) {
       return { success: false, error: error.message }
@@ -81,6 +91,16 @@ export function useBookings() {
         ...bookingData,
         updatedAt: new Date()
       })
+      
+      // Actualizar la lista local
+      setBookings(prev => 
+        prev.map(booking => 
+          booking.id === id 
+            ? { ...booking, ...bookingData, updatedAt: new Date() }
+            : booking
+        )
+      )
+      
       return { success: true }
     } catch (error: any) {
       return { success: false, error: error.message }
@@ -94,6 +114,16 @@ export function useBookings() {
         status: 'cancelled',
         updatedAt: new Date()
       })
+      
+      // Actualizar la lista local
+      setBookings(prev => 
+        prev.map(booking => 
+          booking.id === id 
+            ? { ...booking, status: 'cancelled' as const, updatedAt: new Date() }
+            : booking
+        )
+      )
+      
       return { success: true }
     } catch (error: any) {
       return { success: false, error: error.message }

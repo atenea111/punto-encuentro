@@ -60,6 +60,7 @@ export default function HomePage() {
     | "subscription"
   >("onboarding")
   const [selectedService, setSelectedService] = useState<any>(null)
+  const [selectedProviderService, setSelectedProviderService] = useState<any>(null)
   const [selectedDate, setSelectedDate] = useState<string>("")
   const [selectedTime, setSelectedTime] = useState<string>("")
   const [searchTerm, setSearchTerm] = useState("")
@@ -183,6 +184,8 @@ export default function HomePage() {
         setSearchTerm={setSearchTerm}
         searchServices={searchServices}
         user={user}
+        createBooking={createBooking}
+        logout={logout}
       />
     )
   }
@@ -201,6 +204,9 @@ export default function HomePage() {
         services={services}
         createService={createService}
         user={user}
+        logout={logout}
+        selectedProviderService={selectedProviderService}
+        setSelectedProviderService={setSelectedProviderService}
       />
     )
   }
@@ -283,7 +289,10 @@ function ProviderFlow({
   authSuccess, 
   services, 
   createService, 
-  user 
+  user,
+  logout,
+  selectedProviderService,
+  setSelectedProviderService
 }: { 
   flow: string
   setFlow: (flow: any) => void
@@ -296,6 +305,9 @@ function ProviderFlow({
   services: any[]
   createService: (serviceData: any) => Promise<{success: boolean, error?: string}>
   user: any
+  logout: () => Promise<{ success: boolean }>
+  selectedProviderService: any
+  setSelectedProviderService: (service: any) => void
 }) {
   if (flow === "login") {
     return <ProviderLogin setFlow={setFlow} signIn={signIn} setAuthError={setAuthError} authError={authError} setAuthSuccess={setAuthSuccess} authSuccess={authSuccess} />
@@ -310,7 +322,7 @@ function ProviderFlow({
   }
 
   if (flow === "profile") {
-    return <ProviderProfile setFlow={setFlow} user={user} />
+    return <ProviderProfile setFlow={setFlow} user={user} logout={logout} />
   }
 
   if (flow === "agenda") {
@@ -318,7 +330,7 @@ function ProviderFlow({
   }
 
   if (flow === "services") {
-    return <ProviderServices setFlow={setFlow} services={services} user={user} />
+    return <ProviderServices setFlow={setFlow} services={services} user={user} setSelectedProviderService={setSelectedProviderService} />
   }
 
   if (flow === "create-service") {
@@ -326,11 +338,15 @@ function ProviderFlow({
   }
 
   if (flow === "edit-service") {
-    return <EditService setFlow={setFlow} />
+    return <EditService setFlow={setFlow} user={user} service={selectedProviderService} />
   }
 
   if (flow === "subscription") {
     return <ProviderSubscription setFlow={setFlow} />
+  }
+
+  if (flow === "statistics") {
+    return <ProviderStatistics setFlow={setFlow} user={user} services={services} />
   }
 
   return <ProviderOnboarding setFlow={setFlow} />
@@ -355,7 +371,9 @@ function ClientFlow({
   searchTerm,
   setSearchTerm,
   searchServices,
-  user
+  user,
+  createBooking,
+  logout
 }: {
   flow: string
   setFlow: (flow: any) => void
@@ -376,6 +394,8 @@ function ClientFlow({
   setSearchTerm: (term: string) => void
   searchServices: (term: string) => any[]
   user: any
+  createBooking: (bookingData: any) => Promise<{success: boolean, error?: string}>
+  logout: () => Promise<{ success: boolean }>
 }) {
   if (flow === "login") {
     return <ClientLogin setFlow={setFlow} signIn={signIn} setAuthError={setAuthError} authError={authError} setAuthSuccess={setAuthSuccess} authSuccess={authSuccess} />
@@ -400,7 +420,7 @@ function ClientFlow({
   }
 
   if (flow === "profile") {
-    return <ClientProfile setFlow={setFlow} user={user} />
+    return <ClientProfile setFlow={setFlow} user={user} logout={logout} />
   }
 
   if (flow === "agenda") {
@@ -431,6 +451,8 @@ function ClientFlow({
         selectedDate={selectedDate}
         selectedTime={selectedTime}
         setFlow={setFlow}
+        user={user}
+        createBooking={createBooking}
       />
     )
   }
@@ -597,15 +619,47 @@ function ClientRegister({ setFlow, signUp, setAuthError, authError, setAuthSucce
     setAuthError("")
     setAuthSuccess("")
 
-    const result = await signUp(email, password)
-    
-    if (result.success) {
-      setAuthSuccess("¡Cuenta creada exitosamente! Bienvenido a Punto Encuentro.")
-      setTimeout(() => {
-        setFlow("home")
-      }, 2000)
-    } else {
-      setAuthError(result.error || "Error al registrarse")
+    try {
+      const result = await signUp(email, password)
+      
+      if (result.success) {
+        // Obtener el usuario actual de Firebase Auth
+        const { auth } = await import("@/lib/firebase")
+        const currentUser = auth.currentUser
+        
+        if (currentUser) {
+          // Actualizar perfil con nombre
+          const { updateProfile } = await import("firebase/auth")
+          
+          if (name) {
+            await updateProfile(currentUser, { displayName: name })
+          }
+          
+          // Guardar usuario en Firestore con rol de cliente
+          const { doc, setDoc } = await import("firebase/firestore")
+          const { db } = await import("@/lib/firebase")
+          
+          await setDoc(doc(db, 'users', currentUser.uid), {
+            email: email,
+            displayName: name,
+            role: 'client',
+            permissions: [],
+            isActive: true,
+            createdAt: new Date(),
+            updatedAt: new Date()
+          })
+        }
+        
+        setAuthSuccess("¡Cuenta creada exitosamente! Bienvenido a Punto Encuentro.")
+        setTimeout(() => {
+          setFlow("home")
+        }, 2000)
+      } else {
+        setAuthError(result.error || "Error al registrarse")
+      }
+    } catch (error: any) {
+      console.error('Error en registro:', error)
+      setAuthError(error.message || "Error al registrarse")
     }
     
     setLoading(false)
@@ -859,7 +913,7 @@ function ClientHome({
                   {/* Contenido sobre la imagen */}
                   <div className="absolute bottom-0 left-0 right-0 p-4 text-white">
                     <div className="flex flex-col gap-2 mb-2">
-                      <span className="text-base font-medium">{service.provider}</span>
+                      <span className="text-base font-medium">{service.providerName || 'Proveedor'}</span>
                       <span className="text-xs bg-white/20 backdrop-blur-sm px-2 py-0.5 rounded text-white self-start">
                         {service.category}
                       </span>
@@ -930,7 +984,7 @@ function ClientHome({
                     {/* Contenido sobre la imagen */}
                     <div className="absolute bottom-0 left-0 right-0 p-4 text-white">
                       <div className="flex items-center gap-2 mb-1">
-                        <span className="text-base font-medium">{service.provider}</span>
+                        <span className="text-base font-medium">{service.providerName || 'Proveedor'}</span>
                         <span className="text-xs bg-white/20 backdrop-blur-sm px-2 py-0.5 rounded text-white">
                           {service.category}
                         </span>
@@ -1034,7 +1088,7 @@ function ClientHome({
                   {/* Contenido sobre la imagen */}
                   <div className="absolute bottom-0 left-0 right-0 p-4 text-white">
                     <div className="flex flex-col gap-2 mb-2">
-                      <span className="text-base font-medium">{service.provider}</span>
+                      <span className="text-base font-medium">{service.providerName || 'Proveedor'}</span>
                       <span className="text-xs bg-white/20 backdrop-blur-sm px-2 py-0.5 rounded text-white self-start">
                         {service.category}
                       </span>
@@ -1250,23 +1304,34 @@ function ClientHome({
 }
 
 function ServiceDetail({ service, setFlow }: { service: any; setFlow: (flow: string) => void }) {
-  if (!service) return null
+  if (!service) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
+        <Card>
+          <CardContent className="p-6 text-center">
+            <p className="text-muted-foreground mb-4">Servicio no encontrado</p>
+            <Button onClick={() => setFlow("home")}>Volver al inicio</Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
       {/* Header */}
       <div className="bg-white shadow-sm p-4">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="sm" onClick={() => setFlow("home")}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <h1 className="text-xl font-bold">Detalle del Servicio</h1>
+          <h1 className="text-xl font-bold text-primary">Detalle del Servicio</h1>
         </div>
       </div>
 
       <div className="p-4 space-y-4">
         {/* Service Image */}
-        <Card>
+        <Card className="bg-white">
           <CardContent className="p-0">
             <img
               src={service.image || "/placeholder.svg"}
@@ -1276,39 +1341,49 @@ function ServiceDetail({ service, setFlow }: { service: any; setFlow: (flow: str
             <div className="p-4">
               <div className="flex justify-between items-start mb-2">
                 <h2 className="text-2xl font-bold">{service.name}</h2>
-                <span className="text-2xl font-bold text-primary">{service.price}</span>
+                <span className="text-2xl font-bold text-primary">${service.price}</span>
               </div>
 
               <div className="flex items-center gap-2 mb-3">
                 <Star className="h-5 w-5 fill-yellow-400 text-yellow-400" />
-                <span className="font-semibold">{service.rating}</span>
+                <span className="font-semibold">{service.rating || 0}</span>
+                <span className="text-muted-foreground">• {service.reviews || 0} reseñas</span>
                 <span className="text-muted-foreground">• {service.category}</span>
               </div>
 
-              <p className="text-muted-foreground">{service.description}</p>
+              <p className="text-muted-foreground mb-3">{service.description || 'Sin descripción'}</p>
+              
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <User className="h-4 w-4" />
+                <span>{service.providerName || 'Proveedor'}</span>
+              </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* Contact Information */}
-        <Card>
+        {/* Service Info */}
+        <Card className="bg-white">
           <CardContent className="p-4">
-            <h3 className="font-semibold mb-3">Información de contacto</h3>
-            <div className="space-y-3">
-              <div className="flex items-center gap-3">
-                <Mail className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm">{service.contact.email}</span>
+            <h3 className="font-semibold mb-3">Información del servicio</h3>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Duración:</span>
+                <span className="font-medium">{(service as any).duration || 60} minutos</span>
               </div>
-              <div className="flex items-center gap-3">
-                <Phone className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm">{service.contact.phone}</span>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Categoría:</span>
+                <span className="font-medium">{service.category}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Precio:</span>
+                <span className="font-bold text-primary">${service.price}</span>
               </div>
             </div>
           </CardContent>
         </Card>
 
         {/* Action Button */}
-        <Button onClick={() => setFlow("booking")} className="w-full h-12 text-base">
+        <Button onClick={() => setFlow("booking")} className="w-full h-12 text-base" variant="orange">
           Agendar turno
         </Button>
       </div>
@@ -1395,7 +1470,7 @@ function BookingCalendar({
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
       {/* Header */}
       <div className="bg-white shadow-sm p-4">
         <div className="flex items-center gap-3">
@@ -1499,14 +1574,19 @@ function PaymentScreen({
   selectedDate,
   selectedTime,
   setFlow,
+  user,
+  createBooking,
 }: {
   service: any
   selectedDate: string
   selectedTime: string
   setFlow: (flow: string) => void
+  user: any
+  createBooking: (bookingData: any) => Promise<{success: boolean, error?: string}>
 }) {
   const [selectedPayment, setSelectedPayment] = useState<string>("")
   const [showTransferDetails, setShowTransferDetails] = useState(false)
+  const [loading, setLoading] = useState(false)
 
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr)
@@ -1527,14 +1607,49 @@ function PaymentScreen({
     }
   }
 
-  const handleConfirmPayment = () => {
-    // Simulate payment processing
-    alert("¡Turno confirmado! Recibirás un email de confirmación.")
-    setFlow("home")
+  const handleConfirmPayment = async () => {
+    if (!selectedPayment || !user || !service) {
+      alert("Por favor completa todos los campos")
+      return
+    }
+
+    setLoading(true)
+    
+    try {
+      const bookingData = {
+        serviceId: service.id,
+        serviceName: service.name,
+        clientId: user.uid,
+        clientName: user.displayName || user.email || 'Cliente',
+        clientEmail: user.email || '',
+        providerId: service.providerId,
+        providerName: service.providerName || 'Proveedor',
+        date: selectedDate,
+        time: selectedTime,
+        price: typeof service.price === 'string' ? parseFloat(service.price.replace('$', '')) : service.price,
+        status: 'pending' as const,
+        paymentMethod: selectedPayment as 'cash' | 'mercadopago' | 'transfer',
+        paymentStatus: selectedPayment === 'cash' ? 'pending' as const : 'paid' as const,
+      }
+
+      const result = await createBooking(bookingData)
+      
+      if (result.success) {
+        alert("¡Turno confirmado! Recibirás un email de confirmación.")
+        setFlow("home")
+      } else {
+        alert("Error al confirmar el turno. Por favor intenta nuevamente.")
+      }
+    } catch (error: any) {
+      console.error('Error creating booking:', error)
+      alert("Error al confirmar el turno. Por favor intenta nuevamente.")
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
       {/* Header */}
       <div className="bg-white shadow-sm p-4">
         <div className="flex items-center gap-3">
@@ -1627,59 +1742,265 @@ function PaymentScreen({
         )}
 
         {/* Confirm Payment */}
-        <Button onClick={handleConfirmPayment} disabled={!selectedPayment} className="w-full h-12 text-base">
-          Confirmar pago
+        <Button 
+          onClick={handleConfirmPayment} 
+          disabled={!selectedPayment || loading} 
+          className="w-full h-12 text-base"
+          variant="orange"
+        >
+          {loading ? "Confirmando..." : "Confirmar pago"}
         </Button>
       </div>
     </div>
   )
 }
 
-function ClientProfile({ setFlow, user }: { setFlow: (flow: string) => void; user: any }) {
+function ClientProfile({ setFlow, user, logout }: { setFlow: (flow: string) => void; user: any; logout: () => Promise<{ success: boolean }> }) {
   const { getBookingsByClient } = useBookings()
+  const [loading, setLoading] = useState(false)
+  const [isEditing, setIsEditing] = useState(false)
+  const [profileData, setProfileData] = useState({
+    name: user?.displayName || "",
+    email: user?.email || "",
+    phone: "",
+    address: "",
+    profileImage: "/placeholder.svg"
+  })
+  const [uploadingImage, setUploadingImage] = useState(false)
+  const [success, setSuccess] = useState("")
+  
+  const handleLogout = async () => {
+    setLoading(true)
+    try {
+      const result = await logout()
+      if (result.success) {
+        localStorage.removeItem('userType')
+        window.location.reload()
+      }
+    } catch (error) {
+      console.error('Error al cerrar sesión:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleSave = async () => {
+    setLoading(true)
+    try {
+      const { doc, setDoc } = await import("firebase/firestore")
+      const { db } = await import("@/lib/firebase")
+      const { updateProfile } = await import("firebase/auth")
+      const { auth } = await import("@/lib/firebase")
+      
+      if (user?.uid) {
+        // Actualizar perfil de Firebase Auth
+        if (profileData.name) {
+          await updateProfile(auth.currentUser!, { displayName: profileData.name })
+        }
+        
+        // Actualizar en Firestore
+        await setDoc(doc(db, 'users', user.uid), {
+          ...profileData,
+          updatedAt: new Date()
+        }, { merge: true })
+        
+        setSuccess("¡Perfil actualizado exitosamente!")
+        setIsEditing(false)
+        setTimeout(() => setSuccess(""), 3000)
+      }
+    } catch (error) {
+      console.error("Error al guardar perfil:", error)
+      setSuccess("Error al guardar el perfil")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    // Validar tipo de archivo
+    if (!file.type.startsWith('image/')) {
+      alert('Por favor selecciona un archivo de imagen válido')
+      return
+    }
+
+    // Validar tamaño (máximo 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      alert('La imagen es demasiado grande. Máximo 5MB')
+      return
+    }
+
+    setUploadingImage(true)
+    
+    // Crear URL temporal para mostrar la imagen inmediatamente
+    const imageUrl = URL.createObjectURL(file)
+    setProfileData(prev => ({ ...prev, profileImage: imageUrl }))
+    
+    // Simular subida a Firebase Storage
+    setTimeout(() => {
+      console.log('Imagen de perfil subida exitosamente:', file.name)
+      setUploadingImage(false)
+      setSuccess('¡Imagen de perfil actualizada!')
+      setTimeout(() => setSuccess(""), 3000)
+    }, 1500)
+  }
+
+  const handleInputChange = (field: string, value: string) => {
+    setProfileData(prev => ({ ...prev, [field]: value }))
+  }
   
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
       <div className="bg-white shadow-sm p-4">
         <div className="flex items-center gap-3 mb-4">
           <Button variant="ghost" size="sm" onClick={() => setFlow("home")}>
-            ← Volver
+            <ArrowLeft className="h-4 w-4" />
           </Button>
-          <h1 className="text-xl font-bold">Mi Perfil</h1>
+          <h1 className="text-xl font-bold text-primary">Mi Perfil</h1>
         </div>
       </div>
 
+      {success && (
+        <div className="p-4">
+          <CustomAlert
+            type="success"
+            title="¡Éxito!"
+            message={success}
+            onClose={() => setSuccess("")}
+          />
+        </div>
+      )}
+
       <div className="p-4 space-y-4">
-        <Card>
+        <Card className="bg-white">
           <CardContent className="p-6 space-y-4">
             <div className="text-center">
-              <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-3">
-                <span className="text-2xl font-bold text-primary">
-                  {(user?.displayName?.charAt(0) || user?.email?.charAt(0) || 'U').toUpperCase()}
-                </span>
+              <div className="relative inline-block">
+                <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-3 overflow-hidden">
+                  {profileData.profileImage && profileData.profileImage !== "/placeholder.svg" ? (
+                    <img 
+                      src={profileData.profileImage} 
+                      alt="Profile" 
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <span className="text-2xl font-bold text-primary">
+                      {(user?.displayName?.charAt(0) || user?.email?.charAt(0) || 'U').toUpperCase()}
+                    </span>
+                  )}
+                </div>
+                {uploadingImage && (
+                  <div className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center">
+                    <div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"></div>
+                  </div>
+                )}
+                {isEditing && (
+                  <div className="absolute -bottom-2 -right-2">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleImageUpload}
+                      className="hidden"
+                      id="client-profile-upload"
+                    />
+                    <Button 
+                      size="sm" 
+                      variant="secondary" 
+                      className="w-8 h-8 rounded-full p-0"
+                      onClick={() => document.getElementById('client-profile-upload')?.click()}
+                      disabled={uploadingImage}
+                    >
+                      {uploadingImage ? '⏳' : '📷'}
+                    </Button>
+                  </div>
+                )}
               </div>
-              <h2 className="text-xl font-semibold">
-                {user?.displayName || 'Usuario'}
-              </h2>
-              <p className="text-muted-foreground">
-                {user?.email || 'Sin email'}
-              </p>
+              {isEditing ? (
+                <div className="space-y-3 mt-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="client-name">Nombre</Label>
+                    <Input
+                      id="client-name"
+                      value={profileData.name}
+                      onChange={(e) => handleInputChange("name", e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="client-email">Email</Label>
+                    <Input
+                      id="client-email"
+                      type="email"
+                      value={profileData.email}
+                      onChange={(e) => handleInputChange("email", e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="client-phone">Teléfono</Label>
+                    <Input
+                      id="client-phone"
+                      value={profileData.phone}
+                      onChange={(e) => handleInputChange("phone", e.target.value)}
+                      placeholder="11 1234-5678"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="client-address">Dirección</Label>
+                    <Input
+                      id="client-address"
+                      value={profileData.address}
+                      onChange={(e) => handleInputChange("address", e.target.value)}
+                      placeholder="Calle, número, ciudad"
+                    />
+                  </div>
+                  <div className="flex gap-3 pt-2">
+                    <Button variant="outline" onClick={() => setIsEditing(false)} className="flex-1">
+                      Cancelar
+                    </Button>
+                    <Button onClick={handleSave} disabled={loading} className="flex-1">
+                      {loading ? "Guardando..." : "Guardar"}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <h2 className="text-xl font-semibold">
+                    {profileData.name || user?.displayName || 'Usuario'}
+                  </h2>
+                  <p className="text-muted-foreground">
+                    {profileData.email || user?.email || 'Sin email'}
+                  </p>
+                  {profileData.phone && (
+                    <p className="text-sm text-muted-foreground mt-1">
+                      📞 {profileData.phone}
+                    </p>
+                  )}
+                  <Button 
+                    variant="outline" 
+                    className="w-full bg-transparent mt-4"
+                    onClick={() => setIsEditing(true)}
+                  >
+                    Editar perfil
+                  </Button>
+                </>
+              )}
             </div>
-
-            <Button variant="outline" className="w-full bg-transparent">
-              Editar perfil
-            </Button>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="bg-white">
           <CardContent className="p-4 space-y-3">
-            <h3 className="font-semibold">Mis reservas</h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold">Mis reservas</h3>
+              <Button variant="ghost" size="sm" onClick={() => setFlow("agenda")}>
+                Ver todas
+              </Button>
+            </div>
             <div className="space-y-2">
               {user ? (
                 (() => {
                   const userBookings = getBookingsByClient(user.uid) || []
-                  console.log('User bookings:', userBookings) // Debug log
                   return userBookings.length > 0 ? (
                     userBookings.slice(0, 3).map((booking) => (
                       <div key={booking.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
@@ -1727,8 +2048,13 @@ function ClientProfile({ setFlow, user }: { setFlow: (flow: string) => void; use
           </CardContent>
         </Card>
 
-        <Button variant="destructive" className="w-full" onClick={() => window.location.reload()}>
-          Cerrar sesión
+        <Button 
+          variant="destructive" 
+          className="w-full" 
+          onClick={handleLogout}
+          disabled={loading}
+        >
+          {loading ? "Cerrando sesión..." : "Cerrar sesión"}
         </Button>
       </div>
     </div>
@@ -1736,12 +2062,35 @@ function ClientProfile({ setFlow, user }: { setFlow: (flow: string) => void; use
 }
 
 function ClientAgenda({ setFlow, user }: { setFlow: (flow: string) => void; user: any }) {
-  const { getBookingsByClient } = useBookings()
+  const { getBookingsByClient, cancelBooking, fetchBookings } = useBookings()
   const [selectedDate, setSelectedDate] = useState<string>("")
   const [currentMonth, setCurrentMonth] = useState(new Date())
+  const [loading, setLoading] = useState(false)
 
   // Obtener reservas del cliente
   const clientBookings = getBookingsByClient(user?.uid) || []
+
+  const handleCancelBooking = async (bookingId: string) => {
+    if (!confirm('¿Estás seguro de que quieres cancelar esta reserva?')) {
+      return
+    }
+    
+    setLoading(true)
+    try {
+      const result = await cancelBooking(bookingId)
+      if (result.success) {
+        await fetchBookings() // Refrescar la lista
+        alert('Reserva cancelada exitosamente')
+      } else {
+        alert('Error al cancelar la reserva')
+      }
+    } catch (error) {
+      console.error('Error canceling booking:', error)
+      alert('Error al cancelar la reserva')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   // Generar días del mes actual
   const generateCalendarDays = () => {
@@ -1812,7 +2161,7 @@ function ClientAgenda({ setFlow, user }: { setFlow: (flow: string) => void; user
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
       <div className="bg-white shadow-sm p-4">
         <div className="flex items-center gap-3 mb-4">
           <Button variant="ghost" size="sm" onClick={() => setFlow("home")}>
@@ -1918,23 +2267,36 @@ function ClientAgenda({ setFlow, user }: { setFlow: (flow: string) => void; user
                         <p className="text-sm text-muted-foreground">
                           {booking.time} - {booking.providerName}
                         </p>
-                        <p className="text-sm text-muted-foreground">
-                          ${booking.price}
-                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className={`text-xs px-2 py-1 rounded-full ${
+                            booking.status === 'confirmed' 
+                              ? 'bg-green-100 text-green-800'
+                              : booking.status === 'pending'
+                              ? 'bg-yellow-100 text-yellow-800'
+                              : booking.status === 'cancelled'
+                              ? 'bg-red-100 text-red-800'
+                              : 'bg-blue-100 text-blue-800'
+                          }`}>
+                            {booking.status === 'confirmed' ? 'Confirmada' :
+                             booking.status === 'pending' ? 'Pendiente' :
+                             booking.status === 'cancelled' ? 'Cancelada' : 'Completada'}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            ${booking.price || 0}
+                          </span>
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <span className={`text-xs px-2 py-1 rounded-full ${
-                          booking.status === 'confirmed' 
-                            ? 'bg-green-100 text-green-800'
-                            : booking.status === 'pending'
-                            ? 'bg-yellow-100 text-yellow-800'
-                            : 'bg-red-100 text-red-800'
-                        }`}>
-                          {booking.status === 'confirmed' ? 'Confirmada' :
-                           booking.status === 'pending' ? 'Pendiente' :
-                           booking.status === 'cancelled' ? 'Cancelada' : 'Completada'}
-                        </span>
-                      </div>
+                      {booking.status !== 'cancelled' && booking.status !== 'completed' && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleCancelBooking(booking.id)}
+                          disabled={loading}
+                          className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                        >
+                          Cancelar
+                        </Button>
+                      )}
                     </div>
                   ))
                 ) : (
@@ -2159,15 +2521,51 @@ function ProviderRegister({
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
     setAuthError("")
+    setAuthSuccess("")
     
-    const result = await signUp(formData.email, formData.password)
-    if (result.success) {
-      setAuthSuccess("¡Registro exitoso! Bienvenido a Punto Encuentro")
-      setTimeout(() => {
-        setFlow("dashboard")
-      }, 2000)
-    } else {
-      setAuthError(result.error || "Error al registrarse")
+    try {
+      const result = await signUp(formData.email, formData.password)
+      
+      if (result.success) {
+        // Obtener el usuario actual de Firebase Auth
+        const { auth } = await import("@/lib/firebase")
+        const currentUser = auth.currentUser
+        
+        if (currentUser) {
+          // Actualizar perfil con nombre del negocio
+          const { updateProfile } = await import("firebase/auth")
+          
+          if (formData.businessName) {
+            await updateProfile(currentUser, { displayName: formData.businessName })
+          }
+          
+          // Guardar usuario en Firestore con rol de proveedor
+          const { doc, setDoc } = await import("firebase/firestore")
+          const { db } = await import("@/lib/firebase")
+          
+          await setDoc(doc(db, 'users', currentUser.uid), {
+            email: formData.email,
+            displayName: formData.businessName,
+            phone: formData.phone,
+            role: 'provider',
+            permissions: [],
+            isActive: true,
+            isVerified: false, // Requiere verificación del admin
+            createdAt: new Date(),
+            updatedAt: new Date()
+          })
+        }
+        
+        setAuthSuccess("¡Registro exitoso! Bienvenido a Punto Encuentro")
+        setTimeout(() => {
+          setFlow("dashboard")
+        }, 2000)
+      } else {
+        setAuthError(result.error || "Error al registrarse")
+      }
+    } catch (error: any) {
+      console.error('Error en registro:', error)
+      setAuthError(error.message || "Error al registrarse")
     }
   }
 
@@ -2305,7 +2703,7 @@ function ProviderDashboard({ setFlow, user, services }: { setFlow: (flow: string
   const [isSubscribed, setIsSubscribed] = useState(false)
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
       {/* Header */}
       <div className="bg-white shadow-sm p-4">
         <div className="flex items-center justify-between mb-4">
@@ -2438,7 +2836,7 @@ function ProviderDashboard({ setFlow, user, services }: { setFlow: (flow: string
   )
 }
 
-function ProviderProfile({ setFlow, user }: { setFlow: (flow: string) => void; user: any }) {
+function ProviderProfile({ setFlow, user, logout }: { setFlow: (flow: string) => void; user: any; logout: () => Promise<{ success: boolean }> }) {
   const [profileData, setProfileData] = useState({
     businessName: user?.displayName || "Mi Negocio",
     email: user?.email || "",
@@ -2468,13 +2866,46 @@ function ProviderProfile({ setFlow, user }: { setFlow: (flow: string) => void; u
   const handleSave = async () => {
     setLoading(true)
     try {
-      // Aquí se guardaría en Firebase
-      console.log("Guardando perfil:", profileData)
-      setSuccess("¡Perfil actualizado exitosamente!")
-      setIsEditing(false)
-      setTimeout(() => setSuccess(""), 3000)
+      // Guardar en Firestore
+      const { doc, setDoc } = await import("firebase/firestore")
+      const { db } = await import("@/lib/firebase")
+      const { updateProfile } = await import("firebase/auth")
+      const { auth } = await import("@/lib/firebase")
+      
+      if (user?.uid) {
+        // Actualizar perfil de Firebase Auth
+        if (profileData.businessName) {
+          await updateProfile(auth.currentUser!, { displayName: profileData.businessName })
+        }
+        
+        // Actualizar en Firestore
+        await setDoc(doc(db, 'users', user.uid), {
+          ...profileData,
+          updatedAt: new Date()
+        }, { merge: true })
+        
+        setSuccess("¡Perfil actualizado exitosamente!")
+        setIsEditing(false)
+        setTimeout(() => setSuccess(""), 3000)
+      }
     } catch (error) {
       console.error("Error al guardar perfil:", error)
+      setSuccess("Error al guardar el perfil")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleLogout = async () => {
+    setLoading(true)
+    try {
+      const result = await logout()
+      if (result.success) {
+        localStorage.removeItem('userType')
+        window.location.reload()
+      }
+    } catch (error) {
+      console.error('Error al cerrar sesión:', error)
     } finally {
       setLoading(false)
     }
@@ -2530,7 +2961,7 @@ function ProviderProfile({ setFlow, user }: { setFlow: (flow: string) => void; u
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
       <div className="bg-white shadow-sm p-4">
         <div className="flex items-center gap-3 mb-4">
           <Button variant="ghost" size="sm" onClick={() => setFlow("dashboard")}>
@@ -2570,23 +3001,31 @@ function ProviderProfile({ setFlow, user }: { setFlow: (flow: string) => void; u
                   </div>
                 </div>
               )}
-              <div className="absolute top-2 right-2">
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => handleImageUpload('cover', e)}
-                  className="hidden"
-                  id="cover-upload"
-                />
-                <Button 
-                  size="sm" 
-                  variant="secondary"
-                  onClick={() => document.getElementById('cover-upload')?.click()}
-                  disabled={uploadingImage === 'cover'}
-                >
-                  {uploadingImage === 'cover' ? 'Subiendo...' : 'Cambiar portada'}
-                </Button>
-              </div>
+              {isEditing && (
+                <div className="absolute top-2 right-2">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => handleImageUpload('cover', e)}
+                    className="hidden"
+                    id="cover-upload"
+                  />
+                  <Button 
+                    size="sm" 
+                    variant="secondary"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      const input = document.getElementById('cover-upload')
+                      if (input) {
+                        input.click()
+                      }
+                    }}
+                    disabled={uploadingImage === 'cover'}
+                  >
+                    {uploadingImage === 'cover' ? 'Subiendo...' : 'Cambiar portada'}
+                  </Button>
+                </div>
+              )}
             </div>
             
             {/* Profile Image */}
@@ -2603,24 +3042,32 @@ function ProviderProfile({ setFlow, user }: { setFlow: (flow: string) => void; u
                       <div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"></div>
                     </div>
                   )}
-                  <div className="absolute -bottom-2 -right-2">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => handleImageUpload('profile', e)}
-                      className="hidden"
-                      id="profile-upload"
-                    />
-                    <Button 
-                      size="sm" 
-                      variant="secondary" 
-                      className="w-8 h-8 rounded-full p-0"
-                      onClick={() => document.getElementById('profile-upload')?.click()}
-                      disabled={uploadingImage === 'profile'}
-                    >
-                      {uploadingImage === 'profile' ? '⏳' : '📷'}
-                    </Button>
-                  </div>
+                  {isEditing && (
+                    <div className="absolute -bottom-2 -right-2">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => handleImageUpload('profile', e)}
+                        className="hidden"
+                        id="profile-upload"
+                      />
+                      <Button 
+                        size="sm" 
+                        variant="secondary" 
+                        className="w-8 h-8 rounded-full p-0"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const input = document.getElementById('profile-upload')
+                          if (input) {
+                            input.click()
+                          }
+                        }}
+                        disabled={uploadingImage === 'profile'}
+                      >
+                        {uploadingImage === 'profile' ? '⏳' : '📷'}
+                      </Button>
+                    </div>
+                  )}
                 </div>
                 <div className="flex-1 pb-2">
                   <h2 className="text-xl font-semibold">{profileData.businessName}</h2>
@@ -2753,6 +3200,21 @@ function ProviderProfile({ setFlow, user }: { setFlow: (flow: string) => void; u
           </CardContent>
         </Card>
 
+        {/* Mis Estadísticas - Solo para Pro */}
+        <Card className="border-primary/20 bg-gradient-to-r from-primary/5 to-primary/10">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold mb-1">Mis Estadísticas</h3>
+                <p className="text-sm text-muted-foreground">Visualiza el rendimiento de tus anuncios (Solo Pro)</p>
+              </div>
+              <Button onClick={() => setFlow("statistics")} variant="orange">
+                Ver estadísticas
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Settings */}
         <Card>
           <CardContent className="p-6">
@@ -2781,12 +3243,53 @@ function ProviderProfile({ setFlow, user }: { setFlow: (flow: string) => void; u
 }
 
 function ProviderAgenda({ setFlow, user }: { setFlow: (flow: string) => void; user: any }) {
-  const { getBookingsByProvider } = useBookings()
+  const { getBookingsByProvider, updateBooking, fetchBookings } = useBookings()
   const [selectedDate, setSelectedDate] = useState<string>("")
   const [currentMonth, setCurrentMonth] = useState(new Date())
+  const [loading, setLoading] = useState(false)
 
   // Obtener reservas del proveedor
   const providerBookings = getBookingsByProvider(user?.uid) || []
+
+  const handleConfirmBooking = async (bookingId: string) => {
+    setLoading(true)
+    try {
+      const result = await updateBooking(bookingId, { status: 'confirmed' })
+      if (result.success) {
+        await fetchBookings()
+        alert('Reserva confirmada exitosamente')
+      } else {
+        alert('Error al confirmar la reserva')
+      }
+    } catch (error) {
+      console.error('Error confirming booking:', error)
+      alert('Error al confirmar la reserva')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleCancelBooking = async (bookingId: string) => {
+    if (!confirm('¿Estás seguro de que quieres cancelar esta reserva?')) {
+      return
+    }
+    
+    setLoading(true)
+    try {
+      const result = await updateBooking(bookingId, { status: 'cancelled' })
+      if (result.success) {
+        await fetchBookings()
+        alert('Reserva cancelada exitosamente')
+      } else {
+        alert('Error al cancelar la reserva')
+      }
+    } catch (error) {
+      console.error('Error canceling booking:', error)
+      alert('Error al cancelar la reserva')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   // Generar días del mes actual
   const generateCalendarDays = () => {
@@ -2857,7 +3360,7 @@ function ProviderAgenda({ setFlow, user }: { setFlow: (flow: string) => void; us
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
       <div className="bg-white shadow-sm p-4">
         <div className="flex items-center gap-3 mb-4">
           <Button variant="ghost" size="sm" onClick={() => setFlow("dashboard")}>
@@ -2963,23 +3466,45 @@ function ProviderAgenda({ setFlow, user }: { setFlow: (flow: string) => void; us
                         <p className="text-sm text-muted-foreground">
                           {booking.time} - {booking.serviceName}
                         </p>
-                        <p className="text-sm text-muted-foreground">
-                          ${booking.price}
-                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-xs text-muted-foreground">${booking.price || 0}</span>
+                          <span className={`text-xs px-2 py-1 rounded-full ${
+                            booking.status === 'confirmed' 
+                              ? 'bg-green-100 text-green-800'
+                              : booking.status === 'pending'
+                              ? 'bg-yellow-100 text-yellow-800'
+                              : booking.status === 'cancelled'
+                              ? 'bg-red-100 text-red-800'
+                              : 'bg-blue-100 text-blue-800'
+                          }`}>
+                            {booking.status === 'confirmed' ? 'Confirmada' :
+                             booking.status === 'pending' ? 'Pendiente' :
+                             booking.status === 'cancelled' ? 'Cancelada' : 'Completada'}
+                          </span>
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <span className={`text-xs px-2 py-1 rounded-full ${
-                          booking.status === 'confirmed' 
-                            ? 'bg-green-100 text-green-800'
-                            : booking.status === 'pending'
-                            ? 'bg-yellow-100 text-yellow-800'
-                            : 'bg-red-100 text-red-800'
-                        }`}>
-                          {booking.status === 'confirmed' ? 'Confirmada' :
-                           booking.status === 'pending' ? 'Pendiente' :
-                           booking.status === 'cancelled' ? 'Cancelada' : 'Completada'}
-                        </span>
-                      </div>
+                      {booking.status === 'pending' && (
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleConfirmBooking(booking.id)}
+                            disabled={loading}
+                            className="text-green-600 hover:text-green-700"
+                          >
+                            Confirmar
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleCancelBooking(booking.id)}
+                            disabled={loading}
+                            className="text-red-600 hover:text-red-700"
+                          >
+                            Cancelar
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   ))
                 ) : (
@@ -3008,20 +3533,45 @@ function ProviderAgenda({ setFlow, user }: { setFlow: (flow: string) => void; us
                         {new Date(booking.date).toLocaleDateString('es-ES')} - {booking.time}
                       </p>
                       <p className="text-sm text-muted-foreground">{booking.serviceName}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-xs text-muted-foreground">${booking.price || 0}</span>
+                        <span className={`text-xs px-2 py-1 rounded-full ${
+                          booking.status === 'confirmed' 
+                            ? 'bg-green-100 text-green-800'
+                            : booking.status === 'pending'
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : booking.status === 'cancelled'
+                            ? 'bg-red-100 text-red-800'
+                            : 'bg-blue-100 text-blue-800'
+                        }`}>
+                          {booking.status === 'confirmed' ? 'Confirmada' :
+                           booking.status === 'pending' ? 'Pendiente' :
+                           booking.status === 'cancelled' ? 'Cancelada' : 'Completada'}
+                        </span>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <span className={`text-xs px-2 py-1 rounded-full ${
-                        booking.status === 'confirmed' 
-                          ? 'bg-green-100 text-green-800'
-                          : booking.status === 'pending'
-                          ? 'bg-yellow-100 text-yellow-800'
-                          : 'bg-red-100 text-red-800'
-                      }`}>
-                        {booking.status === 'confirmed' ? 'Confirmada' :
-                         booking.status === 'pending' ? 'Pendiente' :
-                         booking.status === 'cancelled' ? 'Cancelada' : 'Completada'}
-                      </span>
-                    </div>
+                    {booking.status === 'pending' && (
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleConfirmBooking(booking.id)}
+                          disabled={loading}
+                          className="text-green-600 hover:text-green-700"
+                        >
+                          Confirmar
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleCancelBooking(booking.id)}
+                          disabled={loading}
+                          className="text-red-600 hover:text-red-700"
+                        >
+                          Cancelar
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 ))
               ) : (
@@ -3038,8 +3588,9 @@ function ProviderAgenda({ setFlow, user }: { setFlow: (flow: string) => void; us
   )
 }
 
-function ProviderServices({ setFlow, services, user }: { setFlow: (flow: string) => void; services: any[]; user: any }) {
+function ProviderServices({ setFlow, services, user, setSelectedProviderService }: { setFlow: (flow: string) => void; services: any[]; user: any; setSelectedProviderService: (service: any) => void }) {
   const { getBookingsByProvider } = useBookings()
+  const { deleteService, updateService } = useServices()
   
   // Filtrar servicios del proveedor actual
   const providerServices = services.filter(service => service.providerId === user?.uid)
@@ -3050,24 +3601,34 @@ function ProviderServices({ setFlow, services, user }: { setFlow: (flow: string)
     return {
       ...service,
       bookings: serviceBookings.length,
-      active: true // Por ahora todos activos
+      active: (service as any).active !== false
     }
   })
 
-  const handleDeleteService = (serviceId: string) => {
+  const handleDeleteService = async (serviceId: string) => {
     if (confirm("¿Estás seguro de que quieres eliminar este servicio?")) {
-      // Aquí se implementaría la eliminación en Firebase
-      console.log("Eliminar servicio:", serviceId)
+      const result = await deleteService(serviceId)
+      if (result.success) {
+        alert("Servicio eliminado exitosamente")
+      } else {
+        alert("Error al eliminar el servicio")
+      }
     }
   }
 
-  const toggleServiceStatus = (serviceId: string) => {
-    // Aquí se implementaría el cambio de estado en Firebase
-    console.log("Cambiar estado del servicio:", serviceId)
+  const toggleServiceStatus = async (serviceId: string) => {
+    const service = providerServices.find(s => s.id === serviceId)
+    if (service) {
+      const newStatus = (service as any).active === false
+      const result = await updateService(serviceId, { active: newStatus } as any)
+      if (result.success) {
+        alert(`Servicio ${newStatus ? 'activado' : 'desactivado'} exitosamente`)
+      }
+    }
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
       <div className="bg-white shadow-sm p-4">
         <div className="flex items-center gap-3 mb-4">
           <Button variant="ghost" size="sm" onClick={() => setFlow("dashboard")}>
@@ -3115,7 +3676,10 @@ function ProviderServices({ setFlow, services, user }: { setFlow: (flow: string)
                   </div>
 
                   <div className="flex gap-2 mt-3">
-                    <Button size="sm" variant="outline" onClick={() => setFlow("edit-service")}>
+                    <Button size="sm" variant="outline" onClick={() => {
+                      setSelectedProviderService(service)
+                      setFlow("edit-service")
+                    }}>
                       Editar
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => toggleServiceStatus(service.id)}>
@@ -3212,7 +3776,7 @@ function CreateService({
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
       <div className="bg-white shadow-sm p-4">
         <div className="flex items-center gap-3 mb-4">
           <Button variant="ghost" size="sm" onClick={() => setFlow("services")}>
@@ -3326,22 +3890,76 @@ function CreateService({
   )
 }
 
-function EditService({ setFlow }: { setFlow: (flow: string) => void }) {
+function EditService({ setFlow, service, user, updateService }: { 
+  setFlow: (flow: string) => void
+  service?: any
+  user?: any
+  updateService?: (id: string, data: any) => Promise<{success: boolean, error?: string}>
+}) {
+  const { updateService: updateServiceHook } = useServices()
+  const updateServiceFn = updateService || updateServiceHook
+  
   const [formData, setFormData] = useState({
-    name: "Masaje descontracturante",
-    description: "Masaje terapéutico para aliviar tensiones musculares y contracturas.",
-    price: "$7000",
-    duration: "60 min",
-    category: "Salud",
+    name: service?.name || "",
+    description: service?.description || "",
+    price: service?.price?.toString() || "",
+    duration: (service as any)?.duration || "",
+    category: service?.category || "",
   })
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState("")
+  const [success, setSuccess] = useState("")
 
-  const categories = ["Belleza", "Salud", "Deporte", "Hogar", "Educación", "Tecnología"]
+  const categories = ["Belleza", "Salud", "Deporte", "Hogar", "Educación", "Tecnología", "Oficios", "Profesionales", "Aprendizaje"]
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Cargar datos del servicio cuando cambie
+  useEffect(() => {
+    if (service) {
+      setFormData({
+        name: service.name || "",
+        description: service.description || "",
+        price: service.price?.toString() || "",
+        duration: (service as any)?.duration || "",
+        category: service.category || "",
+      })
+    }
+  }, [service])
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    // Simulate service update
-    alert("Servicio actualizado exitosamente!")
-    setFlow("services")
+    if (!service?.id) {
+      setError("No se encontró el servicio a editar")
+      return
+    }
+    
+    setLoading(true)
+    setError("")
+    setSuccess("")
+    
+    try {
+      const serviceData = {
+        name: formData.name,
+        description: formData.description,
+        price: parseInt(formData.price.replace('$', '').replace(/\./g, '')) || parseInt(formData.price),
+        duration: formData.duration,
+        category: formData.category,
+      }
+
+      const result = await updateServiceFn(service.id, serviceData)
+      
+      if (result.success) {
+        setSuccess("¡Servicio actualizado exitosamente!")
+        setTimeout(() => {
+          setFlow("services")
+        }, 1500)
+      } else {
+        setError(result.error || "Error al actualizar el servicio")
+      }
+    } catch (err: any) {
+      setError(err.message || "Error al actualizar el servicio")
+    } finally {
+      setLoading(false)
+    }
   }
 
   const handleInputChange = (field: string, value: string) => {
@@ -3349,7 +3967,7 @@ function EditService({ setFlow }: { setFlow: (flow: string) => void }) {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
       <div className="bg-white shadow-sm p-4">
         <div className="flex items-center gap-3 mb-4">
           <Button variant="ghost" size="sm" onClick={() => setFlow("services")}>
@@ -3425,14 +4043,152 @@ function EditService({ setFlow }: { setFlow: (flow: string) => void }) {
               </div>
 
               <div className="flex gap-3 pt-4">
-                <Button type="submit" className="flex-1">
-                  Guardar cambios
+                <Button type="submit" className="flex-1" disabled={loading}>
+                  {loading ? "Guardando..." : "Guardar cambios"}
                 </Button>
-                <Button type="button" variant="outline" onClick={() => setFlow("services")} className="flex-1">
+                <Button type="button" variant="outline" onClick={() => setFlow("services")} className="flex-1" disabled={loading}>
                   Cancelar
                 </Button>
               </div>
             </form>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  )
+}
+
+function ProviderStatistics({ setFlow, user, services }: { setFlow: (flow: string) => void; user: any; services: any[] }) {
+  const { getBookingsByProvider } = useBookings()
+  
+  // Filtrar servicios del proveedor
+  const providerServices = services.filter(service => service.providerId === user?.uid)
+  const providerBookings = getBookingsByProvider(user?.uid) || []
+  
+  // Calcular estadísticas
+  const totalViews = providerServices.reduce((sum, s) => sum + ((s as any).views || 0), 0)
+  const totalBookings = providerBookings.length
+  const totalRevenue = providerBookings
+    .filter(b => b.paymentStatus === 'paid')
+    .reduce((sum, b) => sum + (b.price || 0), 0)
+  const conversionRate = totalViews > 0 ? (totalBookings / totalViews) * 100 : 0
+  
+  // Estadísticas por servicio
+  const serviceStats = providerServices.map(service => {
+    const serviceBookings = providerBookings.filter(b => b.serviceId === service.id)
+    const serviceRevenue = serviceBookings
+      .filter(b => b.paymentStatus === 'paid')
+      .reduce((sum, b) => sum + (b.price || 0), 0)
+    const serviceViews = (service as any).views || 0
+    const serviceConversion = serviceViews > 0 ? (serviceBookings.length / serviceViews) * 100 : 0
+    
+    return {
+      ...service,
+      bookings: serviceBookings.length,
+      revenue: serviceRevenue,
+      views: serviceViews,
+      conversion: serviceConversion
+    }
+  }).sort((a, b) => b.bookings - a.bookings)
+
+  return (
+    <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
+      {/* Header */}
+      <div className="bg-white shadow-sm p-4">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="sm" onClick={() => setFlow("profile")}>
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <h1 className="text-xl font-bold text-primary">Mis Estadísticas</h1>
+        </div>
+      </div>
+
+      <div className="p-4 space-y-6">
+        {/* Resumen General */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <Card className="bg-white">
+            <CardContent className="p-4 text-center">
+              <p className="text-2xl font-bold text-primary">{totalViews}</p>
+              <p className="text-sm text-muted-foreground">Visualizaciones</p>
+            </CardContent>
+          </Card>
+          <Card className="bg-white">
+            <CardContent className="p-4 text-center">
+              <p className="text-2xl font-bold text-green-600">{totalBookings}</p>
+              <p className="text-sm text-muted-foreground">Reservas</p>
+            </CardContent>
+          </Card>
+          <Card className="bg-white">
+            <CardContent className="p-4 text-center">
+              <p className="text-2xl font-bold text-blue-600">${totalRevenue.toLocaleString()}</p>
+              <p className="text-sm text-muted-foreground">Ingresos</p>
+            </CardContent>
+          </Card>
+          <Card className="bg-white">
+            <CardContent className="p-4 text-center">
+              <p className="text-2xl font-bold text-purple-600">{conversionRate.toFixed(1)}%</p>
+              <p className="text-sm text-muted-foreground">Conversión</p>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Rendimiento por Servicio */}
+        <Card className="bg-white">
+          <CardContent className="p-6">
+            <h3 className="text-lg font-semibold mb-4">Rendimiento por Servicio</h3>
+            <div className="space-y-4">
+              {serviceStats.length > 0 ? (
+                serviceStats.map((service) => (
+                  <div key={service.id} className="p-4 bg-gray-50 rounded-lg">
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="font-semibold">{service.name}</h4>
+                      <span className="text-sm text-muted-foreground">${service.revenue.toLocaleString()}</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-4 text-sm">
+                      <div>
+                        <p className="text-muted-foreground">Visualizaciones</p>
+                        <p className="font-semibold">{service.views}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Reservas</p>
+                        <p className="font-semibold">{service.bookings}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Conversión</p>
+                        <p className="font-semibold">{service.conversion.toFixed(1)}%</p>
+                      </div>
+                    </div>
+                    <div className="mt-3">
+                      <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div 
+                          className="bg-primary h-2 rounded-full" 
+                          style={{ width: `${Math.min(service.conversion, 100)}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="text-center text-muted-foreground py-8">No tienes servicios para mostrar estadísticas</p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Gráfico de tendencias (simplificado) */}
+        <Card className="bg-white">
+          <CardContent className="p-6">
+            <h3 className="text-lg font-semibold mb-4">Tendencias</h3>
+            <div className="text-center py-8 text-muted-foreground">
+              <p className="text-sm">Los gráficos detallados están disponibles en la versión Premium</p>
+              <Button 
+                variant="outline" 
+                className="mt-4"
+                onClick={() => setFlow("subscription")}
+              >
+                Actualizar a Premium
+              </Button>
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -3460,7 +4216,7 @@ function ProviderSubscription({ setFlow }: { setFlow: (flow: string) => void }) 
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
       {/* Header */}
       <div className="bg-white shadow-sm p-4">
         <div className="flex items-center gap-3">
@@ -3688,7 +4444,7 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
       {/* Header */}
       <div className="bg-white shadow-sm p-4">
         <div className="flex items-center justify-between">

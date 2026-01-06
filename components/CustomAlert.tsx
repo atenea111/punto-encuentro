@@ -1,6 +1,5 @@
-import React from 'react'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { AlertCircle, CheckCircle, Info, X } from 'lucide-react'
+import React, { useEffect, useState } from 'react'
+import { AlertCircle, CheckCircle2, Info, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 interface AlertProps {
@@ -12,78 +11,124 @@ interface AlertProps {
 }
 
 export function CustomAlert({ type, title, message, onClose, className = '' }: AlertProps) {
+  const [isVisible, setIsVisible] = useState(false)
+
+  useEffect(() => {
+    // Animación de entrada
+    setIsVisible(true)
+  }, [])
+
   const getIcon = () => {
+    const iconClass = "h-6 w-6"
     switch (type) {
       case 'error':
-        return <AlertCircle className="h-4 w-4" />
+        return <AlertCircle className={iconClass} />
       case 'success':
-        return <CheckCircle className="h-4 w-4" />
+        return <CheckCircle2 className={iconClass} />
       case 'warning':
-        return <AlertCircle className="h-4 w-4" />
+        return <AlertCircle className={iconClass} />
       case 'info':
-        return <Info className="h-4 w-4" />
+        return <Info className={iconClass} />
       default:
-        return <Info className="h-4 w-4" />
+        return <Info className={iconClass} />
     }
   }
 
-  const getAlertVariant = () => {
+  const getAlertStyles = () => {
     switch (type) {
       case 'error':
-        return 'destructive'
+        return {
+          container: 'bg-gradient-to-r from-red-50 to-red-50/80 border-red-400 shadow-xl shadow-red-200/50',
+          icon: 'text-red-600',
+          title: 'text-red-900',
+          message: 'text-red-700',
+          border: 'border-l-4 border-l-red-600'
+        }
       case 'success':
-        return 'default'
+        return {
+          container: 'bg-gradient-to-r from-green-50 to-emerald-50/80 border-green-400 shadow-xl shadow-green-200/50',
+          icon: 'text-green-600',
+          title: 'text-green-900',
+          message: 'text-green-700',
+          border: 'border-l-4 border-l-green-600'
+        }
       case 'warning':
-        return 'default'
+        return {
+          container: 'bg-gradient-to-r from-yellow-50 to-amber-50/80 border-yellow-400 shadow-xl shadow-yellow-200/50',
+          icon: 'text-yellow-600',
+          title: 'text-yellow-900',
+          message: 'text-yellow-700',
+          border: 'border-l-4 border-l-yellow-600'
+        }
       case 'info':
-        return 'default'
+        return {
+          container: 'bg-gradient-to-r from-blue-50 to-cyan-50/80 border-blue-400 shadow-xl shadow-blue-200/50',
+          icon: 'text-blue-600',
+          title: 'text-blue-900',
+          message: 'text-blue-700',
+          border: 'border-l-4 border-l-blue-600'
+        }
       default:
-        return 'default'
+        return {
+          container: 'bg-gradient-to-r from-gray-50 to-gray-50/80 border-gray-400 shadow-xl shadow-gray-200/50',
+          icon: 'text-gray-600',
+          title: 'text-gray-900',
+          message: 'text-gray-700',
+          border: 'border-l-4 border-l-gray-600'
+        }
     }
   }
 
-  const getAlertClass = () => {
-    switch (type) {
-      case 'error':
-        return 'border-red-200 bg-red-50 text-red-800'
-      case 'success':
-        return 'border-green-200 bg-green-50 text-green-800'
-      case 'warning':
-        return 'border-yellow-200 bg-yellow-50 text-yellow-800'
-      case 'info':
-        return 'border-blue-200 bg-blue-50 text-blue-800'
-      default:
-        return 'border-gray-200 bg-gray-50 text-gray-800'
-    }
+  const styles = getAlertStyles()
+
+  const handleClose = () => {
+    setIsVisible(false)
+    setTimeout(() => {
+      onClose?.()
+    }, 300)
   }
 
   return (
-    <div className={`relative ${className}`}>
-      <Alert className={`${getAlertClass()} border-l-4 border-l-current`}>
-        <div className="flex items-start gap-3">
-          <div className="flex-shrink-0 mt-0.5">
+    <div 
+      className={`fixed top-4 left-1/2 transform -translate-x-1/2 z-50 w-full max-w-md transition-all duration-300 ease-in-out ${
+        isVisible 
+          ? 'opacity-100 translate-y-0' 
+          : 'opacity-0 -translate-y-4 pointer-events-none'
+      } ${className}`}
+    >
+      <div className={`${styles.container} ${styles.border} border rounded-xl shadow-lg p-5 backdrop-blur-sm`}>
+        <div className="flex items-start gap-4">
+          {/* Icono */}
+          <div className={`flex-shrink-0 ${styles.icon} mt-0.5`}>
             {getIcon()}
           </div>
-          <div className="flex-1">
+          
+          {/* Contenido */}
+          <div className="flex-1 min-w-0">
             {title && (
-              <h4 className="font-semibold text-sm mb-1">{title}</h4>
+              <h4 className={`${styles.title} font-bold text-base mb-2`}>
+                {title}
+              </h4>
             )}
-            <AlertDescription className="text-sm">
+            <p className={`${styles.message} text-sm leading-relaxed font-medium`}>
               {message}
-            </AlertDescription>
+            </p>
           </div>
+          
+          {/* Botón cerrar */}
           {onClose && (
             <Button
               variant="ghost"
               size="sm"
-              onClick={onClose}
-              className="flex-shrink-0 h-6 w-6 p-0 hover:bg-transparent"
+              onClick={handleClose}
+              className={`flex-shrink-0 h-8 w-8 p-0 rounded-full hover:bg-black/10 transition-colors ${styles.message}`}
+              aria-label="Cerrar"
             >
               <X className="h-4 w-4" />
             </Button>
           )}
         </div>
-      </Alert>
+      </div>
     </div>
   )
 }

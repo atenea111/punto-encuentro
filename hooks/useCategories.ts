@@ -36,12 +36,15 @@ export function useCategories() {
       const q = query(categoriesRef, orderBy('name', 'asc'))
       const querySnapshot = await getDocs(q)
       
-      const categoriesData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        createdAt: doc.data().createdAt?.toDate() || new Date(),
-        updatedAt: doc.data().updatedAt?.toDate() || new Date()
-      })) as Category[]
+      const categoriesData = querySnapshot.docs.map(doc => {
+        const data = doc.data()
+        return {
+          id: doc.id,
+          ...data,
+          createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(data.createdAt || Date.now()),
+          updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : new Date(data.updatedAt || Date.now())
+        }
+      }) as Category[]
       
       setCategories(categoriesData)
     } catch (error) {

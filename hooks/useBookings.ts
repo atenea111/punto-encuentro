@@ -8,7 +8,8 @@ import {
   doc, 
   query, 
   orderBy,
-  where 
+  where,
+  onSnapshot 
 } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 
@@ -36,29 +37,33 @@ export function useBookings() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetchBookings()
+    const bookingsRef = collection(db, 'bookings')
+    const q = query(bookingsRef, orderBy('createdAt', 'desc'))
+    
+    setLoading(true)
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const bookingsData = querySnapshot.docs.map(doc => {
+        const data = doc.data()
+        return {
+          id: doc.id,
+          ...data,
+          createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(data.createdAt || Date.now()),
+          updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : new Date(data.updatedAt || Date.now())
+        }
+      }) as Booking[]
+      
+      setBookings(bookingsData)
+      setLoading(false)
+    }, (error) => {
+      console.error('Error listening to bookings:', error)
+      setLoading(false)
+    })
+
+    return () => unsubscribe()
   }, [])
 
   const fetchBookings = async () => {
-    try {
-      setLoading(true)
-      const bookingsRef = collection(db, 'bookings')
-      const q = query(bookingsRef, orderBy('createdAt', 'desc'))
-      const querySnapshot = await getDocs(q)
-      
-      const bookingsData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        createdAt: doc.data().createdAt?.toDate() || new Date(),
-        updatedAt: doc.data().updatedAt?.toDate() || new Date()
-      })) as Booking[]
-      
-      setBookings(bookingsData)
-    } catch (error) {
-      console.error('Error fetching bookings:', error)
-    } finally {
-      setLoading(false)
-    }
+    // No-op ya que onSnapshot mantiene los datos actualizados
   }
 
   const createBooking = async (bookingData: Omit<Booking, 'id' | 'createdAt' | 'updatedAt'>) => {

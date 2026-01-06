@@ -1,7 +1,7 @@
 import { initializeApp } from 'firebase/app'
 import { getAuth, setPersistence, browserLocalPersistence } from 'firebase/auth'
 import { getFirestore } from 'firebase/firestore'
-import { getStorage } from 'firebase/storage'
+import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 
 const firebaseConfig = {
   apiKey: "AIzaSyDtcg_xQXLi0IX9C3B0D7k5AznagrOLMk0",
@@ -25,6 +25,12 @@ export const storage = getStorage(app)
 setPersistence(auth, browserLocalPersistence).catch((error) => {
   console.error('Error setting persistence:', error)
 })
+
+export const uploadFile = async (file: File, path: string): Promise<string> => {
+  const storageRef = ref(storage, path)
+  await uploadBytes(storageRef, file)
+  return getDownloadURL(storageRef)
+}
 
 export default app
 

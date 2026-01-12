@@ -1649,18 +1649,19 @@ function ServiceDetail({ service, setFlow, userLocation, setActiveChat }: { serv
           </CardContent>
         </Card>
 
-        {/* Action Button */}
-        <div className="flex gap-2">
+        {/* Action Buttons */}
+        <div className="flex gap-3 items-center">
           <Button
             onClick={() => setFlow("booking")}
-            className="flex-1 h-12 text-base"
+            className="flex-[2] h-14 text-sm font-bold rounded-2xl shadow-md hover:shadow-lg transition-all active:scale-95"
             variant="orange"
           >
             Agendar turno
           </Button>
+
           <Button
             variant="outline"
-            className="w-12 h-12 p-0 flex items-center justify-center shrink-0 border-primary text-primary"
+            className="flex-1 h-14 p-0 flex flex-col items-center justify-center shrink-0 border-2 border-primary/20 bg-primary/5 text-primary rounded-2xl hover:bg-primary/10 hover:border-primary/40 transition-all active:scale-95 group shadow-sm"
             onClick={() => {
               setActiveChat({
                 partnerId: service.providerId,
@@ -1669,7 +1670,14 @@ function ServiceDetail({ service, setFlow, userLocation, setActiveChat }: { serv
               setFlow("chat")
             }}
           >
-            <MessageSquare className="h-6 w-6" />
+            <div className="relative">
+              <MessageSquare className="h-5 w-5 mb-0.5 transition-transform group-hover:scale-110" />
+              <span className="absolute -top-1 -right-1 flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+              </span>
+            </div>
+            <span className="text-[10px] font-black uppercase tracking-tight">Chat</span>
           </Button>
         </div>
 
@@ -2755,10 +2763,14 @@ function ClientAgenda({ setFlow, user, setActiveChat, onBack }: { setFlow: (flow
                                   })
                                   setFlow("chat")
                                 }}
-                                className="h-8 w-8 p-0 text-primary hover:text-primary hover:bg-primary/10 rounded-lg"
+                                className="h-10 w-12 p-0 bg-primary/5 text-primary hover:bg-primary/10 rounded-xl flex flex-col items-center justify-center transition-all active:scale-90 border border-primary/10 shadow-sm"
                                 title="Chatear con el profesional"
                               >
-                                <MessageSquare className="h-4 w-4" />
+                                <div className="relative">
+                                  <MessageSquare className="h-4 w-4" />
+                                  <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-primary rounded-full border border-white"></span>
+                                </div>
+                                <span className="text-[8px] font-black uppercase mt-0.5">Chat</span>
                               </Button>
 
                               {booking.status !== 'cancelled' && booking.status !== 'completed' && (
@@ -2847,10 +2859,11 @@ function ClientAgenda({ setFlow, user, setActiveChat, onBack }: { setFlow: (flow
                         })
                         setFlow("chat")
                       }}
-                      className="h-8 w-8 p-0 text-gray-400 hover:text-primary hover:bg-primary/5 rounded-lg"
+                      className="h-10 w-12 p-0 bg-gray-50 text-gray-400 hover:text-primary hover:bg-primary/5 rounded-xl flex flex-col items-center justify-center transition-all active:scale-90 border border-gray-100"
                       title="Chatear"
                     >
                       <MessageSquare className="h-3.5 w-3.5" />
+                      <span className="text-[8px] font-black uppercase mt-0.5">Chat</span>
                     </Button>
                     <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-md ${booking.status === 'confirmed' ? 'bg-green-50 text-green-600 border border-green-100' :
                       booking.status === 'pending' ? 'bg-yellow-50 text-yellow-600 border border-yellow-100' :
@@ -4328,10 +4341,14 @@ function ProviderAgenda({ setFlow, user, setActiveChat }: { setFlow: (flow: stri
                                   })
                                   setFlow("chat")
                                 }}
-                                className="h-8 w-8 p-0 text-primary hover:text-primary hover:bg-primary/10 rounded-lg"
+                                className="h-10 w-12 p-0 bg-primary/5 text-primary hover:bg-primary/10 rounded-xl flex flex-col items-center justify-center transition-all active:scale-90 border border-primary/10 shadow-sm"
                                 title="Chatear con el cliente"
                               >
-                                <MessageSquare className="h-4 w-4" />
+                                <div className="relative">
+                                  <MessageSquare className="h-4 w-4" />
+                                  <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-primary rounded-full border border-white"></span>
+                                </div>
+                                <span className="text-[8px] font-black uppercase mt-0.5">Chat</span>
                               </Button>
 
                               {booking.status === 'confirmed' && (
@@ -4447,10 +4464,11 @@ function ProviderAgenda({ setFlow, user, setActiveChat }: { setFlow: (flow: stri
                         })
                         setFlow("chat")
                       }}
-                      className="h-8 w-8 p-0 text-gray-400 hover:text-primary hover:bg-primary/5 rounded-lg"
+                      className="h-10 w-12 p-0 bg-gray-50 text-gray-400 hover:text-primary hover:bg-primary/5 rounded-xl flex flex-col items-center justify-center transition-all active:scale-90 border border-gray-100"
                       title="Chatear"
                     >
                       <MessageSquare className="h-3.5 w-3.5" />
+                      <span className="text-[8px] font-black uppercase mt-0.5">Chat</span>
                     </Button>
                     <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-md ${booking.status === 'confirmed' ? 'bg-green-50 text-green-600 border border-green-100' :
                       booking.status === 'pending' ? 'bg-yellow-50 text-yellow-600 border border-yellow-100' :

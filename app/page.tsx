@@ -80,7 +80,7 @@ import {
   Send,
   MessageSquare,
 } from "lucide-react"
-import { App } from '@capacitor/app'
+
 
 // Función para calcular la distancia entre dos puntos (Haversine formula)
 function getDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
@@ -355,55 +355,7 @@ export default function HomePage() {
     getPos()
   }, [])
 
-  // Manejar botón de retroceso de Android
-  useEffect(() => {
-    const setupBackButtonListener = async () => {
-      try {
-        await App.addListener('backButton', ({ canGoBack }) => {
-          if (activeChat) {
-            setActiveChat(null)
-            return
-          }
-
-          if (userType === 'client') {
-            if (clientFlow === 'home') {
-              App.exitApp()
-            } else if (['agenda', 'profile', 'favorites', 'service-detail'].includes(clientFlow)) {
-              setClientFlow('home')
-            } else if (clientFlow === 'booking') {
-              setClientFlow('service-detail')
-            } else if (clientFlow === 'payment') {
-              setClientFlow('booking')
-            } else {
-              setClientFlow('home')
-            }
-          } else if (userType === 'provider') {
-            if (providerFlow === 'dashboard') {
-              App.exitApp()
-            } else if (['agenda', 'services', 'profile', 'statistics'].includes(providerFlow)) {
-              setProviderFlow('dashboard')
-            } else if (['create-service', 'edit-service'].includes(providerFlow)) {
-              setProviderFlow('services')
-            } else {
-              setProviderFlow('dashboard')
-            }
-          } else {
-            // Si no hay usuario logueado
-            App.exitApp()
-          }
-        })
-      } catch (error) {
-        console.error('Error setting up back button listener:', error)
-      }
-    }
-
-    setupBackButtonListener()
-
-    return () => {
-      App.removeAllListeners()
-    }
-  }, [userType, clientFlow, providerFlow, activeChat])
-  // Mostrar loading mientras se verifica la autenticación
+  // Mostrar loading mientras se verifica la autenticaci?n
   if (authLoading || rolesLoading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -781,19 +733,9 @@ function ClientFlow({
   authError,
   setAuthSuccess,
   authSuccess,
-<<<<<<< HEAD
-  services,
-  searchTerm,
-  setSearchTerm,
-  searchServices,
-  user,
-  createBooking,
-  logout,
   onSwitchToProvider,
   setBookingSource,
   bookingSource
-=======
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
 }: {
   flow: string
   setFlow: (flow: string) => void
@@ -820,19 +762,9 @@ function ClientFlow({
   authError: string
   setAuthSuccess: (message: string) => void
   authSuccess: string
-<<<<<<< HEAD
-  services: any[]
-  searchTerm: string
-  setSearchTerm: (term: string) => void
-  searchServices: (term: string) => any[]
   onSwitchToProvider: () => Promise<{ success: boolean }>
   setBookingSource: (source: any) => void
   bookingSource: string
-  user: any
-  createBooking: (bookingData: any) => Promise<{success: boolean, error?: string}>
-  logout: () => Promise<{ success: boolean }>
-=======
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
 }) {
   if (flow === "login") {
     return <ClientLogin setFlow={setFlow} signIn={signIn} setAuthError={setAuthError} authError={authError} setAuthSuccess={setAuthSuccess} authSuccess={authSuccess} />
@@ -852,12 +784,9 @@ function ClientFlow({
         setSearchTerm={setSearchTerm}
         searchServices={searchServices}
         user={user}
-<<<<<<< HEAD
         setBookingSource={setBookingSource}
-=======
         userLocation={userLocation}
         setActiveChat={setActiveChat}
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
       />
     )
   }
@@ -871,11 +800,7 @@ function ClientFlow({
   }
 
   if (flow === "service-detail") {
-<<<<<<< HEAD
-    return <ServiceDetail service={selectedService} setFlow={setFlow} bookingSource={bookingSource} />
-=======
-    return <ServiceDetail service={selectedService} setFlow={setFlow} userLocation={userLocation} setActiveChat={setActiveChat} />
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
+    return <ServiceDetail service={selectedService} setFlow={setFlow} bookingSource={bookingSource} userLocation={userLocation} setActiveChat={setActiveChat} />
   }
 
   if (flow === "booking") {
@@ -901,9 +826,7 @@ function ClientFlow({
         setFlow={setFlow}
         user={user}
         createBooking={createBooking}
-<<<<<<< HEAD
         bookingSource={bookingSource}
-=======
         setActiveChat={setActiveChat}
       />
     )
@@ -916,7 +839,6 @@ function ClientFlow({
         partnerId={activeChat?.partnerId}
         partnerName={activeChat?.partnerName}
         onBack={() => setFlow(selectedService ? "service-detail" : "home")}
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
       />
     )
   }
@@ -1227,14 +1149,10 @@ function ClientHome({
   setSearchTerm,
   searchServices,
   user,
-<<<<<<< HEAD
-  setBookingSource
-}: { 
-=======
+  setBookingSource,
   userLocation,
   setActiveChat
 }: {
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
   setFlow: (flow: string) => void
   setSelectedService: (service: any) => void
   services: any[]
@@ -1242,12 +1160,9 @@ function ClientHome({
   setSearchTerm: (term: string) => void
   searchServices: (term: string) => any[]
   user: any
-<<<<<<< HEAD
   setBookingSource: (source: any) => void
-=======
   userLocation: { lat: number, lng: number } | null
   setActiveChat?: (chat: any) => void
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
 }) {
   const { categories } = useCategories()
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
@@ -1308,7 +1223,6 @@ function ClientHome({
   const filteredServices = searchTerm
     ? searchServices(searchTerm)
     : services.filter((service) => {
-<<<<<<< HEAD
         const matchesCategory = !selectedCategory || service.category === selectedCategory
         const matchesPrice = maxPrice === "all" || Number(service.price) <= maxPrice
         
@@ -1325,11 +1239,6 @@ function ClientHome({
 
         return matchesCategory && matchesPrice && matchesNearby
       })
-=======
-      const matchesCategory = !selectedCategory || service.category === selectedCategory
-      return matchesCategory
-    })
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
 
   const generateCalendar = () => {
     const today = new Date()
@@ -1388,12 +1297,7 @@ function ClientHome({
     setViewMode("all-categories")
   }
 
-<<<<<<< HEAD
-=======
-  if (activeTab === "agenda") {
-    return <ClientAgenda setFlow={setFlow} user={user} onBack={() => setActiveTab("inicio")} setActiveChat={setActiveChat} />
-  }
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
+
 
 
   if (viewMode === "recommendations") {
@@ -1506,20 +1410,7 @@ function ClientHome({
             </div>
           )}
           <div className="grid grid-cols-1 gap-4">
-<<<<<<< HEAD
             {serviciosConDistancia
-=======
-            {services
-              .map(service => {
-                if (userLocation && service.lat && service.lng) {
-                  const dist = getDistance(userLocation.lat, userLocation.lng, service.lat, service.lng)
-                  return { ...service, distanceVal: dist, distance: `${dist.toFixed(1)} km` }
-                }
-                return service
-              })
-              .filter((service) => service.distance)
-              .sort((a, b) => (a.distanceVal || 999) - (b.distanceVal || 999))
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
               .map((service) => (
                 <Card
                   key={service.id}
@@ -1727,10 +1618,10 @@ function ClientHome({
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-20">
-      {/* Header con franja color petróleo/teal */}
-      <div className="bg-primary pt-8 pb-6 px-4 rounded-b-[2rem] shadow-lg">
-        <div className="text-center mb-4">
+    <>
+      <div className="min-h-screen bg-gray-50 pb-20">
+        <div className="bg-primary pt-8 pb-6 px-4 rounded-b-[2rem] shadow-lg">
+          <div className="text-center mb-4">
           <h1 className="text-white text-xl font-bold italic tracking-tight">
             Punto Encuentro
           </h1>
@@ -1844,7 +1735,6 @@ function ClientHome({
             )}
           </div>
           {filteredServices.length > 0 ? (
-<<<<<<< HEAD
             <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide">
               {filteredServices.slice(0, 4).map((service) => (
                 <Card
@@ -1879,58 +1769,21 @@ function ClientHome({
                           <MapPin className="h-2.5 w-2.5" />
                           <span>A {calcularDistanciaServicio(service)} de ti</span>
                         </div>
-=======
-            <div className="flex gap-3 overflow-x-auto pb-2">
-              {recommendedServices.slice(0, 4).map((service) => (
-                <Card
-                  key={service.id}
-                  className="cursor-pointer hover:shadow-md transition-shadow flex-shrink-0 w-48 overflow-hidden"
-                  onClick={() => handleServiceClick(service)}
-                >
-                  <div className="relative w-full h-32">
-                    <img
-                      src={service.image || "/placeholder.svg"}
-                      alt={service.name}
-                      className="w-full h-full object-cover"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
-                    <div className="absolute bottom-2 left-2 right-2 text-white">
-                      <p className="text-xs font-bold line-clamp-1">{service.providerName}</p>
-                      {service.distance !== undefined && (
-                        <p className="text-[10px] text-primary-foreground bg-primary/20 backdrop-blur-sm rounded px-1 inline-block">
-                          a {service.distance.toFixed(1)} km
-                        </p>
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                       )}
                     </div>
                   </div>
-                  <CardContent className="p-3">
-                    <h3 className="text-xs font-semibold line-clamp-1 mb-1">{service.name}</h3>
-                    <div className="flex justify-between items-center">
-                      <div className="flex items-center gap-1 text-[10px]">
-                        <Star className="h-2 w-2 fill-yellow-400 text-yellow-400" />
-                        <span>{service.rating}</span>
-                      </div>
-                      <span className="text-sm font-bold text-primary">${service.price}</span>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          ) : (
-            <Card>
-              <CardContent className="p-6">
-                <div className="text-center text-gray-500 py-8">
-                  <div className="text-4xl mb-2">⭐</div>
-                  <p>No hay servicios recomendados</p>
-                  <p className="text-sm mt-1">Los servicios aparecerán aquí cuando estén disponibles</p>
-                </div>
-              </CardContent>
-            </Card>
-          )}
+              </Card>
+            ))}
+          </div>
+        ) : (
+          <div className="text-center text-gray-500 py-8">
+            <p>No hay servicios recomendados</p>
+            <p className="text-sm mt-1">Los servicios aparecer&#225;n aqu&#237; cuando est&#233;n disponibles</p>
+          </div>
+        )}
+        </div>
         </div>
 
-<<<<<<< HEAD
         <div className="pb-8">
           <h2 className="text-xl font-bold mb-4">Cerca tuyo</h2>
           {filteredServices.length > 0 ? (
@@ -1946,30 +1799,10 @@ function ClientHome({
                       <div className="w-24 h-24 rounded-xl overflow-hidden flex-shrink-0">
                         <img 
                           src={service.image || "/placeholder.svg"} 
-=======
-        <div>
-          <button onClick={handleCercaTuyo} className="text-lg font-semibold mb-3 text-left">
-            Cerca tuyo
-          </button>
-          {nearbyServices.length > 0 ? (
-            <div className="space-y-3">
-              {nearbyServices.slice(0, 3).map((service) => (
-                <Card
-                  key={service.id}
-                  className="cursor-pointer hover:shadow-md transition-shadow"
-                  onClick={() => handleServiceClick(service)}
-                >
-                  <CardContent className="p-4">
-                    <div className="flex gap-3">
-                      <div className="w-20 h-20 bg-gray-200 rounded-lg overflow-hidden flex-shrink-0">
-                        <img
-                          src={service.image || "/placeholder.svg"}
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                           alt={service.name}
                           className="w-full h-full object-cover"
                         />
                       </div>
-<<<<<<< HEAD
                       <div className="flex-1 flex flex-col justify-center py-1">
                         <div className="flex items-center gap-2 mb-1">
                           <span className="text-[10px] font-bold text-primary uppercase tracking-wider bg-primary/5 px-2 py-0.5 rounded-full">
@@ -1994,31 +1827,6 @@ function ClientHome({
                       <button className="self-start mt-1 text-gray-300">
                         <Filter className="h-4 w-4" />
                       </button>
-=======
-                      <div className="flex-1">
-                        <div className="flex justify-between items-start mb-1">
-                          <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded font-medium">
-                            {service.category}
-                          </span>
-                          {service.distance !== undefined && (
-                            <span className="text-[10px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded border border-green-100">
-                              ESTÁ MUY CERCA ({service.distance.toFixed(1)} km)
-                            </span>
-                          )}
-                        </div>
-                        <h3 className="font-semibold text-sm line-clamp-1">{service.name}</h3>
-                        <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
-                          <User className="h-3 w-3" /> {service.providerName}
-                        </p>
-                        <div className="flex justify-between items-end">
-                          <div className="flex items-center gap-1 text-xs">
-                            <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                            <span className="font-medium">{service.rating}</span>
-                          </div>
-                          <div className="text-lg font-bold text-primary">${service.price}</div>
-                        </div>
-                      </div>
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                     </div>
                   </CardContent>
                 </Card>
@@ -2052,7 +1860,6 @@ function ClientHome({
         </div>
       </div>
 
-<<<<<<< HEAD
       {/* Overlay de Filtros */}
       {isFilterOpen && (
         <div className="fixed inset-0 z-50 flex items-end justify-center">
@@ -2133,13 +1940,6 @@ function ClientHome({
               <Home className="h-6 w-6" />
             </div>
             <span className="text-[10px] font-medium text-primary">Inicio</span>
-=======
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 pb-[env(safe-area-inset-bottom)]">
-        <div className="flex justify-around py-2">
-          <button onClick={() => setActiveTab("inicio")} className="flex flex-col items-center py-2 px-4">
-            <div className="text-primary mb-1">🏠</div>
-            <span className="text-xs text-primary">Inicio</span>
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
           </button>
           <button onClick={() => setFlow("agenda")} className="flex flex-col items-center gap-1">
             <div className="text-gray-400">
@@ -2155,11 +1955,10 @@ function ClientHome({
           </button>
         </div>
       </div>
-    </div>
+      </>
   )
 }
 
-<<<<<<< HEAD
 function ServiceDetail({ service, setFlow, bookingSource }: { service: any; setFlow: (flow: string) => void; bookingSource: string }) {
   const { position: userPosition } = useGeolocation()
   const [providerProfile, setProviderProfile] = useState<any>(null)
@@ -2198,10 +1997,6 @@ function ServiceDetail({ service, setFlow, bookingSource }: { service: any; setF
     }
     loadProvider()
   }, [service?.providerId, service?.latitude, service?.longitude])
-
-=======
-function ServiceDetail({ service, setFlow, userLocation, setActiveChat }: { service: any; setFlow: (flow: string) => void, userLocation: { lat: number, lng: number } | null, setActiveChat: (chat: any) => void }) {
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
   if (!service) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
@@ -2287,7 +2082,6 @@ function ServiceDetail({ service, setFlow, userLocation, setActiveChat }: { serv
         </div>
       </div>
 
-<<<<<<< HEAD
       {/* Nombre, ciudad, rating */}
       <div className="text-center mt-14 px-4">
         <h2 className="text-xl font-bold text-gray-800">{providerName}</h2>
@@ -2296,44 +2090,6 @@ function ServiceDetail({ service, setFlow, userLocation, setActiveChat }: { serv
             <div className="flex items-center gap-1 text-sm text-gray-500 font-medium">
               <MapPin className="h-3.5 w-3.5 text-primary" />
               <span className="max-w-[150px] truncate">{providerCity}</span>
-=======
-      <div className="p-4 space-y-4">
-        {/* Service Image */}
-        <Card className="bg-white">
-          <CardContent className="p-0">
-            <img
-              src={service.image || "/placeholder.svg"}
-              alt={service.name}
-              className="w-full h-48 object-cover rounded-t-lg"
-            />
-            <div className="p-4">
-              <div className="flex justify-between items-start mb-2">
-                <div>
-                  <h2 className="text-2xl font-bold">{service.name}</h2>
-                  {userLocation && service.lat && service.lng && (
-                    <p className="text-sm font-bold text-green-600 flex items-center gap-1 mt-1">
-                      <MapPin className="h-4 w-4" />
-                      A {getDistance(userLocation.lat, userLocation.lng, service.lat, service.lng).toFixed(1)} km de ti
-                    </p>
-                  )}
-                </div>
-                <span className="text-2xl font-bold text-primary">${service.price}</span>
-              </div>
-
-              <div className="flex items-center gap-2 mb-3">
-                <Star className="h-5 w-5 fill-yellow-400 text-yellow-400" />
-                <span className="font-semibold">{service.rating || 0}</span>
-                <span className="text-muted-foreground">• {service.reviews || 0} reseñas</span>
-                <span className="text-muted-foreground">• {service.category}</span>
-              </div>
-
-              <p className="text-muted-foreground mb-3">{service.description || 'Sin descripción'}</p>
-
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <User className="h-4 w-4" />
-                <span>{service.providerName || 'Proveedor'}</span>
-              </div>
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
             </div>
           )}
           
@@ -2343,7 +2099,6 @@ function ServiceDetail({ service, setFlow, userLocation, setActiveChat }: { serv
             </div>
           )}
 
-<<<<<<< HEAD
           {(providerCity || distText) && <span className="text-gray-300">•</span>}
           
           <div className="flex items-center gap-1">
@@ -2416,45 +2171,9 @@ function ServiceDetail({ service, setFlow, userLocation, setActiveChat }: { serv
             className="h-11 px-8 rounded-xl text-white font-semibold"
             style={{ backgroundColor: '#FF7F50' }}
           >
-            Agendar
+            Agendar Turner
           </Button>
         </div>
-=======
-        {/* Action Buttons */}
-        <div className="flex gap-3 items-center">
-          <Button
-            onClick={() => setFlow("booking")}
-            className="flex-[2] h-14 text-sm font-bold rounded-2xl shadow-md hover:shadow-lg transition-all active:scale-95"
-            variant="orange"
-          >
-            Agendar turno
-          </Button>
-
-          <Button
-            variant="outline"
-            className="flex-1 h-14 p-0 flex flex-col items-center justify-center shrink-0 border-2 border-primary/20 bg-primary/5 text-primary rounded-2xl hover:bg-primary/10 hover:border-primary/40 transition-all active:scale-95 group shadow-sm"
-            onClick={() => {
-              setActiveChat({
-                partnerId: service.providerId,
-                partnerName: service.providerName || "Proveedor"
-              })
-              setFlow("chat")
-            }}
-          >
-            <div className="relative">
-              <MessageSquare className="h-5 w-5 mb-0.5 transition-transform group-hover:scale-110" />
-              <span className="absolute -top-1 -right-1 flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
-              </span>
-            </div>
-            <span className="text-[10px] font-black uppercase tracking-tight">Chat</span>
-          </Button>
-        </div>
-
-        {/* Reviews Section */}
-        <ServiceReviews serviceId={service.id} />
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
       </div>
     </div>
   )
@@ -2688,29 +2407,19 @@ function PaymentScreen({
   setFlow,
   user,
   createBooking,
-<<<<<<< HEAD
   bookingSource,
-=======
-  setActiveChat,
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
 }: {
   service: any
   selectedDate: string
   selectedTime: string
   setFlow: (flow: string) => void
   user: any
-<<<<<<< HEAD
   createBooking: (bookingData: any) => Promise<{success: boolean, error?: string}>
   bookingSource: string
-=======
-  createBooking: (bookingData: any) => Promise<{ success: boolean, error?: string }>
-  setActiveChat: (chat: any) => void
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
 }) {
   const [selectedPayment, setSelectedPayment] = useState<string>("")
   const [showTransferDetails, setShowTransferDetails] = useState(false)
   const [loading, setLoading] = useState(false)
-<<<<<<< HEAD
   const [providerBankDetails, setProviderBankDetails] = useState<{cbu?: string, alias?: string, accountHolder?: string} | null>(null)
   
   // Obtener datos bancarios reales del proveedor
@@ -2736,9 +2445,6 @@ function PaymentScreen({
     }
     fetchProviderBankDetails()
   }, [service?.providerId])
-=======
-  const [isSuccess, setIsSuccess] = useState(false)
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
 
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr + 'T00:00:00')
@@ -2967,7 +2673,6 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
   const [uploadingImage, setUploadingImage] = useState(false)
   const [success, setSuccess] = useState("")
 
-<<<<<<< HEAD
   // Cargar datos del perfil desde Firestore al montar
   useEffect(() => {
     const loadProfile = async () => {
@@ -2994,37 +2699,6 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
     loadProfile()
   }, [user])
   
-=======
-  // Cargar datos actuales de Firestore al iniciar
-  useEffect(() => {
-    const loadProfileData = async () => {
-      if (!user?.uid) return
-
-      try {
-        const { getDoc, doc } = await import("firebase/firestore")
-        const { db } = await import("@/lib/firebase")
-
-        const docRef = doc(db, 'users', user.uid)
-        const docSnap = await getDoc(docRef)
-
-        if (docSnap.exists()) {
-          const data = docSnap.data()
-          setProfileData(prev => ({
-            ...prev,
-            ...data,
-            name: data.displayName || data.name || user.displayName || "",
-            email: data.email || user.email || ""
-          }))
-        }
-      } catch (error) {
-        console.error("Error cargando perfil:", error)
-      }
-    }
-
-    loadProfileData()
-  }, [user])
-
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
   const handleLogout = async () => {
     setLoading(true)
     try {
@@ -3087,7 +2761,6 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
     }
 
     setUploadingImage(true)
-<<<<<<< HEAD
     
     try {
       const { uploadImage } = await import("@/lib/uploadImage")
@@ -3111,35 +2784,6 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
       console.error('Error subiendo imagen:', error)
       setUploadingImage(false)
       alert(error.message || 'Error al subir la imagen')
-=======
-
-    // URL temporal para feedback visual inmediato
-    const imageUrl = URL.createObjectURL(file)
-    setProfileData(prev => ({ ...prev, profileImage: imageUrl }))
-
-    setUploadingImage(true)
-
-    // Subida real a Firebase Storage
-    try {
-      const storagePath = `users/${user.uid}/profile_${Date.now()}`
-      const downloadURL = await uploadFile(file, storagePath)
-
-      setProfileData(prev => ({ ...prev, profileImage: downloadURL }))
-
-      // Actualizar inmediatamente en Firestore si no estamos en modo edición (o incluso si lo estamos)
-      await setDoc(doc(db, 'users', user.uid), {
-        profileImage: downloadURL,
-        updatedAt: new Date()
-      }, { merge: true })
-
-      setSuccess('¡Imagen de perfil actualizada!')
-      setTimeout(() => setSuccess(""), 3000)
-    } catch (error) {
-      console.error('Error al subir imagen:', error)
-      alert('Error al subir la imagen. Intenta de nuevo.')
-    } finally {
-      setUploadingImage(false)
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
     }
   }
 
@@ -3343,7 +2987,6 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
           </CardContent>
         </Card>
 
-<<<<<<< HEAD
         {roleAlert && (
           <div className="p-0">
             <CustomAlert
@@ -3405,11 +3048,6 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
         <Button 
           variant="destructive" 
           className="w-full" 
-=======
-        <Button
-          variant="destructive"
-          className="w-full"
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
           onClick={handleLogout}
           disabled={loading}
         >
@@ -3551,7 +3189,6 @@ function ClientAgenda({ setFlow, user, setActiveChat, onBack }: { setFlow: (flow
   }
 
   return (
-<<<<<<< HEAD
     <div className="min-h-screen bg-[#f7fdfd] pb-24">
       <div className="p-4 flex items-center justify-between sticky top-0 bg-[#f7fdfd] z-10">
         <button onClick={() => setFlow("home")} className="p-2">
@@ -3681,388 +3318,6 @@ function ClientAgenda({ setFlow, user, setActiveChat, onBack }: { setFlow: (flow
             <span className="text-[10px] font-medium text-gray-400">Perfil</span>
           </button>
         </div>
-=======
-    <div className="min-h-screen pb-20" style={{ backgroundColor: 'oklch(0.99 0.01 200)' }}>
-      {/* Header Premium */}
-      <div className="bg-white/80 backdrop-blur-md sticky top-0 z-30 border-b border-gray-100 px-4 py-4">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => onBack ? onBack() : setFlow("home")}
-              className="rounded-full hover:bg-gray-100"
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </Button>
-            <div>
-              <h1 className="text-xl font-bold text-gray-900">Mis Reservas</h1>
-              <p className="text-xs text-muted-foreground">Gestiona tus próximos encuentros</p>
-            </div>
-          </div>
-          <div className="bg-primary/10 p-2 rounded-full">
-            <Calendar className="h-5 w-5 text-primary" />
-          </div>
-        </div>
-      </div>
-
-      <div className="max-w-4xl mx-auto p-4 space-y-6">
-        {/* Calendario Moderno */}
-        <Card className="overflow-hidden border-none shadow-xl shadow-gray-200/50 bg-white/50 backdrop-blur-sm">
-          <CardContent className="p-0">
-            <div className="p-6 bg-gradient-to-br from-primary/5 via-transparent to-transparent">
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-                  Calendario
-                </h3>
-                <div className="flex items-center gap-1 bg-white p-1 rounded-full shadow-sm border border-gray-100">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 rounded-full"
-                    onClick={() => navigateMonth('prev')}
-                  >
-                    <ArrowLeft className="h-4 w-4" />
-                  </Button>
-                  <span className="text-sm font-bold min-w-[140px] text-center capitalize">
-                    {currentMonth.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 rounded-full rotate-180"
-                    onClick={() => navigateMonth('next')}
-                  >
-                    <ArrowLeft className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-
-              {/* Días de la semana */}
-              <div className="grid grid-cols-7 gap-1 mb-2">
-                {['D', 'L', 'M', 'M', 'J', 'V', 'S'].map((day, i) => (
-                  <div key={i} className="text-center text-[10px] font-black text-gray-400 uppercase tracking-widest py-2">
-                    {day}
-                  </div>
-                ))}
-              </div>
-
-              {/* Días del calendario */}
-              <div className="grid grid-cols-7 gap-2">
-                {calendarDays.map((day, index) => {
-                  const isToday = day.fullDate === new Date().toISOString().split('T')[0];
-                  const isSelected = selectedDate === day.fullDate;
-                  const hasBookings = day.bookings.length > 0 && day.isCurrentMonth;
-
-                  return (
-                    <button
-                      key={index}
-                      onClick={() => day.isCurrentMonth && setSelectedDate(day.fullDate)}
-                      className={`
-                        relative aspect-square flex flex-col items-center justify-center rounded-xl transition-all duration-200
-                        ${day.isCurrentMonth
-                          ? 'hover:bg-primary/5 active:scale-90 cursor-pointer'
-                          : 'opacity-20 cursor-default'}
-                        ${isSelected
-                          ? 'bg-primary text-white shadow-lg shadow-primary/30 scale-105 z-10'
-                          : 'text-gray-700'}
-                        ${isToday && !isSelected ? 'border-2 border-primary/20 bg-primary/5' : ''}
-                      `}
-                    >
-                      <span className={`text-sm font-bold ${isSelected ? 'text-white' : ''}`}>
-                        {day.date}
-                      </span>
-                      {hasBookings && (
-                        <span className={`
-                          absolute bottom-1.5 w-1.5 h-1.5 rounded-full
-                          ${isSelected ? 'bg-white' : 'bg-primary'}
-                        `} />
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Reservas del día seleccionado */}
-        {selectedDate && (
-          <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div className="flex items-center justify-between px-1">
-              <h3 className="font-bold text-gray-800 capitalize flex items-center gap-2">
-                <div className="w-1.5 h-6 bg-primary rounded-full transition-all" />
-                {new Date(selectedDate + 'T00:00:00').toLocaleDateString('es-ES', {
-                  weekday: 'long',
-                  day: 'numeric',
-                  month: 'long'
-                })}
-              </h3>
-              <span className="text-xs font-medium text-muted-foreground bg-gray-100 px-2 py-1 rounded-full">
-                {selectedDateBookings.length} {selectedDateBookings.length === 1 ? 'reserva' : 'reservas'}
-              </span>
-            </div>
-
-            <div className="space-y-3">
-              {selectedDateBookings.length > 0 ? (
-                selectedDateBookings.map((booking) => (
-                  <Card key={booking.id} className="group overflow-hidden border-none shadow-md hover:shadow-xl transition-all duration-300 bg-white">
-                    <CardContent className="p-0">
-                      <div className="flex h-full">
-                        <div className={`w-1.5 ${booking.status === 'confirmed' ? 'bg-green-500' :
-                          booking.status === 'pending' ? 'bg-yellow-500' :
-                            booking.status === 'cancelled' ? 'bg-red-500' : 'bg-blue-500'
-                          }`} />
-                        <div className="flex-1 p-4 lg:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                          <div className="flex items-start gap-4">
-                            <div className="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
-                              <Clock className="h-6 w-6 text-primary" />
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-2 mb-1">
-                                <h4 className="font-bold text-gray-900">{booking.serviceName}</h4>
-                                <span className="text-xs font-bold text-primary bg-primary/5 px-2 py-0.5 rounded cursor-default">
-                                  ${booking.price}
-                                </span>
-                              </div>
-                              <p className="text-sm text-gray-500 flex items-center gap-1.5">
-                                <User className="h-3.5 w-3.5" />
-                                {booking.providerName}
-                              </p>
-                              <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1.5">
-                                <Clock className="h-3 w-3" />
-                                {booking.time}
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="flex flex-row sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-3">
-                            <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full ${booking.status === 'confirmed' ? 'bg-green-100 text-green-700' :
-                              booking.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
-                                booking.status === 'cancelled' ? 'bg-red-100 text-red-700' :
-                                  'bg-blue-100 text-blue-700'
-                              }`}>
-                              {booking.status === 'confirmed' ? 'Confirmada' :
-                                booking.status === 'pending' ? 'Pendiente' :
-                                  booking.status === 'cancelled' ? 'Cancelada' : 'Completada'}
-                            </span>
-
-                            <div className="flex gap-2">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  setActiveChat({
-                                    partnerId: booking.providerId,
-                                    partnerName: booking.providerName || "Proveedor"
-                                  })
-                                  setFlow("chat")
-                                }}
-                                className="h-10 w-12 p-0 bg-primary/5 text-primary hover:bg-primary/10 rounded-xl flex flex-col items-center justify-center transition-all active:scale-90 border border-primary/10 shadow-sm"
-                                title="Chatear con el profesional"
-                              >
-                                <div className="relative">
-                                  <MessageSquare className="h-4 w-4" />
-                                  <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-primary rounded-full border border-white"></span>
-                                </div>
-                                <span className="text-[8px] font-black uppercase mt-0.5">Chat</span>
-                              </Button>
-
-                              {booking.status !== 'cancelled' && booking.status !== 'completed' && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleCancelBooking(booking.id)}
-                                  disabled={loading}
-                                  className="h-8 text-xs font-bold text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg"
-                                >
-                                  Cancelar
-                                </Button>
-                              )}
-                              {booking.status === 'completed' && !booking.reviewed && (
-                                <Button
-                                  size="sm"
-                                  onClick={() => {
-                                    setRatingBooking(booking)
-                                    setShowRateModal(true)
-                                  }}
-                                  className="h-8 text-xs font-bold bg-yellow-400 hover:bg-yellow-500 text-white rounded-lg shadow-lg shadow-yellow-200"
-                                >
-                                  Calificar
-                                </Button>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))
-              ) : (
-                <div className="flex flex-col items-center justify-center py-12 px-4 rounded-3xl bg-white/30 border-2 border-dashed border-gray-200">
-                  <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4 opacity-50">
-                    <Clock className="h-8 w-8 text-gray-400" />
-                  </div>
-                  <p className="text-gray-500 font-medium text-center">No hay reservas para este día</p>
-                  <p className="text-xs text-muted-foreground text-center mt-1">Selecciona otra fecha en el calendario</p>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Todas las reservas Modernizadas */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between px-1">
-            <h3 className="font-bold text-gray-800 flex items-center gap-2">
-              <div className="w-1.5 h-6 bg-gray-300 rounded-full" />
-              Historial de Reservas
-            </h3>
-            <span className="text-xs font-medium text-muted-foreground">Últimas 10</span>
-          </div>
-
-          <div className="grid gap-3">
-            {clientBookings.length > 0 ? (
-              clientBookings.slice(0, 10).map((booking) => (
-                <div
-                  key={booking.id}
-                  className="flex items-center gap-4 p-4 bg-white rounded-2xl shadow-sm border border-gray-50 hover:border-primary/20 transition-all group"
-                >
-                  <div className="w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center shrink-0 group-hover:bg-primary/5 transition-colors">
-                    <Clock className={`h-5 w-5 ${booking.status === 'confirmed' ? 'text-green-500' :
-                      booking.status === 'pending' ? 'text-yellow-500' : 'text-gray-400'
-                      }`} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <h4 className="font-bold text-gray-900 truncate">{booking.serviceName}</h4>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <p className="text-xs text-muted-foreground font-medium">
-                        {new Date(booking.date).toLocaleDateString('es-ES', { day: '2-digit', month: 'short' })} • {booking.time}
-                      </p>
-                      <span className="w-1 h-1 bg-gray-300 rounded-full" />
-                      <p className="text-xs text-muted-foreground truncate">{booking.providerName}</p>
-                    </div>
-                  </div>
-                  <div className="shrink-0 flex items-center gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setActiveChat({
-                          partnerId: booking.providerId,
-                          partnerName: booking.providerName || "Proveedor"
-                        })
-                        setFlow("chat")
-                      }}
-                      className="h-10 w-12 p-0 bg-gray-50 text-gray-400 hover:text-primary hover:bg-primary/5 rounded-xl flex flex-col items-center justify-center transition-all active:scale-90 border border-gray-100"
-                      title="Chatear"
-                    >
-                      <MessageSquare className="h-3.5 w-3.5" />
-                      <span className="text-[8px] font-black uppercase mt-0.5">Chat</span>
-                    </Button>
-                    <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-md ${booking.status === 'confirmed' ? 'bg-green-50 text-green-600 border border-green-100' :
-                      booking.status === 'pending' ? 'bg-yellow-50 text-yellow-600 border border-yellow-100' :
-                        'bg-gray-50 text-gray-500 border border-gray-100'
-                      }`}>
-                      {booking.status === 'confirmed' ? 'Ok' :
-                        booking.status === 'pending' ? 'Wait' :
-                          booking.status === 'cancelled' ? 'No' : 'Fin'}
-                    </span>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="text-center py-10 bg-white rounded-3xl border border-gray-100 italic text-gray-400 text-sm">
-                Aún no tienes historial de reservas
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Modal de Calificación */}
-        {showRateModal && ratingBooking && (
-          <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in duration-300">
-            <Card className="w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl border-none animate-in zoom-in-95 duration-300">
-              <div className="h-24 bg-gradient-to-br from-primary to-orange-400 relative">
-                <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 w-20 h-20 bg-white rounded-2xl shadow-xl flex items-center justify-center">
-                  <Star className="h-10 w-10 text-yellow-400 fill-yellow-400" />
-                </div>
-              </div>
-              <CardContent className="pt-14 pb-6 px-6">
-                <h3 className="text-xl font-black text-gray-900 text-center mb-1">¡Danos tu opinión!</h3>
-                <p className="text-center text-sm text-muted-foreground mb-8">
-                  ¿Qué te pareció el servicio de <span className="text-primary font-bold">{ratingBooking.providerName}</span>?
-                </p>
-
-                <div className="flex justify-center gap-3 mb-8">
-                  {[1, 2, 3, 4, 5].map((star) => (
-                    <button
-                      key={star}
-                      type="button"
-                      onClick={() => setRatingScore(star)}
-                      className={`transition-all duration-300 hover:scale-125 ${star <= ratingScore ? "scale-110" : "grayscale opacity-50"}`}
-                    >
-                      <Star
-                        className={`h-9 w-9 ${star <= ratingScore ? "fill-yellow-400 text-yellow-400" : "text-gray-200"}`}
-                      />
-                    </button>
-                  ))}
-                </div>
-
-                <div className="space-y-2 mb-8">
-                  <label className="text-xs font-black uppercase tracking-widest text-gray-400 px-1">Tu experiencia</label>
-                  <textarea
-                    className="w-full min-h-[120px] p-4 rounded-2xl border-2 border-gray-50 bg-gray-50 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary focus:bg-white outline-none transition-all resize-none"
-                    placeholder="Escribe aquí tu comentario (opcional)..."
-                    value={ratingComment}
-                    onChange={(e) => setRatingComment(e.target.value)}
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <Button
-                    variant="ghost"
-                    className="h-12 rounded-xl font-bold text-gray-500"
-                    onClick={() => setShowRateModal(false)}
-                  >
-                    Cerrar
-                  </Button>
-                  <Button
-                    className="h-12 rounded-xl font-black bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/20"
-                    onClick={async () => {
-                      setLoading(true)
-                      try {
-                        const result = await addReview({
-                          serviceId: ratingBooking.serviceId,
-                          clientId: user.uid,
-                          clientName: user.displayName || "Compañero",
-                          rating: ratingScore,
-                          comment: ratingComment
-                        }, ratingBooking.id)
-
-                        if (result.success) {
-                          alert('¡Gracias por tu reseña!')
-                          setShowRateModal(false)
-                          setRatingComment("")
-                          setRatingScore(5)
-                          if (fetchBookings) await fetchBookings()
-                        }
-                      } catch (e) {
-                        alert('Error al enviar la reseña')
-                      } finally {
-                        setLoading(false)
-                      }
-                    }}
-                    disabled={loading}
-                  >
-                    {loading ? "..." : "Enviar"}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
       </div>
     </div>
   )
@@ -4640,7 +3895,6 @@ function ProviderDashboard({ setFlow, user, services, logout }: { setFlow: (flow
   )
 }
 
-<<<<<<< HEAD
 function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: { setFlow: (flow: string) => void; user: any; logout: () => Promise<{ success: boolean }>; onSwitchToClient: () => Promise<{ success: boolean }>; services: any[] }) {
   const { position: userPosition } = useGeolocation()
   const { getBookingsByProvider } = useBookings()
@@ -4651,9 +3905,6 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
   const [showConfirmSwitch, setShowConfirmSwitch] = useState(false)
   const [roleAlert, setRoleAlert] = useState<"success" | "error" | null>(null)
   const [roleAlertMessage, setRoleAlertMessage] = useState("")
-=======
-function ProviderProfile({ setFlow, user, logout, userLocation }: { setFlow: (flow: string) => void; user: any; logout: () => Promise<{ success: boolean }>; userLocation: { lat: number, lng: number } | null }) {
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
   const [profileData, setProfileData] = useState({
     businessName: user?.displayName || "Mi Negocio",
     email: user?.email || "",
@@ -4674,23 +3925,17 @@ function ProviderProfile({ setFlow, user, logout, userLocation }: { setFlow: (fl
     },
     profileImage: "/placeholder.svg",
     coverImage: "/placeholder.svg",
-<<<<<<< HEAD
     city: "",
     cbu: "",
     alias: "",
     accountHolder: "",
     createdAt: null as any
-=======
-    lat: null as number | null,
-    lng: null as number | null
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
   })
 
   const [isEditing, setIsEditing] = useState(false)
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState("")
 
-<<<<<<< HEAD
   // Stats dinámicos (después de profileData)
   const uniqueClients = new Set(providerBookings.map((b: any) => b.clientId)).size
   const avgRating = providerServices.length > 0
@@ -4738,67 +3983,6 @@ function ProviderProfile({ setFlow, user, logout, userLocation }: { setFlow: (fl
     loadProfile()
   }, [user])
 
-=======
-  // Cargar datos actuales de Firestore al iniciar
-  useEffect(() => {
-    const loadProfileData = async () => {
-      if (!user?.uid) return
-
-      try {
-        const { getDoc, doc } = await import("firebase/firestore")
-        const { db } = await import("@/lib/firebase")
-
-        const docRef = doc(db, 'users', user.uid)
-        const docSnap = await getDoc(docRef)
-
-        if (docSnap.exists()) {
-          const data = docSnap.data()
-          setProfileData(prev => ({
-            ...prev,
-            ...data,
-            businessName: data.businessName || data.displayName || user.displayName || "Mi Negocio",
-            email: data.email || user.email || "",
-            // Asegurarse de que businessHours esté presente
-            businessHours: data.businessHours || prev.businessHours
-          }))
-        }
-      } catch (error) {
-        console.error("Error cargando perfil:", error)
-      }
-    }
-
-    loadProfileData()
-  }, [user])
-
-  const [isUpdatingLocation, setIsUpdatingLocation] = useState(false)
-
-  const updateLocation = () => {
-    setIsUpdatingLocation(true)
-    if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setProfileData(prev => ({
-            ...prev,
-            lat: position.coords.latitude,
-            lng: position.coords.longitude
-          }))
-          setIsUpdatingLocation(false)
-          setSuccess("Ubicación GPS capturada correctamente")
-          setTimeout(() => setSuccess(""), 3000)
-        },
-        (error) => {
-          console.error("Error obteniendo ubicación:", error)
-          alert("No se pudo obtener la ubicación. Asegúrate de dar permisos.")
-          setIsUpdatingLocation(false)
-        }
-      )
-    } else {
-      alert("Tu navegador no soporta geolocalización")
-      setIsUpdatingLocation(false)
-    }
-  }
-
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
   const handleSave = async () => {
     setLoading(true)
     try {
@@ -4875,7 +4059,6 @@ function ProviderProfile({ setFlow, user, logout, userLocation }: { setFlow: (fl
     }
 
     setUploadingImage(type)
-<<<<<<< HEAD
     
     try {
       const { uploadImage } = await import("@/lib/uploadImage")
@@ -4904,46 +4087,6 @@ function ProviderProfile({ setFlow, user, logout, userLocation }: { setFlow: (fl
       console.error('Error subiendo imagen:', error)
       setUploadingImage(null)
       alert(error.message || 'Error al subir la imagen')
-=======
-
-    // URL temporal para feedback visual inmediato
-    const imageUrl = URL.createObjectURL(file)
-    if (type === 'profile') {
-      setProfileData(prev => ({ ...prev, profileImage: imageUrl }))
-    } else {
-      setProfileData(prev => ({ ...prev, coverImage: imageUrl }))
-    }
-
-    setUploadingImage(type)
-
-    // Subida real a Firebase Storage
-    try {
-      const storagePath = `users/${user.uid}/${type}_${Date.now()}`
-      const downloadURL = await uploadFile(file, storagePath)
-
-      const updateObj: any = {}
-      if (type === 'profile') {
-        updateObj.profileImage = downloadURL
-        setProfileData(prev => ({ ...prev, profileImage: downloadURL }))
-      } else {
-        updateObj.coverImage = downloadURL
-        setProfileData(prev => ({ ...prev, coverImage: downloadURL }))
-      }
-
-      // Actualizar en Firestore
-      await setDoc(doc(db, 'users', user.uid), {
-        ...updateObj,
-        updatedAt: new Date()
-      }, { merge: true })
-
-      setSuccess(`¡Imagen ${type === 'profile' ? 'de perfil' : 'de portada'} actualizada!`)
-      setTimeout(() => setSuccess(""), 3000)
-    } catch (error) {
-      console.error('Error al subir imagen:', error)
-      alert('Error al subir la imagen. Intenta de nuevo.')
-    } finally {
-      setUploadingImage(null)
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
     }
   }
 
@@ -4966,7 +4109,6 @@ function ProviderProfile({ setFlow, user, logout, userLocation }: { setFlow: (fl
           </div>
         )}
 
-<<<<<<< HEAD
         <div className="p-4 space-y-6">
           {/* Cover Image */}
           <Card>
@@ -4980,28 +4122,9 @@ function ProviderProfile({ setFlow, user, logout, userLocation }: { setFlow: (fl
                       <div className="animate-spin w-6 h-6 border-2 border-white border-t-transparent rounded-full mx-auto mb-2"></div>
                       <p className="text-sm">Subiendo imagen...</p>
                     </div>
-=======
-      <div className="p-4 space-y-6">
-        {/* Cover Image */}
-        <Card>
-          <CardContent className="p-0">
-            <div className="relative h-32 bg-gradient-to-r from-primary/20 to-primary/10 rounded-t-lg">
-              <img
-                src={profileData.coverImage}
-                alt="Cover"
-                className="w-full h-full object-cover rounded-t-lg"
-              />
-              <div className="absolute inset-0 bg-black/20 rounded-t-lg" />
-              {uploadingImage === 'cover' && (
-                <div className="absolute inset-0 bg-black/50 rounded-t-lg flex items-center justify-center">
-                  <div className="text-white text-center">
-                    <div className="animate-spin w-6 h-6 border-2 border-white border-t-transparent rounded-full mx-auto mb-2"></div>
-                    <p className="text-sm">Subiendo imagen...</p>
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                   </div>
                 )}
                 <div className="absolute top-2 right-2">
-<<<<<<< HEAD
                   <input type="file" accept="image/*" onChange={(e) => handleImageUpload('cover', e)} className="hidden" id="cover-upload" />
                   <Button size="sm" variant="secondary" onClick={(e) => { e.stopPropagation(); document.getElementById('cover-upload')?.click() }} disabled={uploadingImage === 'cover'}>
                     {uploadingImage === 'cover' ? 'Subiendo...' : 'Cambiar portada'}
@@ -5021,69 +4144,6 @@ function ProviderProfile({ setFlow, user, logout, userLocation }: { setFlow: (fl
                     <div className="absolute -bottom-2 -right-2">
                       <input type="file" accept="image/*" onChange={(e) => handleImageUpload('profile', e)} className="hidden" id="profile-upload" />
                       <Button size="sm" variant="secondary" className="w-8 h-8 rounded-full p-0" onClick={(e) => { e.stopPropagation(); document.getElementById('profile-upload')?.click() }} disabled={uploadingImage === 'profile'}>
-=======
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => handleImageUpload('cover', e)}
-                    className="hidden"
-                    id="cover-upload"
-                  />
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      const input = document.getElementById('cover-upload')
-                      if (input) {
-                        input.click()
-                      }
-                    }}
-                    disabled={uploadingImage === 'cover'}
-                  >
-                    {uploadingImage === 'cover' ? 'Subiendo...' : 'Cambiar portada'}
-                  </Button>
-                </div>
-              )}
-            </div>
-
-            {/* Profile Image */}
-            <div className="relative px-6 pb-6">
-              <div className="flex items-end -mt-12 gap-4">
-                <div className="relative">
-                  <img
-                    src={profileData.profileImage}
-                    alt="Profile"
-                    className="w-24 h-24 rounded-full border-4 border-white object-cover"
-                  />
-                  {uploadingImage === 'profile' && (
-                    <div className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center">
-                      <div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"></div>
-                    </div>
-                  )}
-                  {isEditing && (
-                    <div className="absolute -bottom-2 -right-2">
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(e) => handleImageUpload('profile', e)}
-                        className="hidden"
-                        id="profile-upload"
-                      />
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        className="w-8 h-8 rounded-full p-0"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          const input = document.getElementById('profile-upload')
-                          if (input) {
-                            input.click()
-                          }
-                        }}
-                        disabled={uploadingImage === 'profile'}
-                      >
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                         {uploadingImage === 'profile' ? '⏳' : '📷'}
                       </Button>
                     </div>
@@ -5097,7 +4157,6 @@ function ProviderProfile({ setFlow, user, logout, userLocation }: { setFlow: (fl
             </CardContent>
           </Card>
 
-<<<<<<< HEAD
           {/* Business Information Form */}
           <Card>
             <CardContent className="p-6">
@@ -5116,99 +4175,6 @@ function ProviderProfile({ setFlow, user, logout, userLocation }: { setFlow: (fl
                 <div className="space-y-2">
                   <Label htmlFor="city">Ciudad / Localidad</Label>
                   <Input id="city" value={profileData.city} onChange={(e) => handleInputChange("city", e.target.value)} placeholder="Ej: Carmen de Areco" />
-=======
-        {/* Business Information */}
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold">Información del Negocio</h3>
-              <Button
-                variant="outline"
-                onClick={() => setIsEditing(!isEditing)}
-              >
-                {isEditing ? "Cancelar" : "Editar"}
-              </Button>
-            </div>
-
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="business-name">Nombre del Negocio</Label>
-                  <Input
-                    id="business-name"
-                    value={profileData.businessName}
-                    onChange={(e) => handleInputChange("businessName", e.target.value)}
-                    disabled={!isEditing}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="phone">Teléfono</Label>
-                  <Input
-                    id="phone"
-                    value={profileData.phone}
-                    onChange={(e) => handleInputChange("phone", e.target.value)}
-                    disabled={!isEditing}
-                    placeholder="11 1234-5678"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="address">Dirección (Escrita)</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="address"
-                    value={profileData.address}
-                    onChange={(e) => handleInputChange("address", e.target.value)}
-                    disabled={!isEditing}
-                    placeholder="Av. Corrientes 1234, CABA"
-                    className="flex-1"
-                  />
-                  {isEditing && (
-                    <Button
-                      type="button"
-                      onClick={updateLocation}
-                      variant="outline"
-                      className={profileData.lat ? "border-green-500 text-green-600" : ""}
-                      disabled={isUpdatingLocation}
-                    >
-                      <MapPin className={`h-4 w-4 mr-1 ${isUpdatingLocation ? "animate-pulse" : ""}`} />
-                      {profileData.lat ? "Actualizar GPS" : "Obtener GPS"}
-                    </Button>
-                  )}
-                </div>
-                {profileData.lat && (
-                  <p className="text-[10px] text-green-600 flex items-center gap-1">
-                    <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                    Coordenadas GPS guardadas ({profileData.lat.toFixed(4)}, {profileData.lng?.toFixed(4)})
-                  </p>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="description">Descripción</Label>
-                <textarea
-                  id="description"
-                  className="w-full p-3 border border-gray-300 rounded-md resize-none"
-                  rows={3}
-                  value={profileData.description}
-                  onChange={(e) => handleInputChange("description", e.target.value)}
-                  disabled={!isEditing}
-                  placeholder="Describe tu negocio y servicios..."
-                />
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="website">Sitio Web</Label>
-                  <Input
-                    id="website"
-                    value={profileData.website}
-                    onChange={(e) => handleInputChange("website", e.target.value)}
-                    disabled={!isEditing}
-                    placeholder="https://minegocio.com"
-                  />
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="address">Dirección</Label>
@@ -5230,7 +4196,6 @@ function ProviderProfile({ setFlow, user, logout, userLocation }: { setFlow: (fl
                 </div>
               </div>
 
-<<<<<<< HEAD
               {/* Datos Bancarios */}
               <div className="mt-8 pt-6 border-t border-gray-100">
                 <h4 className="text-md font-semibold mb-4 text-primary">Datos para recibir transferencias</h4>
@@ -5248,40 +4213,6 @@ function ProviderProfile({ setFlow, user, logout, userLocation }: { setFlow: (fl
                     <Label htmlFor="alias" className="mr-2">Alias:</Label>
                     <Input id="alias" placeholder="Ej: mi.negocio.mp" value={profileData.alias} onChange={(e) => handleInputChange("alias", e.target.value)} className="inline-block w-auto max-w-[250px]" />
                   </div>
-=======
-            {isEditing && (
-              <div className="flex gap-3 pt-4">
-                <Button variant="outline" onClick={() => setIsEditing(false)} className="flex-1">
-                  Cancelar
-                </Button>
-                <Button onClick={handleSave} disabled={loading} className="flex-1">
-                  {loading ? "Guardando..." : "Guardar Cambios"}
-                </Button>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Business Hours */}
-        <Card>
-          <CardContent className="p-6">
-            <h3 className="text-lg font-semibold mb-4">Horarios de Atención</h3>
-            <div className="space-y-3">
-              {Object.entries(profileData.businessHours).map(([day, hours]) => (
-                <div key={day} className="flex items-center justify-between">
-                  <span className="capitalize font-medium">{day === 'monday' ? 'Lunes' :
-                    day === 'tuesday' ? 'Martes' :
-                      day === 'wednesday' ? 'Miércoles' :
-                        day === 'thursday' ? 'Jueves' :
-                          day === 'friday' ? 'Viernes' :
-                            day === 'saturday' ? 'Sábado' : 'Domingo'}</span>
-                  <Input
-                    value={hours}
-                    onChange={(e) => handleHoursChange(day, e.target.value)}
-                    disabled={!isEditing}
-                    className="w-32 text-right"
-                  />
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                 </div>
               </div>
 
@@ -5302,7 +4233,6 @@ function ProviderProfile({ setFlow, user, logout, userLocation }: { setFlow: (fl
                 <Button variant="outline" onClick={() => setIsEditing(false)} className="flex-1">Cancelar</Button>
                 <Button onClick={handleSave} disabled={loading} className="flex-1">{loading ? "Guardando..." : "Guardar Cambios"}</Button>
               </div>
-<<<<<<< HEAD
             </CardContent>
           </Card>
         </div>
@@ -5334,18 +4264,6 @@ function ProviderProfile({ setFlow, user, logout, userLocation }: { setFlow: (fl
                 alt={profileData.businessName} 
                 className="w-full h-full object-cover"
               />
-=======
-              <div className="pt-4 border-t border-gray-100">
-                <Button
-                  variant="destructive"
-                  className="w-full"
-                  onClick={handleLogout}
-                  disabled={loading}
-                >
-                  Cerrar sesión
-                </Button>
-              </div>
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
             </div>
           </div>
         </div>
@@ -6143,12 +5061,8 @@ function CreateService({
     longitude: null as number | null,
   })
   const [imageFile, setImageFile] = useState<File | null>(null)
-<<<<<<< HEAD
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [locationStatus, setLocationStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
-=======
-  const [uploadingImage, setUploadingImage] = useState(false)
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
@@ -6161,19 +5075,7 @@ function CreateService({
     setError("")
 
     try {
-<<<<<<< HEAD
       const serviceData: any = {
-=======
-      let imageUrl = "/placeholder.svg"
-      if (imageFile) {
-        setUploadingImage(true)
-        const storagePath = `services/${user.uid}/${Date.now()}_${imageFile.name}`
-        imageUrl = await uploadFile(imageFile, storagePath)
-        setUploadingImage(false)
-      }
-
-      const serviceData = {
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
         name: formData.name,
         description: formData.description,
         price: parseInt(formData.price),
@@ -6459,16 +5361,9 @@ function CreateService({
 
 function EditService({ setFlow, service, user, updateService, userLocation }: {
   setFlow: (flow: string) => void
-<<<<<<< HEAD
   service: any
   user: any
   updateService?: (id: string, data: any) => Promise<{success: boolean, error?: string}>
-=======
-  service?: any
-  user?: any
-  updateService?: (id: string, data: any) => Promise<{ success: boolean, error?: string }>
-  userLocation: { lat: number, lng: number } | null
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
 }) {
   const { updateService: updateServiceHook } = useServices()
   const updateServiceFn = updateService || updateServiceHook
@@ -6482,14 +5377,9 @@ function EditService({ setFlow, service, user, updateService, userLocation }: {
     latitude: service?.latitude || null,
     longitude: service?.longitude || null,
   })
-<<<<<<< HEAD
   const [locationStatus, setLocationStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string | null>(service?.image || null)
-=======
-  const [imageFile, setImageFile] = useState<File | null>(null)
-  const [uploadingImage, setUploadingImage] = useState(false)
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
@@ -6523,25 +5413,12 @@ function EditService({ setFlow, service, user, updateService, userLocation }: {
     setSuccess("")
 
     try {
-<<<<<<< HEAD
       const serviceData: any = {
-=======
-      let imageUrl = (service as any)?.image
-      if (imageFile) {
-        setUploadingImage(true)
-        const storagePath = `services/${user.uid}/edit_${Date.now()}_${imageFile.name}`
-        imageUrl = await uploadFile(imageFile, storagePath)
-        setUploadingImage(false)
-      }
-
-      const serviceData = {
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
         name: formData.name,
         description: formData.description,
         price: parseInt(formData.price.replace('$', '').replace(/\./g, '')) || parseInt(formData.price),
         duration: formData.duration,
         category: formData.category,
-<<<<<<< HEAD
         latitude: formData.latitude,
         longitude: formData.longitude,
       }
@@ -6556,13 +5433,6 @@ function EditService({ setFlow, service, user, updateService, userLocation }: {
           setLoading(false)
           return
         }
-=======
-        image: imageUrl,
-        lat: userLocation?.lat || (service as any)?.lat || null,
-        lng: userLocation?.lng || (service as any)?.lng || null,
-        active: (service as any)?.active !== false,
-        updatedAt: new Date()
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
       }
 
       const result = await updateServiceFn(service.id, serviceData)
@@ -6710,7 +5580,6 @@ function EditService({ setFlow, service, user, updateService, userLocation }: {
                 </select>
               </div>
 
-<<<<<<< HEAD
               {/* Botón de ubicación */}
               <div className="space-y-2">
                 <Label>Ubicación del servicio</Label>
@@ -6757,28 +5626,6 @@ function EditService({ setFlow, service, user, updateService, userLocation }: {
                    '📍 Actualizar mi ubicación'}
                 </Button>
                 <p className="text-xs text-muted-foreground mt-2">Permite que los clientes vean si estás cerca de ellos.</p>
-=======
-              <div className="space-y-2">
-                <Label htmlFor="edit-service-image">Imagen del servicio</Label>
-                <div className="flex items-center gap-4">
-                  <Input
-                    id="edit-service-image"
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => setImageFile(e.target.files?.[0] || null)}
-                    className="cursor-pointer"
-                  />
-                  {(imageFile || (service as any)?.image) && (
-                    <div className="w-12 h-12 rounded border overflow-hidden bg-gray-50 flex-shrink-0">
-                      <img
-                        src={imageFile ? URL.createObjectURL(imageFile) : (service as any)?.image}
-                        alt="Preview"
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
-                  )}
-                </div>
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
               </div>
 
               <div className="flex gap-3 pt-4">
@@ -6797,7 +5644,6 @@ function EditService({ setFlow, service, user, updateService, userLocation }: {
   )
 }
 
-<<<<<<< HEAD
 function ProviderStatistics({ setFlow, user, services, profileData }: { setFlow: (flow: string) => void; user: any; services: any[]; profileData: any }) {
   const { getBookingsByProvider, bookings } = useBookings()
   
@@ -6806,21 +5652,10 @@ function ProviderStatistics({ setFlow, user, services, profileData }: { setFlow:
   const providerBookings = getBookingsByProvider(user?.uid) || []
   
   // Calcular estadísticas generales
-=======
-function ProviderStatistics({ setFlow, user, services }: { setFlow: (flow: string) => void; user: any; services: any[] }) {
-  const { getBookingsByProvider } = useBookings()
-
-  // Filtrar servicios del proveedor
-  const providerServices = services.filter(service => service.providerId === user?.uid)
-  const providerBookings = getBookingsByProvider(user?.uid) || []
-
-  // Calcular estadísticas
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
   const totalViews = providerServices.reduce((sum, s) => sum + ((s as any).views || 0), 0)
   const totalBookings = providerBookings.length
   const totalContacts = totalBookings
   const conversionRate = totalViews > 0 ? (totalBookings / totalViews) * 100 : 0
-<<<<<<< HEAD
   
   // Ciudad dinámica
   const city = profileData?.city || "tu localidad"
@@ -6869,24 +5704,6 @@ function ProviderStatistics({ setFlow, user, services }: { setFlow: (flow: strin
 
     if (totalBookings === 0) {
       return sources.map(s => ({ ...s, value: 0 }))
-=======
-
-  // Estadísticas por servicio
-  const serviceStats = providerServices.map(service => {
-    const serviceBookings = providerBookings.filter(b => b.serviceId === service.id)
-    const serviceRevenue = serviceBookings
-      .filter(b => b.paymentStatus === 'paid')
-      .reduce((sum, b) => sum + (b.price || 0), 0)
-    const serviceViews = (service as any).views || 0
-    const serviceConversion = serviceViews > 0 ? (serviceBookings.length / serviceViews) * 100 : 0
-
-    return {
-      ...service,
-      bookings: serviceBookings.length,
-      revenue: serviceRevenue,
-      views: serviceViews,
-      conversion: serviceConversion
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
     }
 
     return sources.map(s => {
@@ -7003,7 +5820,6 @@ function ProviderStatistics({ setFlow, user, services }: { setFlow: (flow: strin
         {/* Card Resumen / Evolución */}
         <Card className="bg-white border-none rounded-[2rem] shadow-sm overflow-hidden">
           <CardContent className="p-6">
-<<<<<<< HEAD
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-lg font-black text-gray-800">Resumen Semanal</h3>
               <div className="flex gap-4 text-xs font-bold">
@@ -7020,41 +5836,6 @@ function ProviderStatistics({ setFlow, user, services }: { setFlow: (flow: strin
                     <circle key={i} cx={`${(i * 100) / 6}%`} cy={`${80 - (val * 60) / maxWeekly}%`} r="3" className="fill-white stroke-primary stroke-2" />
                   ))}
                 </svg>
-=======
-            <h3 className="text-lg font-semibold mb-4">Rendimiento por Servicio</h3>
-            <div className="space-y-4">
-              {serviceStats.length > 0 ? (
-                serviceStats.map((service) => (
-                  <div key={service.id} className="p-4 bg-gray-50 rounded-lg">
-                    <div className="flex items-center justify-between mb-3">
-                      <h4 className="font-semibold">{service.name}</h4>
-                      <span className="text-sm text-muted-foreground">${service.revenue.toLocaleString()}</span>
-                    </div>
-                    <div className="grid grid-cols-3 gap-4 text-sm">
-                      <div>
-                        <p className="text-muted-foreground">Visualizaciones</p>
-                        <p className="font-semibold">{service.views}</p>
-                      </div>
-                      <div>
-                        <p className="text-muted-foreground">Reservas</p>
-                        <p className="font-semibold">{service.bookings}</p>
-                      </div>
-                      <div>
-                        <p className="text-muted-foreground">Conversión</p>
-                        <p className="font-semibold">{service.conversion.toFixed(1)}%</p>
-                      </div>
-                    </div>
-                    <div className="mt-3">
-                      <div className="w-full bg-gray-200 rounded-full h-2">
-                        <div
-                          className="bg-primary h-2 rounded-full"
-                          style={{ width: `${Math.min(service.conversion, 100)}%` }}
-                        ></div>
-                      </div>
-                    </div>
-                  </div>
-                ))
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
               ) : (
                 <div className="h-full flex items-center justify-center text-gray-300 text-[10px] uppercase font-bold tracking-widest">
                   Sin datos esta semana
@@ -7067,7 +5848,6 @@ function ProviderStatistics({ setFlow, user, services }: { setFlow: (flow: strin
         {/* Orígenes de contacto Dinámicos */}
         <Card className="bg-white border-none rounded-[2rem] shadow-sm overflow-hidden">
           <CardContent className="p-6">
-<<<<<<< HEAD
             <h3 className="text-lg font-black text-gray-800 mb-6">Orígenes de contacto</h3>
             
             <div className="flex flex-col items-center mb-8">
@@ -7095,18 +5875,6 @@ function ProviderStatistics({ setFlow, user, services }: { setFlow: (flow: strin
                   Esperando tus primeros contactos
                 </p>
               )}
-=======
-            <h3 className="text-lg font-semibold mb-4">Tendencias</h3>
-            <div className="text-center py-8 text-muted-foreground">
-              <p className="text-sm">Los gráficos detallados están disponibles en la versión Premium</p>
-              <Button
-                variant="outline"
-                className="mt-4"
-                onClick={() => setFlow("subscription")}
-              >
-                Actualizar a Premium
-              </Button>
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
             </div>
           </CardContent>
         </Card>
@@ -7168,86 +5936,6 @@ function ProviderSubscription({ setFlow }: { setFlow: (flow: string) => void }) 
             </Button>
           </CardContent>
         </Card>
-<<<<<<< HEAD
-=======
-
-        {/* Features */}
-        <Card>
-          <CardContent className="p-6">
-            <h3 className="text-lg font-semibold mb-4">Beneficios Premium</h3>
-            <div className="space-y-3">
-              {premiumFeatures.map((feature, index) => (
-                <div key={index} className="flex items-center gap-3">
-                  <div className="w-6 h-6 bg-primary/20 rounded-full flex items-center justify-center">
-                    <Star className="h-3 w-3 text-primary" />
-                  </div>
-                  <span className="text-sm">{feature}</span>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Pricing Plans */}
-        <div className="space-y-3">
-          <h3 className="text-lg font-semibold">Elige tu plan</h3>
-
-          {/* Monthly Plan */}
-          <Card
-            className={`cursor-pointer transition-all ${selectedPlan === "monthly" ? "ring-2 ring-primary border-primary" : ""
-              }`}
-            onClick={() => setSelectedPlan("monthly")}
-          >
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="font-semibold">Plan Mensual</h4>
-                  <p className="text-sm text-muted-foreground">Facturación mensual</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-2xl font-bold text-primary">$2,999</p>
-                  <p className="text-sm text-muted-foreground">por mes</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Annual Plan */}
-          <Card
-            className={`cursor-pointer transition-all relative ${selectedPlan === "annual" ? "ring-2 ring-primary border-primary" : ""
-              }`}
-            onClick={() => setSelectedPlan("annual")}
-          >
-            <div className="absolute -top-2 -right-2 bg-primary text-primary-foreground text-xs px-2 py-1 rounded-full">
-              20% OFF
-            </div>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="font-semibold">Plan Anual</h4>
-                  <p className="text-sm text-muted-foreground">Facturación anual - Ahorra $7,200</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-2xl font-bold text-primary">$28,800</p>
-                  <p className="text-sm text-muted-foreground">por año</p>
-                  <p className="text-xs text-green-600">$2,400/mes</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Subscribe Button */}
-        <Button onClick={handleSubscribe} disabled={!selectedPlan} className="w-full h-12 text-base">
-          Suscribirme ahora
-        </Button>
-
-        {/* Terms */}
-        <div className="text-center text-xs text-muted-foreground">
-          <p>Al suscribirte aceptas nuestros términos y condiciones.</p>
-          <p>Puedes cancelar tu suscripción en cualquier momento.</p>
-        </div>
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
       </div>
     </div>
   )
@@ -7373,7 +6061,6 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
   }
 
   return (
-<<<<<<< HEAD
     <div className="min-h-screen bg-gray-50/50 flex flex-col md:flex-row">
       {/* Navegación para escritorio */}
       <AdminSidebar activeTab={activeTab} setActiveTab={setActiveTab} logout={async () => {
@@ -7395,57 +6082,6 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
             <div className="flex items-center gap-3">
               <div className="md:hidden">
                 <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center text-white text-xs font-black">P</div>
-=======
-    <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
-      {/* Header */}
-      <div className="bg-white shadow-sm p-4">
-        <div className="flex items-center justify-between">
-          <div className="min-w-0 flex-1">
-            <h1 className="text-lg md:text-xl font-bold text-primary truncate">Panel de Administración</h1>
-            <p className="text-xs md:text-sm text-muted-foreground truncate">Bienvenido, {user?.displayName || user?.email}</p>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={async () => {
-              const result = await logout()
-              if (result.success) {
-                localStorage.removeItem('userType')
-                window.location.reload()
-              }
-            }}
-            className="ml-2 flex-shrink-0"
-          >
-            <span className="hidden sm:inline">Cerrar sesión</span>
-            <span className="sm:hidden">Salir</span>
-          </Button>
-        </div>
-      </div>
-
-      {/* Navigation */}
-      <div className="bg-white border-b border-gray-200">
-        <div className="flex w-full">
-          {[
-            { id: 'dashboard', label: 'Dashboard', icon: '📊' },
-            { id: 'categories', label: 'Categorías', icon: '📁' },
-            { id: 'users', label: 'Usuarios', icon: '👥' },
-            { id: 'services', label: 'Servicios', icon: '🛠️' },
-            { id: 'analytics', label: 'Analytics', icon: '📈' },
-            { id: 'reports', label: 'Informes', icon: '📄' },
-            { id: 'settings', label: 'Configuración', icon: '⚙️' }
-          ].map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`flex-1 py-3 px-1 md:py-4 md:px-2 border-b-2 font-medium text-xs md:text-sm ${activeTab === tab.id
-                ? 'border-primary text-primary'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
-            >
-              <div className="flex flex-col items-center space-y-1">
-                <span className="text-lg md:text-xl">{tab.icon}</span>
-                <span className="hidden sm:block text-xs md:text-sm">{tab.label}</span>
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
               </div>
               <div>
                 <h1 className="text-sm md:text-lg font-bold text-gray-900 leading-none">
@@ -7637,7 +6273,6 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
         )}
 
         {activeTab === 'categories' && (
-<<<<<<< HEAD
           <div className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
               <div className="hidden md:block">
@@ -7645,12 +6280,6 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                 <p className="text-xs text-muted-foreground mt-1">Administra los rubros disponibles en la plataforma</p>
               </div>
               <Button 
-=======
-          <div className="space-y-4 md:space-y-6">
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
-              <h2 className="text-lg font-semibold">Gestión de Categorías</h2>
-              <Button
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                 onClick={() => setShowCreateCategory(true)}
                 className="bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/20"
               >
@@ -7716,18 +6345,8 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                           {category.description}
                         </p>
                       )}
-<<<<<<< HEAD
 
                       <div className="grid grid-cols-2 gap-2 mt-5">
-=======
-                      <div className="flex items-center justify-between">
-                        <span className={`text-xs px-2 py-1 rounded-full ${category.active
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-red-100 text-red-800'
-                          }`}>
-                          {category.active ? 'Activa' : 'Inactiva'}
-                        </span>
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                         <Button
                           variant="outline"
                           size="sm"
@@ -7757,7 +6376,6 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
         )}
 
         {activeTab === 'users' && (
-<<<<<<< HEAD
           <div className="space-y-6 animate-in fade-in duration-500">
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
               <div className="hidden md:block">
@@ -7782,22 +6400,6 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                     {filter.label}
                   </button>
                 ))}
-=======
-          <div className="space-y-4 md:space-y-6">
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
-              <h2 className="text-lg font-semibold">Gestión de Usuarios</h2>
-              <div className="flex space-x-2">
-                <select
-                  value={userFilter}
-                  onChange={(e) => setUserFilter(e.target.value as any)}
-                  className="px-3 py-2 border border-gray-300 rounded-md text-sm w-full sm:w-auto"
-                >
-                  <option value="all">Todos</option>
-                  <option value="client">Clientes</option>
-                  <option value="provider">Proveedores</option>
-                  <option value="admin">Admins</option>
-                </select>
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
               </div>
             </div>
 
@@ -7821,7 +6423,6 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                             <p className="text-[10px] text-gray-500">{user.email}</p>
                           </div>
                         </div>
-<<<<<<< HEAD
                         <Badge variant="outline" className={`text-[9px] uppercase ${
                           user.role === 'admin' ? 'border-primary text-primary' : 
                           user.role === 'provider' ? 'border-purple-200 text-purple-700' : 
@@ -7845,32 +6446,6 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                   </Card>
                 ))
               )}
-=======
-
-                        <div className="flex items-center justify-between">
-                          <div className="flex space-x-2">
-                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${user.role === 'admin' ? 'bg-purple-100 text-purple-800' :
-                              user.role === 'provider' ? 'bg-blue-100 text-blue-800' :
-                                'bg-green-100 text-green-800'
-                              }`}>
-                              {user.role === 'admin' ? 'Admin' :
-                                user.role === 'provider' ? 'Proveedor' : 'Cliente'}
-                            </span>
-                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${user.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                              }`}>
-                              {user.isActive ? 'Activo' : 'Inactivo'}
-                            </span>
-                          </div>
-                          <div className="text-xs text-gray-500">
-                            {user.createdAt.toLocaleDateString()}
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))
-                )}
-              </div>
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
             </div>
 
             {/* Lista de usuarios - Desktop Table */}
@@ -7922,94 +6497,14 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                         </div>
                       </td>
                     </tr>
-<<<<<<< HEAD
                   ))}
                 </tbody>
               </table>
-=======
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {usersLoading ? (
-                      <tr>
-                        <td colSpan={5} className="px-6 py-4 text-center">
-                          <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full mx-auto mb-2"></div>
-                          <p className="text-muted-foreground">Cargando usuarios...</p>
-                        </td>
-                      </tr>
-                    ) : (
-                      filteredUsers.map(user => (
-                        <tr key={user.id}>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="flex items-center">
-                              <div className="flex-shrink-0 h-10 w-10">
-                                <div className="h-10 w-10 rounded-full bg-primary text-white flex items-center justify-center">
-                                  {(user.displayName?.charAt(0) || user.email?.charAt(0) || 'U').toUpperCase()}
-                                </div>
-                              </div>
-                              <div className="ml-4">
-                                <div className="text-sm font-medium text-gray-900">
-                                  {user.displayName || 'Sin nombre'}
-                                </div>
-                                <div className="text-sm text-gray-500">{user.email || 'Sin email'}</div>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${user.role === 'admin' ? 'bg-purple-100 text-purple-800' :
-                              user.role === 'provider' ? 'bg-blue-100 text-blue-800' :
-                                'bg-green-100 text-green-800'
-                              }`}>
-                              {user.role === 'admin' ? 'Admin' :
-                                user.role === 'provider' ? 'Proveedor' : 'Cliente'}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${user.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                              }`}>
-                              {user.isActive ? 'Activo' : 'Inactivo'}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {user.createdAt.toLocaleDateString()}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                            <div className="flex space-x-2">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => setEditingUser(user)}
-                              >
-                                ✏️
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleToggleUserStatus(user.id)}
-                              >
-                                {user.isActive ? '🚫' : '✅'}
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleDeleteUser(user.id)}
-                              >
-                                🗑️
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
             </div>
           </div>
         )}
 
         {activeTab === 'services' && (
-<<<<<<< HEAD
           <div className="space-y-6 animate-in fade-in duration-500">
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
               <div className="hidden md:block">
@@ -8034,27 +6529,11 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                     {filter.label}
                   </button>
                 ))}
-=======
-          <div className="space-y-4 md:space-y-6">
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
-              <h2 className="text-lg font-semibold">Gestión de Servicios</h2>
-              <div className="flex space-x-2">
-                <select
-                  value={serviceFilter}
-                  onChange={(e) => setServiceFilter(e.target.value as any)}
-                  className="px-3 py-2 border border-gray-300 rounded-md text-sm w-full sm:w-auto"
-                >
-                  <option value="all">Todos</option>
-                  <option value="active">Activos</option>
-                  <option value="inactive">Inactivos</option>
-                </select>
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
               </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
               {filteredServices.map(service => (
-<<<<<<< HEAD
                 <Card key={service.id} className="border-none shadow-sm group hover:shadow-md transition-all overflow-hidden bg-white">
                   <CardContent className="p-5">
                     <div className="flex justify-between items-start mb-4">
@@ -8075,26 +6554,6 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                       <div className="flex justify-between items-center text-xs">
                         <span className="text-gray-400 font-medium">Proveedor</span>
                         <span className="font-bold text-gray-700 truncate max-w-[150px]">{service.providerName}</span>
-=======
-                <Card key={service.id}>
-                  <CardContent className="p-3 md:p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <h3 className="font-semibold text-sm md:text-lg truncate flex-1 mr-2">{service.name}</h3>
-                      <span className={`text-xs px-2 py-1 rounded-full flex-shrink-0 ${(service as any).active !== false
-                        ? 'bg-green-100 text-green-800'
-                        : 'bg-red-100 text-red-800'
-                        }`}>
-                        {(service as any).active !== false ? 'Activo' : 'Inactivo'}
-                      </span>
-                    </div>
-
-                    <p className="text-xs md:text-sm text-gray-600 mb-3 line-clamp-2">{service.description}</p>
-
-                    <div className="space-y-1 md:space-y-2 mb-4">
-                      <div className="flex justify-between text-xs md:text-sm">
-                        <span className="text-gray-500">Proveedor:</span>
-                        <span className="font-medium truncate ml-2">{service.providerName}</span>
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                       </div>
                       <div className="flex justify-between items-center text-xs">
                         <span className="text-gray-400 font-medium">Categoría</span>
@@ -8107,21 +6566,10 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                         <span className="text-lg font-black text-primary">${service.price}</span>
                       </div>
                     </div>
-<<<<<<< HEAD
                     
                     <div className="grid grid-cols-2 gap-3 mt-6">
                       <Button variant="outline" size="sm" className="rounded-xl h-10 font-bold text-xs">
                         Editar
-=======
-
-                    <div className="flex space-x-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="flex-1 text-xs"
-                      >
-                        ✏️ Editar
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                       </Button>
                       <Button variant="ghost" size="sm" className="rounded-xl h-10 font-bold text-xs text-red-600 hover:bg-red-50">
                         Eliminar
@@ -8187,7 +6635,6 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
 
                 {/* Informe Semanal */}
                 {reportType === 'weekly' && weeklyReport && (
-<<<<<<< HEAD
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <Card className="border-none shadow-sm">
                       <CardContent className="p-6">
@@ -8212,78 +6659,6 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                              </div>
                            ))}
                          </div>
-=======
-                  <div className="space-y-4">
-                    <Card>
-                      <CardContent className="p-4">
-                        <h3 className="text-lg font-semibold mb-4">📊 Informe Semanal - {weeklyReport.week}</h3>
-
-                        {/* Ranking de búsquedas por ciudad */}
-                        <div className="mb-6">
-                          <h4 className="font-semibold mb-3">🔍 Ranking de búsquedas por ciudad</h4>
-                          {weeklyReport.topSearchesByCity.length > 0 ? (
-                            <div className="space-y-4">
-                              {weeklyReport.topSearchesByCity.map((cityData, index) => (
-                                <Card key={index} className="bg-gray-50">
-                                  <CardContent className="p-4">
-                                    <h5 className="font-medium mb-2">{cityData.city}</h5>
-                                    <div className="space-y-1">
-                                      {cityData.searches.slice(0, 5).map((search, idx) => (
-                                        <div key={idx} className="flex items-center justify-between text-sm">
-                                          <span>#{idx + 1} {search.term}</span>
-                                          <span className="text-gray-500">{search.count} búsquedas</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </CardContent>
-                                </Card>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="text-sm text-gray-500">No hay datos de búsquedas por ciudad</p>
-                          )}
-                        </div>
-
-                        {/* Promociones con mejor rendimiento */}
-                        <div className="mb-6">
-                          <h4 className="font-semibold mb-3">⭐ Promociones con mejor rendimiento</h4>
-                          {weeklyReport.bestPerformingPromos.length > 0 ? (
-                            <div className="space-y-2">
-                              {weeklyReport.bestPerformingPromos.map((promo, index) => (
-                                <div key={promo.id} className="flex items-center justify-between p-3 bg-green-50 rounded">
-                                  <div className="flex items-center space-x-3">
-                                    <span className="text-lg font-bold text-green-600">#{index + 1}</span>
-                                    <span className="text-sm font-medium">{promo.name}</span>
-                                  </div>
-                                  <span className="text-sm text-green-600 font-semibold">{promo.performance.toFixed(2)}%</span>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="text-sm text-gray-500">No hay promociones activas</p>
-                          )}
-                        </div>
-
-                        {/* Promociones con peor rendimiento */}
-                        <div>
-                          <h4 className="font-semibold mb-3">📉 Promociones con peor rendimiento</h4>
-                          {weeklyReport.worstPerformingPromos.length > 0 ? (
-                            <div className="space-y-2">
-                              {weeklyReport.worstPerformingPromos.map((promo, index) => (
-                                <div key={promo.id} className="flex items-center justify-between p-3 bg-red-50 rounded">
-                                  <div className="flex items-center space-x-3">
-                                    <span className="text-lg font-bold text-red-600">#{index + 1}</span>
-                                    <span className="text-sm font-medium">{promo.name}</span>
-                                  </div>
-                                  <span className="text-sm text-red-600 font-semibold">{promo.performance.toFixed(2)}%</span>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="text-sm text-gray-500">No hay promociones con bajo rendimiento</p>
-                          )}
-                        </div>
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                       </CardContent>
                     </Card>
 
@@ -8319,7 +6694,6 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
 
                 {/* Informe Mensual */}
                 {reportType === 'monthly' && monthlyReport && (
-<<<<<<< HEAD
                   <div className="space-y-6">
                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <Card className="border-none shadow-sm bg-gradient-to-br from-primary/5 to-transparent">
@@ -8344,87 +6718,6 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                            </CardContent>
                         </Card>
                      </div>
-=======
-                  <div className="space-y-4">
-                    <Card>
-                      <CardContent className="p-4">
-                        <h3 className="text-lg font-semibold mb-4">📈 Informe Mensual - {monthlyReport.month}</h3>
-
-                        {/* Crecimiento general */}
-                        <div className="mb-6">
-                          <h4 className="font-semibold mb-3">📊 Crecimiento General</h4>
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            <div className="text-center p-3 bg-blue-50 rounded">
-                              <p className="text-2xl font-bold text-blue-600">{monthlyReport.userGrowth > 0 ? '+' : ''}{monthlyReport.userGrowth.toFixed(1)}%</p>
-                              <p className="text-sm text-gray-600">Crecimiento</p>
-                            </div>
-                            <div className="text-center p-3 bg-green-50 rounded">
-                              <p className="text-2xl font-bold text-green-600">{monthlyReport.totalUsers}</p>
-                              <p className="text-sm text-gray-600">Total usuarios</p>
-                            </div>
-                            <div className="text-center p-3 bg-purple-50 rounded">
-                              <p className="text-2xl font-bold text-purple-600">{monthlyReport.newUsers}</p>
-                              <p className="text-sm text-gray-600">Nuevos usuarios</p>
-                            </div>
-                            <div className="text-center p-3 bg-orange-50 rounded">
-                              <p className="text-2xl font-bold text-orange-600">{monthlyReport.returningUsers}</p>
-                              <p className="text-sm text-gray-600">Usuarios que volvieron</p>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Retención de usuarios */}
-                        <div className="mb-6">
-                          <h4 className="font-semibold mb-3">🔄 Retención de Usuarios</h4>
-                          <Card className="bg-gradient-to-r from-purple-50 to-pink-50">
-                            <CardContent className="p-4">
-                              <div className="flex items-center justify-between">
-                                <div>
-                                  <p className="text-sm text-gray-600">Tasa de retención</p>
-                                  <p className="text-3xl font-bold text-purple-600">{monthlyReport.userRetention.toFixed(1)}%</p>
-                                  <p className="text-xs text-gray-500 mt-1">
-                                    {monthlyReport.returningUsers} de {monthlyReport.totalUsers} usuarios volvieron este mes
-                                  </p>
-                                </div>
-                                <div className="text-4xl">🔄</div>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        </div>
-
-                        {/* Resumen de promociones */}
-                        <div>
-                          <h4 className="font-semibold mb-3">🎯 Resumen de Promociones</h4>
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            <Card>
-                              <CardContent className="p-4 text-center">
-                                <p className="text-2xl font-bold text-primary">{monthlyReport.promoSummary.total}</p>
-                                <p className="text-sm text-gray-600">Total promociones</p>
-                              </CardContent>
-                            </Card>
-                            <Card>
-                              <CardContent className="p-4 text-center">
-                                <p className="text-2xl font-bold text-green-600">{monthlyReport.promoSummary.active}</p>
-                                <p className="text-sm text-gray-600">Activas</p>
-                              </CardContent>
-                            </Card>
-                            <Card>
-                              <CardContent className="p-4 text-center">
-                                <p className="text-2xl font-bold text-gray-600">{monthlyReport.promoSummary.completed}</p>
-                                <p className="text-sm text-gray-600">Completadas</p>
-                              </CardContent>
-                            </Card>
-                            <Card>
-                              <CardContent className="p-4 text-center">
-                                <p className="text-2xl font-bold text-green-600">${monthlyReport.promoSummary.totalRevenue.toLocaleString()}</p>
-                                <p className="text-sm text-gray-600">Ingresos totales</p>
-                              </CardContent>
-                            </Card>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                   </div>
                 )}
               </div>
@@ -8433,7 +6726,6 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
         )}
 
         {activeTab === 'analytics' && (
-<<<<<<< HEAD
           <div className="space-y-6 animate-in fade-in duration-500">
             <div className="hidden md:block">
               <h2 className="text-xl font-bold text-gray-900 leading-none">Analíticas Avanzadas</h2>
@@ -8446,60 +6738,6 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
               <AdminStatCard title="Reservas" value={analytics.totalBookings} icon={Calendar} color="bg-blue-500" />
               <AdminStatCard title="Ingresos" value={`$${analytics.totalRevenue.toLocaleString()}`} icon={Wallet} color="bg-green-500" />
               <AdminStatCard title="Tickets" value={analytics.reportedPublications} icon={ShieldAlert} color="bg-orange-500" />
-=======
-          <div className="space-y-4 md:space-y-6">
-            <h2 className="text-lg font-semibold">Analytics y Reportes</h2>
-
-            {/* Métricas principales */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
-              <Card>
-                <CardContent className="p-3 md:p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs md:text-sm font-medium text-gray-600">Usuarios Activos</p>
-                      <p className="text-lg md:text-2xl font-bold text-green-600">{analytics.activeUsers}</p>
-                    </div>
-                    <div className="text-lg md:text-2xl">👥</div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent className="p-3 md:p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs md:text-sm font-medium text-gray-600">Usuarios Inactivos</p>
-                      <p className="text-lg md:text-2xl font-bold text-red-600">{analytics.inactiveUsers}</p>
-                    </div>
-                    <div className="text-lg md:text-2xl">🚫</div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent className="p-3 md:p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs md:text-sm font-medium text-gray-600">Ingresos Totales</p>
-                      <p className="text-sm md:text-2xl font-bold text-green-600">${analytics.totalRevenue.toLocaleString()}</p>
-                    </div>
-                    <div className="text-lg md:text-2xl">💰</div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent className="p-3 md:p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs md:text-sm font-medium text-gray-600">Reservas Totales</p>
-                      <p className="text-lg md:text-2xl font-bold text-blue-600">{analytics.totalBookings}</p>
-                    </div>
-                    <div className="text-lg md:text-2xl">📅</div>
-                  </div>
-                </CardContent>
-              </Card>
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -8680,7 +6918,6 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
         )}
 
         {activeTab === 'settings' && (
-<<<<<<< HEAD
           <div className="space-y-6 animate-in fade-in duration-500">
             <div className="hidden md:block">
               <h2 className="text-xl font-bold text-gray-900 leading-none">Configuración General</h2>
@@ -8707,82 +6944,16 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                        <Input value={settings.appDescription} onChange={(e) => handleSettingChange('appDescription', e.target.value)} className="rounded-xl border-gray-100 h-11" />
                     </div>
                     <Button onClick={() => saveSettings('aplicación')} className="w-full rounded-xl h-11 font-bold">Actualizar Datos</Button>
-=======
-          <div className="space-y-4 md:space-y-6">
-            <h2 className="text-lg font-semibold">Configuración General</h2>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
-              {/* Configuración de la aplicación */}
-              <Card>
-                <CardContent className="p-4 md:p-6">
-                  <h3 className="text-lg font-semibold mb-4">Configuración de la Aplicación</h3>
-                  <div className="space-y-4">
-                    <div>
-                      <Label htmlFor="app-name">Nombre de la Aplicación</Label>
-                      <Input
-                        id="app-name"
-                        value={settings.appName}
-                        onChange={(e) => handleSettingChange('appName', e.target.value)}
-                        className="text-sm"
-                      />
-                    </div>
-                    <div>
-                      <Label htmlFor="app-description">Descripción</Label>
-                      <Input
-                        id="app-description"
-                        value={settings.appDescription}
-                        onChange={(e) => handleSettingChange('appDescription', e.target.value)}
-                        className="text-sm"
-                      />
-                    </div>
-                    <div>
-                      <Label htmlFor="app-email">Email de Contacto</Label>
-                      <Input
-                        id="app-email"
-                        value={settings.appEmail}
-                        onChange={(e) => handleSettingChange('appEmail', e.target.value)}
-                        className="text-sm"
-                      />
-                    </div>
-                    <Button
-                      onClick={() => saveSettings('aplicación')}
-                      className="w-full text-sm"
-                    >
-                      Guardar Configuración
-                    </Button>
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                   </div>
                 </CardContent>
               </Card>
 
-<<<<<<< HEAD
               {/* Notificaciones */}
               <Card className="border-none shadow-sm overflow-hidden bg-white">
                 <CardContent className="p-0">
                   <div className="p-4 bg-gray-50 border-b border-gray-100 flex items-center gap-3">
                     <div className="p-2 bg-blue-500/10 rounded-lg text-blue-500">
                       <Bell className="h-4 w-4" />
-=======
-              {/* Configuración de notificaciones */}
-              <Card>
-                <CardContent className="p-4 md:p-6">
-                  <h3 className="text-lg font-semibold mb-4">Notificaciones</h3>
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <span className="text-sm font-medium">Notificaciones por email</span>
-                        <p className="text-xs text-gray-500">Recibe notificaciones de nuevas reservas</p>
-                      </div>
-                      <button
-                        onClick={() => handleSettingChange('emailNotifications', !settings.emailNotifications)}
-                        className={`px-3 py-1 rounded-full text-xs font-medium ${settings.emailNotifications
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-gray-100 text-gray-800'
-                          }`}
-                      >
-                        {settings.emailNotifications ? 'Activar' : 'Desactivar'}
-                      </button>
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                     </div>
                     <h3 className="font-bold text-sm text-gray-900">Notificaciones</h3>
                   </div>
@@ -8808,47 +6979,12 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                           }`} />
                         </button>
                       </div>
-<<<<<<< HEAD
                     ))}
                     <Button variant="outline" onClick={() => saveSettings('notificaciones')} className="w-full rounded-xl h-11 font-bold border-gray-100">Guardar Preferencias</Button>
-=======
-                      <button
-                        onClick={() => handleSettingChange('pushNotifications', !settings.pushNotifications)}
-                        className={`px-3 py-1 rounded-full text-xs font-medium ${settings.pushNotifications
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-gray-100 text-gray-800'
-                          }`}
-                      >
-                        {settings.pushNotifications ? 'Activar' : 'Desactivar'}
-                      </button>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <span className="text-sm font-medium">Recordatorios de citas</span>
-                        <p className="text-xs text-gray-500">Recordatorios automáticos</p>
-                      </div>
-                      <button
-                        onClick={() => handleSettingChange('appointmentReminders', !settings.appointmentReminders)}
-                        className={`px-3 py-1 rounded-full text-xs font-medium ${settings.appointmentReminders
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-gray-100 text-gray-800'
-                          }`}
-                      >
-                        {settings.appointmentReminders ? 'Activar' : 'Desactivar'}
-                      </button>
-                    </div>
-                    <Button
-                      onClick={() => saveSettings('notificaciones')}
-                      className="w-full text-sm"
-                    >
-                      Guardar Preferencias
-                    </Button>
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                   </div>
                 </CardContent>
               </Card>
 
-<<<<<<< HEAD
               {/* Pagos y Comisiones */}
               <Card className="border-none shadow-sm overflow-hidden bg-white">
                 <CardContent className="p-0">
@@ -8870,54 +7006,10 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                        </div>
                     </div>
                     <Button onClick={() => saveSettings('pagos')} className="w-full rounded-xl h-11 font-bold">Actualizar Precios</Button>
-=======
-              {/* Configuración de pagos */}
-              <Card>
-                <CardContent className="p-4 md:p-6">
-                  <h3 className="text-lg font-semibold mb-4">Configuración de Pagos</h3>
-                  <div className="space-y-4">
-                    <div>
-                      <Label htmlFor="commission-rate">Tasa de Comisión (%)</Label>
-                      <Input
-                        id="commission-rate"
-                        type="number"
-                        value={settings.commissionRate}
-                        onChange={(e) => handleSettingChange('commissionRate', parseInt(e.target.value))}
-                        className="text-sm"
-                      />
-                    </div>
-                    <div>
-                      <Label htmlFor="min-price">Precio Mínimo de Servicio</Label>
-                      <Input
-                        id="min-price"
-                        type="number"
-                        value={settings.minPrice}
-                        onChange={(e) => handleSettingChange('minPrice', parseInt(e.target.value))}
-                        className="text-sm"
-                      />
-                    </div>
-                    <div>
-                      <Label htmlFor="max-price">Precio Máximo de Servicio</Label>
-                      <Input
-                        id="max-price"
-                        type="number"
-                        value={settings.maxPrice}
-                        onChange={(e) => handleSettingChange('maxPrice', parseInt(e.target.value))}
-                        className="text-sm"
-                      />
-                    </div>
-                    <Button
-                      onClick={() => saveSettings('pagos')}
-                      className="w-full text-sm"
-                    >
-                      Guardar Configuración
-                    </Button>
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                   </div>
                 </CardContent>
               </Card>
 
-<<<<<<< HEAD
               {/* Seguridad */}
               <Card className="border-none shadow-sm overflow-hidden bg-white">
                 <CardContent className="p-0">
@@ -8950,59 +7042,6 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                         </button>
                     </div>
                     <Button variant="outline" onClick={() => saveSettings('seguridad')} className="w-full rounded-xl h-11 font-bold border-gray-100">Aplicar Políticas</Button>
-=======
-              {/* Configuración de seguridad */}
-              <Card>
-                <CardContent className="p-4 md:p-6">
-                  <h3 className="text-lg font-semibold mb-4">Seguridad</h3>
-                  <div className="space-y-4">
-                    <div>
-                      <Label htmlFor="session-timeout">Timeout de Sesión (minutos)</Label>
-                      <Input
-                        id="session-timeout"
-                        type="number"
-                        value={settings.sessionTimeout}
-                        onChange={(e) => handleSettingChange('sessionTimeout', parseInt(e.target.value))}
-                        className="text-sm"
-                      />
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <span className="text-sm font-medium">Verificación de email obligatoria</span>
-                        <p className="text-xs text-gray-500">Los usuarios deben verificar su email</p>
-                      </div>
-                      <button
-                        onClick={() => handleSettingChange('emailVerificationRequired', !settings.emailVerificationRequired)}
-                        className={`px-3 py-1 rounded-full text-xs font-medium ${settings.emailVerificationRequired
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-gray-100 text-gray-800'
-                          }`}
-                      >
-                        {settings.emailVerificationRequired ? 'Activar' : 'Desactivar'}
-                      </button>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <span className="text-sm font-medium">Registro abierto</span>
-                        <p className="text-xs text-gray-500">Cualquiera puede registrarse</p>
-                      </div>
-                      <button
-                        onClick={() => handleSettingChange('openRegistration', !settings.openRegistration)}
-                        className={`px-3 py-1 rounded-full text-xs font-medium ${settings.openRegistration
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-gray-100 text-gray-800'
-                          }`}
-                      >
-                        {settings.openRegistration ? 'Activar' : 'Desactivar'}
-                      </button>
-                    </div>
-                    <Button
-                      onClick={() => saveSettings('seguridad')}
-                      className="w-full text-sm"
-                    >
-                      Guardar Configuración
-                    </Button>
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                   </div>
                 </CardContent>
               </Card>
@@ -9010,7 +7049,6 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
           </div>
         )}
 
-<<<<<<< HEAD
         {/* Modales - Deben estar dentro del layout principal pero al final */}
         {showCreateCategory && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100] animate-in fade-in zoom-in duration-300">
@@ -9020,58 +7058,6 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                   <h3 className="text-2xl font-black text-gray-900">Nueva Categoría</h3>
                   <Button variant="ghost" size="icon" onClick={() => setShowCreateCategory(false)} className="rounded-xl">
                     <X className="h-5 w-5" />
-=======
-      {/* Modal Crear Categoría */}
-      {showCreateCategory && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <Card className="w-full max-w-md max-h-[90vh] overflow-y-auto">
-            <CardContent className="p-4 md:p-6">
-              <h3 className="text-lg font-semibold mb-4">Nueva Categoría</h3>
-              <form onSubmit={handleCreateCategory} className="space-y-4">
-                <div>
-                  <Label htmlFor="name">Nombre</Label>
-                  <Input
-                    id="name"
-                    value={newCategory.name}
-                    onChange={(e) => setNewCategory(prev => ({ ...prev, name: e.target.value }))}
-                    placeholder="Ej: Belleza"
-                    required
-                    className="text-sm"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="icon">Icono</Label>
-                  <Input
-                    id="icon"
-                    value={newCategory.icon}
-                    onChange={(e) => setNewCategory(prev => ({ ...prev, icon: e.target.value }))}
-                    placeholder="Ej: 💄"
-                    required
-                    className="text-sm"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="description">Descripción</Label>
-                  <Input
-                    id="description"
-                    value={newCategory.description}
-                    onChange={(e) => setNewCategory(prev => ({ ...prev, description: e.target.value }))}
-                    placeholder="Descripción opcional"
-                    className="text-sm"
-                  />
-                </div>
-                <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
-                  <Button type="submit" className="flex-1 text-sm">
-                    Crear Categoría
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setShowCreateCategory(false)}
-                    className="flex-1 text-sm"
-                  >
-                    Cancelar
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                   </Button>
                 </div>
                 <form onSubmit={handleCreateCategory} className="space-y-6">
@@ -9096,7 +7082,6 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
           </div>
         )}
 
-<<<<<<< HEAD
         {editingCategory && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100] animate-in fade-in zoom-in duration-300">
             <Card className="w-full max-w-md border-none shadow-2xl bg-white overflow-hidden rounded-3xl">
@@ -9105,55 +7090,6 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                   <h3 className="text-2xl font-black text-gray-900">Editar Categoría</h3>
                   <Button variant="ghost" size="icon" onClick={() => setEditingCategory(null)} className="rounded-xl">
                     <X className="h-5 w-5" />
-=======
-      {/* Modal Editar Categoría */}
-      {editingCategory && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <Card className="w-full max-w-md max-h-[90vh] overflow-y-auto">
-            <CardContent className="p-4 md:p-6">
-              <h3 className="text-lg font-semibold mb-4">Editar Categoría</h3>
-              <form onSubmit={handleEditCategory} className="space-y-4">
-                <div>
-                  <Label htmlFor="edit-name">Nombre</Label>
-                  <Input
-                    id="edit-name"
-                    value={editingCategory.name}
-                    onChange={(e) => setEditingCategory((prev: any) => ({ ...prev, name: e.target.value }))}
-                    required
-                    className="text-sm"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="edit-icon">Icono</Label>
-                  <Input
-                    id="edit-icon"
-                    value={editingCategory.icon}
-                    onChange={(e) => setEditingCategory((prev: any) => ({ ...prev, icon: e.target.value }))}
-                    required
-                    className="text-sm"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="edit-description">Descripción</Label>
-                  <Input
-                    id="edit-description"
-                    value={editingCategory.description || ''}
-                    onChange={(e) => setEditingCategory((prev: any) => ({ ...prev, description: e.target.value }))}
-                    className="text-sm"
-                  />
-                </div>
-                <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
-                  <Button type="submit" className="flex-1 text-sm">
-                    Guardar Cambios
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setEditingCategory(null)}
-                    className="flex-1 text-sm"
-                  >
-                    Cancelar
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                   </Button>
                 </div>
                 <form onSubmit={handleEditCategory} className="space-y-6">
@@ -9172,7 +7108,6 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
           </div>
         )}
 
-<<<<<<< HEAD
         {editingUser && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100] animate-in fade-in zoom-in duration-300">
             <Card className="w-full max-w-md border-none shadow-2xl bg-white overflow-hidden rounded-3xl">
@@ -9181,62 +7116,6 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                   <h3 className="text-2xl font-black text-gray-900">Rol de Usuario</h3>
                   <Button variant="ghost" size="icon" onClick={() => setEditingUser(null)} className="rounded-xl">
                     <X className="h-5 w-5" />
-=======
-      {/* Modal Editar Usuario */}
-      {editingUser && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <Card className="w-full max-w-md max-h-[90vh] overflow-y-auto">
-            <CardContent className="p-4 md:p-6">
-              <h3 className="text-lg font-semibold mb-4">Editar Usuario</h3>
-              <form onSubmit={(e) => {
-                e.preventDefault()
-                const formData = new FormData(e.target as HTMLFormElement)
-                const newRole = formData.get('role') as string
-                handleUpdateUserRole(editingUser.id, newRole)
-              }} className="space-y-4">
-                <div>
-                  <Label htmlFor="user-name">Nombre</Label>
-                  <Input
-                    id="user-name"
-                    value={editingUser.displayName || ''}
-                    disabled
-                    className="text-sm"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="user-email">Email</Label>
-                  <Input
-                    id="user-email"
-                    value={editingUser.email}
-                    disabled
-                    className="text-sm"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="user-role">Rol</Label>
-                  <select
-                    name="role"
-                    id="user-role"
-                    defaultValue={editingUser.role}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-                  >
-                    <option value="client">Cliente</option>
-                    <option value="provider">Proveedor</option>
-                    <option value="admin">Admin</option>
-                  </select>
-                </div>
-                <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
-                  <Button type="submit" className="flex-1 text-sm">
-                    Guardar Cambios
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setEditingUser(null)}
-                    className="flex-1 text-sm"
-                  >
-                    Cancelar
->>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                   </Button>
                 </div>
                 <div className="mb-8 p-4 bg-gray-50 rounded-2xl border border-gray-100">

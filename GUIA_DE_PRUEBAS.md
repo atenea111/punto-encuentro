@@ -789,3 +789,5 @@ Una funcionalidad se considera **probada y funcional** cuando:
 **Última actualización**: 2024  
 **Versión de la aplicación**: 0.1.0
 
+
+

@@ -423,3 +423,5 @@ Para soporte técnico o consultas, contactar al equipo de desarrollo.
 **Versión**: 0.1.0  
 **Última actualización**: 2024
 
+
+

@@ -7,7 +7,7 @@ import {
   type Auth,
 } from 'firebase/auth'
 import { getFirestore } from 'firebase/firestore'
-import { getStorage } from 'firebase/storage'
+import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 import { Capacitor } from '@capacitor/core'
 
 const firebaseConfig = {
@@ -37,5 +37,10 @@ export const auth: Auth = Capacitor.isNativePlatform()
 export const db = getFirestore(app)
 export const storage = getStorage(app)
 
+export const uploadFile = async (file: File, path: string): Promise<string> => {
+  const storageRef = ref(storage, path)
+  await uploadBytes(storageRef, file)
+  return getDownloadURL(storageRef)
+}
 export default app
 

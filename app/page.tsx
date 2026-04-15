@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import { Capacitor } from "@capacitor/core"
 import { App } from "@capacitor/app"
 import { Button } from "@/components/ui/button"
@@ -32,6 +32,9 @@ import { useUsers } from "@/hooks/useUsers"
 import { useAnalytics } from "@/hooks/useAnalytics"
 import { useGeolocation } from "@/hooks/useGeolocation"
 import { calcularDistanciaKm, formatearDistancia } from "@/lib/locationUtils"
+import { db, auth, storage, uploadFile } from "@/lib/firebase"
+import { useReviews } from "@/hooks/useReviews"
+import { doc, setDoc, updateDoc, collection, addDoc, serverTimestamp, query, where, orderBy, onSnapshot } from "firebase/firestore"
 import {
   Search,
   Star,
@@ -52,6 +55,7 @@ import {
   Filter,
   User,
   MapPin,
+  MapPinOff,
   Home,
   Settings,
   Trophy,
@@ -73,7 +77,24 @@ import {
   Activity,
   CalendarCheck,
   AlertCircle,
+  Send,
+  MessageSquare,
 } from "lucide-react"
+import { App } from '@capacitor/app'
+
+// Función para calcular la distancia entre dos puntos (Haversine formula)
+function getDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
+  if (!lat1 || !lon1 || !lat2 || !lon2) return 0
+  const R = 6371 // Radio de la Tierra en km
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLon = (lon2 - lon1) * Math.PI / 180
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  return R * c
+}
 
 const AdminStatCard = ({ title, value, icon: Icon, color }: { title: string, value: string | number, icon: any, color: string }) => (
   <Card>
@@ -161,7 +182,7 @@ export default function HomePage() {
     return saved === "client" || saved === "provider" ? saved : null
   })
   const [clientFlow, setClientFlow] = useState<
-    "onboarding" | "login" | "register" | "home" | "profile" | "agenda" | "service-detail" | "booking" | "payment"
+    "onboarding" | "login" | "register" | "home" | "profile" | "agenda" | "service-detail" | "booking" | "payment" | "chat"
   >(() => {
     if (typeof window === "undefined") return "onboarding"
     return localStorage.getItem("userType") === "client" ? "home" : "onboarding"
@@ -178,6 +199,7 @@ export default function HomePage() {
     | "edit-service"
     | "subscription"
     | "statistics"
+    | "chat"
   >(() => {
     if (typeof window === "undefined") return "onboarding"
     return localStorage.getItem("userType") === "provider" ? "dashboard" : "onboarding"
@@ -186,10 +208,13 @@ export default function HomePage() {
   const [selectedProviderService, setSelectedProviderService] = useState<any>(null)
   const [selectedDate, setSelectedDate] = useState<string>("")
   const [selectedTime, setSelectedTime] = useState<string>("")
+  const [userLocation, setUserLocation] = useState<{ lat: number, lng: number } | null>(null)
   const [searchTerm, setSearchTerm] = useState("")
   const [authError, setAuthError] = useState("")
   const [authSuccess, setAuthSuccess] = useState("")
   const [bookingSource, setBookingSource] = useState<'anuncio' | 'recomendados' | 'cerca_tuyo' | 'rubro' | 'buscador'>("anuncio")
+  const [activeChat, setActiveChat] = useState<any>(null)
+  const [locationError, setLocationError] = useState<string | null>(null)
 
   // Ref para la función "atrás" actual (usada por el botón físico de Android)
   const handleBackRef = useRef<() => void>(() => {})
@@ -298,12 +323,86 @@ export default function HomePage() {
 
   // Limpiar localStorage al cerrar sesión
   useEffect(() => {
-    if (!user) {
+    if (!authLoading && !user) {
       localStorage.removeItem('userType')
       setUserType(null)
     }
-  }, [user])
+  }, [user, authLoading])
 
+  // Obtener ubicación del usuario
+  useEffect(() => {
+    const getPos = () => {
+      if ("geolocation" in navigator) {
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            setUserLocation({
+              lat: position.coords.latitude,
+              lng: position.coords.longitude
+            })
+            setLocationError(null)
+          },
+          (error) => {
+            console.error("Error obteniendo ubicación:", error)
+            if (error.code === 1) { // Permission Denied
+              setLocationError("permission_denied")
+            } else {
+              setLocationError("other")
+            }
+          }
+        )
+      }
+    }
+    getPos()
+  }, [])
+
+  // Manejar botón de retroceso de Android
+  useEffect(() => {
+    const setupBackButtonListener = async () => {
+      try {
+        await App.addListener('backButton', ({ canGoBack }) => {
+          if (activeChat) {
+            setActiveChat(null)
+            return
+          }
+
+          if (userType === 'client') {
+            if (clientFlow === 'home') {
+              App.exitApp()
+            } else if (['agenda', 'profile', 'favorites', 'service-detail'].includes(clientFlow)) {
+              setClientFlow('home')
+            } else if (clientFlow === 'booking') {
+              setClientFlow('service-detail')
+            } else if (clientFlow === 'payment') {
+              setClientFlow('booking')
+            } else {
+              setClientFlow('home')
+            }
+          } else if (userType === 'provider') {
+            if (providerFlow === 'dashboard') {
+              App.exitApp()
+            } else if (['agenda', 'services', 'profile', 'statistics'].includes(providerFlow)) {
+              setProviderFlow('dashboard')
+            } else if (['create-service', 'edit-service'].includes(providerFlow)) {
+              setProviderFlow('services')
+            } else {
+              setProviderFlow('dashboard')
+            }
+          } else {
+            // Si no hay usuario logueado
+            App.exitApp()
+          }
+        })
+      } catch (error) {
+        console.error('Error setting up back button listener:', error)
+      }
+    }
+
+    setupBackButtonListener()
+
+    return () => {
+      App.removeAllListeners()
+    }
+  }, [userType, clientFlow, providerFlow, activeChat])
   // Mostrar loading mientras se verifica la autenticación
   if (authLoading || rolesLoading) {
     return (
@@ -316,38 +415,77 @@ export default function HomePage() {
     )
   }
 
+  // Debug: Log del estado de roles
+  console.log('User:', user?.email)
+  console.log('isAdmin:', isAdmin)
+  console.log('rolesLoading:', rolesLoading)
+
+  const LocationBanner = () => (
+    <div className="bg-orange-50 border-b border-orange-200 p-4 sticky top-0 z-[60]">
+      <div className="flex gap-4 items-start max-w-4xl mx-auto">
+        <div className="bg-orange-100 p-2 rounded-full">
+          <MapPinOff className="h-5 w-5 text-orange-600" />
+        </div>
+        <div className="flex-1">
+          <h3 className="font-bold text-orange-900 text-sm">Ubicación desactivada</h3>
+          <p className="text-orange-800 text-xs mt-1 leading-relaxed">
+            Para mostrarte servicios <b>cerca de tu casa</b> y calcular distancias, necesitamos acceso al GPS.
+            Por favor, actívalo en la configuración de tu navegador.
+          </p>
+          <div className="flex gap-3 mt-3">
+            <Button
+              size="sm"
+              variant="orange"
+              className="h-8 text-xs"
+              onClick={() => window.location.reload()}
+            >
+              Ya lo activé
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-8 text-xs text-orange-700 hover:bg-orange-100"
+              onClick={() => setLocationError(null)}
+            >
+              Entendido
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
   // Si el usuario es admin, mostrar panel de administración
   if (user && isAdmin) {
     return <AdminDashboard user={user} logout={logout} />
   }
 
   // Si el usuario está logueado pero no se ha seleccionado tipo de usuario, mostrar selección
-  if (user && !userType) {
+  if (user && !userType && !isAdmin) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="max-w-md w-full bg-white rounded-lg shadow-md p-6">
           <div className="text-center mb-6">
-            <img 
-              src="/logonuevo.jpeg" 
-              alt="Punto Encuentro" 
+            <img
+              src="/logonuevo.jpeg"
+              alt="Punto Encuentro"
               className="w-20 h-20 mx-auto mb-4 rounded-lg object-cover"
             />
             <h1 className="text-2xl font-bold text-gray-900 mb-2">¡Bienvenido de vuelta!</h1>
             <p className="text-gray-600">Selecciona cómo quieres usar la aplicación</p>
           </div>
-          
+
           <div className="space-y-4">
-            <Button 
-              onClick={() => setUserType("client")} 
+            <Button
+              onClick={() => setUserType("client")}
               className="w-full h-16 text-lg"
               variant="outline"
             >
               <User className="w-6 h-6 mr-2" />
               Soy Cliente
             </Button>
-            
-            <Button 
-              onClick={() => setUserType("provider")} 
+
+            <Button
+              onClick={() => setUserType("provider")}
               className="w-full h-16 text-lg"
               variant="outline"
             >
@@ -355,10 +493,10 @@ export default function HomePage() {
               Soy Proveedor
             </Button>
           </div>
-          
+
           <div className="mt-6 text-center">
-            <Button 
-              variant="ghost" 
+            <Button
+              variant="ghost"
               onClick={logout}
               className="text-sm text-gray-500"
             >
@@ -372,156 +510,178 @@ export default function HomePage() {
 
   if (userType === "client") {
     return (
-      <ClientFlow
-        flow={clientFlow}
-        setFlow={setClientFlow}
-        selectedService={selectedService}
-        setSelectedService={setSelectedService}
-        selectedDate={selectedDate}
-        setSelectedDate={setSelectedDate}
-        selectedTime={selectedTime}
-        setSelectedTime={setSelectedTime}
-        signIn={signIn}
-        signUp={signUp}
-        setAuthError={setAuthError}
-        authError={authError}
-        setAuthSuccess={setAuthSuccess}
-        authSuccess={authSuccess}
-        services={services}
-        searchTerm={searchTerm}
-        setSearchTerm={setSearchTerm}
-        searchServices={searchServices}
-        user={user}
-        createBooking={createBooking}
-        logout={logout}
-        onSwitchToProvider={switchToProvider}
-        setBookingSource={setBookingSource}
-        bookingSource={bookingSource}
-      />
+      <>
+        {locationError === "permission_denied" && <LocationBanner />}
+        <ClientFlow
+          flow={clientFlow}
+          setFlow={setClientFlow}
+          selectedService={selectedService}
+          setSelectedService={setSelectedService}
+          selectedDate={selectedDate}
+          setSelectedDate={setSelectedDate}
+          selectedTime={selectedTime}
+          setSelectedTime={setSelectedTime}
+          signIn={signIn}
+          signUp={signUp}
+          setAuthError={setAuthError}
+          authError={authError}
+          setAuthSuccess={setAuthSuccess}
+          authSuccess={authSuccess}
+          services={services}
+          searchTerm={searchTerm}
+          setSearchTerm={setSearchTerm}
+          searchServices={searchServices}
+          user={user}
+          createBooking={createBooking}
+          getBookingsByClient={getBookingsByClient}
+          userLocation={userLocation}
+          activeChat={activeChat}
+          setActiveChat={setActiveChat}
+          logout={logout}
+          onSwitchToProvider={switchToProvider}
+          setBookingSource={setBookingSource}
+          bookingSource={bookingSource}
+        />
+      </>
     )
   }
 
   if (userType === "provider") {
     return (
-      <ProviderFlow 
-        flow={providerFlow} 
-        setFlow={setProviderFlow}
-        signIn={signIn}
-        signUp={signUp}
-        setAuthError={setAuthError}
-        authError={authError}
-        setAuthSuccess={setAuthSuccess}
-        authSuccess={authSuccess}
-        services={services}
-        createService={createService}
-        user={user}
-        logout={logout}
-        selectedProviderService={selectedProviderService}
-        setSelectedProviderService={setSelectedProviderService}
-        onSwitchToClient={switchToClient}
-      />
+      <>
+        {locationError === "permission_denied" && <LocationBanner />}
+        <ProviderFlow 
+          flow={providerFlow} 
+          setFlow={setProviderFlow}
+          signIn={signIn}
+          signUp={signUp}
+          setAuthError={setAuthError}
+          authError={authError}
+          setAuthSuccess={setAuthSuccess}
+          authSuccess={authSuccess}
+          services={services}
+          createService={createService}
+          user={user}
+          logout={logout}
+          userLocation={userLocation}
+          selectedProviderService={selectedProviderService}
+          setSelectedProviderService={setSelectedProviderService}
+          onSwitchToClient={switchToClient}
+          activeChat={activeChat}
+          setActiveChat={setActiveChat}
+        />
+      </>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
-      <div className="w-full max-w-4xl space-y-8">
-        {/* Logo y descripción */}
-        <div className="text-center">
-          <img 
-            src="/logonuevo.jpeg" 
-            alt="Punto Encuentro" 
-            className="w-32 h-32 mx-auto mb-6 rounded-lg object-cover"
-          />
-          <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-            Un espacio para encontrar, ofrecer y ayudarnos entre todos.
-          </p>
-        </div>
+    <>
+      {locationError === "permission_denied" && <LocationBanner />}
+      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
+        <div className="w-full max-w-4xl space-y-8">
+          {/* Logo y descripción */}
+          <div className="text-center">
+            <img
+              src="/logonuevo.jpeg"
+              alt="Punto Encuentro"
+              className="w-32 h-32 mx-auto mb-6 rounded-lg object-cover"
+            />
+            <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
+              Un espacio para encontrar, ofrecer y ayudarnos entre todos.
+            </p>
+          </div>
 
-        {/* Alertas */}
-        {authError && (
-          <CustomAlert
-            type="error"
-            title="Error"
-            message={authError}
-            onClose={() => setAuthError("")}
-          />
-        )}
+          {/* Alertas */}
+          {authError && (
+            <CustomAlert
+              type="error"
+              title="Error"
+              message={authError}
+              onClose={() => setAuthError("")}
+            />
+          )}
 
-        {authSuccess && (
-          <CustomAlert
-            type="success"
-            title="¡Éxito!"
-            message={authSuccess}
-            onClose={() => setAuthSuccess("")}
-          />
-        )}
+          {authSuccess && (
+            <CustomAlert
+              type="success"
+              title="¡Éxito!"
+              message={authSuccess}
+              onClose={() => setAuthSuccess("")}
+            />
+          )}
 
-        {/* Cards de opciones */}
-         <div className="flex flex-row gap-4 max-w-4xl mx-auto">
-           {/* Card para contratar servicios */}
-           <Card className="cursor-pointer hover:shadow-lg transition-shadow flex-1" onClick={() => setUserType("client")}>
-             <CardContent className="p-4 text-center">
-               <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-3">
-                 <div className="text-2xl">🔍</div>
-               </div>
-               <h2 className="text-lg font-semibold mb-2">Contratar Servicios</h2>
-               <p className="text-sm text-muted-foreground">
-                 Busca servicios, ayuda o soluciones cerca tuyo
-               </p>
-             </CardContent>
-           </Card>
+          {/* Cards de opciones */}
+          <div className="flex flex-row gap-4 max-w-4xl mx-auto">
+            {/* Card para contratar servicios */}
+            <Card className="cursor-pointer hover:shadow-lg transition-shadow flex-1" onClick={() => setUserType("client")}>
+              <CardContent className="p-4 text-center">
+                <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-3">
+                  <div className="text-2xl">🔍</div>
+                </div>
+                <h2 className="text-lg font-semibold mb-2">Contratar Servicios</h2>
+                <p className="text-sm text-muted-foreground">
+                  Busca servicios, ayuda o soluciones cerca tuyo
+                </p>
+              </CardContent>
+            </Card>
 
-           {/* Card para ofrecer servicios */}
-           <Card className="cursor-pointer hover:shadow-lg transition-shadow flex-1" onClick={() => setUserType("provider")}>
-             <CardContent className="p-4 text-center">
-               <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-3">
-                 <div className="text-2xl">💼</div>
-               </div>
-               <h2 className="text-lg font-semibold mb-2">Ofrecer Servicios</h2>
-               <p className="text-sm text-muted-foreground">
-                 Ofrece tu trabajo y encuentra oportunidades
-               </p>
-             </CardContent>
-           </Card>
+            {/* Card para ofrecer servicios */}
+            <Card className="cursor-pointer hover:shadow-lg transition-shadow flex-1" onClick={() => setUserType("provider")}>
+              <CardContent className="p-4 text-center">
+                <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-3">
+                  <div className="text-2xl">💼</div>
+                </div>
+                <h2 className="text-lg font-semibold mb-2">Ofrecer Servicios</h2>
+                <p className="text-sm text-muted-foreground">
+                  Ofrece tu trabajo y encuentra oportunidades
+                </p>
+              </CardContent>
+            </Card>
+          </div>
         </div>
       </div>
-    </div>
+    </>
   )
 }
 
-function ProviderFlow({ 
-  flow, 
-  setFlow, 
-  signIn, 
-  signUp, 
-  setAuthError, 
-  authError, 
-  setAuthSuccess, 
-  authSuccess, 
-  services, 
-  createService, 
+function ProviderFlow({
+  flow,
+  setFlow,
+  signIn,
+  signUp,
+  setAuthError,
+  authError,
+  setAuthSuccess,
+  authSuccess,
+  services,
+  createService,
   user,
   logout,
+  userLocation,
   selectedProviderService,
   setSelectedProviderService,
-  onSwitchToClient
+  onSwitchToClient,
+  activeChat,
+  setActiveChat
 }: {
   flow: string
   setFlow: (flow: any) => void
-  signIn: (email: string, password: string) => Promise<{success: boolean, error?: string}>
-  signUp: (email: string, password: string) => Promise<{success: boolean, error?: string}>
+  signIn: (email: string, password: string) => Promise<{ success: boolean, error?: string }>
+  signUp: (email: string, password: string) => Promise<{ success: boolean, error?: string }>
   setAuthError: (error: string) => void
   authError: string
   setAuthSuccess: (message: string) => void
   authSuccess: string
   services: any[]
-  createService: (serviceData: any) => Promise<{success: boolean, error?: string}>
+  createService: (serviceData: any) => Promise<{ success: boolean, error?: string }>
   user: any
   logout: () => Promise<{ success: boolean }>
+  userLocation: { lat: number, lng: number } | null
   selectedProviderService: any
   setSelectedProviderService: (service: any) => void
   onSwitchToClient: () => Promise<{ success: boolean }>
+  activeChat: any
+  setActiveChat: (chat: any) => void
 }) {
   const [profileData, setProfileData] = useState<any>(null)
 
@@ -550,15 +710,15 @@ function ProviderFlow({
   }
 
   if (flow === "dashboard") {
-    return <ProviderDashboard setFlow={setFlow} user={user} services={services} />
+    return <ProviderDashboard setFlow={setFlow} user={user} services={services} logout={logout} />
   }
 
   if (flow === "profile") {
-    return <ProviderProfile setFlow={setFlow} user={user} logout={logout} onSwitchToClient={onSwitchToClient} services={services} />
+    return <ProviderProfile setFlow={setFlow} user={user} logout={logout} onSwitchToClient={onSwitchToClient} services={services} userLocation={userLocation} />
   }
 
   if (flow === "agenda") {
-    return <ProviderAgenda setFlow={setFlow} user={user} />
+    return <ProviderAgenda setFlow={setFlow} user={user} setActiveChat={setActiveChat} />
   }
 
   if (flow === "services") {
@@ -566,11 +726,11 @@ function ProviderFlow({
   }
 
   if (flow === "create-service") {
-    return <CreateService setFlow={setFlow} createService={createService} user={user} />
+    return <CreateService setFlow={setFlow} createService={createService} user={user} userLocation={userLocation} />
   }
 
   if (flow === "edit-service") {
-    return <EditService setFlow={setFlow} user={user} service={selectedProviderService} />
+    return <EditService setFlow={setFlow} user={user} service={selectedProviderService} userLocation={userLocation} />
   }
 
   if (flow === "subscription") {
@@ -581,24 +741,47 @@ function ProviderFlow({
     return <ProviderStatistics setFlow={setFlow} user={user} services={services} profileData={profileData} />
   }
 
+  if (flow === "chat") {
+    return (
+      <ChatWindow
+        user={user}
+        partnerId={activeChat?.partnerId}
+        partnerName={activeChat?.partnerName}
+        onBack={() => setFlow("dashboard")}
+      />
+    )
+  }
+
   return <ProviderOnboarding setFlow={setFlow} />
 }
 
 function ClientFlow({
   flow,
   setFlow,
+  user,
+  services,
   selectedService,
   setSelectedService,
   selectedDate,
   setSelectedDate,
   selectedTime,
   setSelectedTime,
+  searchTerm,
+  setSearchTerm,
+  searchServices,
+  createBooking,
+  getBookingsByClient,
+  userLocation,
+  logout,
+  activeChat,
+  setActiveChat,
   signIn,
   signUp,
   setAuthError,
   authError,
   setAuthSuccess,
   authSuccess,
+<<<<<<< HEAD
   services,
   searchTerm,
   setSearchTerm,
@@ -609,21 +792,35 @@ function ClientFlow({
   onSwitchToProvider,
   setBookingSource,
   bookingSource
+=======
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
 }: {
   flow: string
-  setFlow: (flow: any) => void
+  setFlow: (flow: string) => void
+  user: any
+  services: any[]
   selectedService: any
   setSelectedService: (service: any) => void
   selectedDate: string
   setSelectedDate: (date: string) => void
   selectedTime: string
   setSelectedTime: (time: string) => void
-  signIn: (email: string, password: string) => Promise<{success: boolean, error?: string}>
-  signUp: (email: string, password: string) => Promise<{success: boolean, error?: string}>
+  searchTerm: string
+  setSearchTerm: (term: string) => void
+  searchServices: (term: string) => any[]
+  createBooking: (bookingData: any) => Promise<{ success: boolean, error?: string }>
+  getBookingsByClient: (id: string) => any[]
+  userLocation: { lat: number, lng: number } | null
+  logout: () => Promise<{ success: boolean }>
+  activeChat: any
+  setActiveChat: (chat: any) => void
+  signIn: (email: string, password: string) => Promise<{ success: boolean, error?: string }>
+  signUp: (email: string, password: string) => Promise<{ success: boolean, error?: string }>
   setAuthError: (error: string) => void
   authError: string
   setAuthSuccess: (message: string) => void
   authSuccess: string
+<<<<<<< HEAD
   services: any[]
   searchTerm: string
   setSearchTerm: (term: string) => void
@@ -634,6 +831,8 @@ function ClientFlow({
   user: any
   createBooking: (bookingData: any) => Promise<{success: boolean, error?: string}>
   logout: () => Promise<{ success: boolean }>
+=======
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
 }) {
   if (flow === "login") {
     return <ClientLogin setFlow={setFlow} signIn={signIn} setAuthError={setAuthError} authError={authError} setAuthSuccess={setAuthSuccess} authSuccess={authSuccess} />
@@ -645,15 +844,20 @@ function ClientFlow({
 
   if (flow === "home") {
     return (
-      <ClientHome 
-        setFlow={setFlow} 
+      <ClientHome
+        setFlow={setFlow}
         setSelectedService={setSelectedService}
         services={services}
         searchTerm={searchTerm}
         setSearchTerm={setSearchTerm}
         searchServices={searchServices}
         user={user}
+<<<<<<< HEAD
         setBookingSource={setBookingSource}
+=======
+        userLocation={userLocation}
+        setActiveChat={setActiveChat}
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
       />
     )
   }
@@ -663,11 +867,15 @@ function ClientFlow({
   }
 
   if (flow === "agenda") {
-    return <ClientAgenda setFlow={setFlow} user={user} />
+    return <ClientAgenda setFlow={setFlow} user={user} setActiveChat={setActiveChat} />
   }
 
   if (flow === "service-detail") {
+<<<<<<< HEAD
     return <ServiceDetail service={selectedService} setFlow={setFlow} bookingSource={bookingSource} />
+=======
+    return <ServiceDetail service={selectedService} setFlow={setFlow} userLocation={userLocation} setActiveChat={setActiveChat} />
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
   }
 
   if (flow === "booking") {
@@ -693,7 +901,22 @@ function ClientFlow({
         setFlow={setFlow}
         user={user}
         createBooking={createBooking}
+<<<<<<< HEAD
         bookingSource={bookingSource}
+=======
+        setActiveChat={setActiveChat}
+      />
+    )
+  }
+
+  if (flow === "chat") {
+    return (
+      <ChatWindow
+        user={user}
+        partnerId={activeChat?.partnerId}
+        partnerName={activeChat?.partnerName}
+        onBack={() => setFlow(selectedService ? "service-detail" : "home")}
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
       />
     )
   }
@@ -730,9 +953,9 @@ function ClientOnboarding({ setFlow }: { setFlow: (flow: string) => void }) {
   )
 }
 
-function ClientLogin({ setFlow, signIn, setAuthError, authError, setAuthSuccess, authSuccess }: { 
+function ClientLogin({ setFlow, signIn, setAuthError, authError, setAuthSuccess, authSuccess }: {
   setFlow: (flow: string) => void
-  signIn: (email: string, password: string) => Promise<{success: boolean, error?: string}>
+  signIn: (email: string, password: string) => Promise<{ success: boolean, error?: string }>
   setAuthError: (error: string) => void
   authError: string
   setAuthSuccess: (message: string) => void
@@ -749,7 +972,7 @@ function ClientLogin({ setFlow, signIn, setAuthError, authError, setAuthSuccess,
     setAuthSuccess("")
 
     const result = await signIn(email, password)
-    
+
     if (result.success) {
       setAuthSuccess("¡Bienvenido! Iniciando sesión...")
       setTimeout(() => {
@@ -758,7 +981,7 @@ function ClientLogin({ setFlow, signIn, setAuthError, authError, setAuthSuccess,
     } else {
       setAuthError(result.error || "Error al iniciar sesión")
     }
-    
+
     setLoading(false)
   }
 
@@ -766,9 +989,9 @@ function ClientLogin({ setFlow, signIn, setAuthError, authError, setAuthSuccess,
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
       <div className="w-full max-w-sm space-y-8">
         <div className="text-center">
-          <img 
-            src="/logonuevo.jpeg" 
-            alt="Punto Encuentro" 
+          <img
+            src="/logonuevo.jpeg"
+            alt="Punto Encuentro"
             className="w-24 h-24 mx-auto mb-4 rounded-lg object-cover"
           />
           <h1 className="text-3xl font-bold text-primary mb-2">Punto Encuentro</h1>
@@ -798,9 +1021,9 @@ function ClientLogin({ setFlow, signIn, setAuthError, authError, setAuthSuccess,
             <form onSubmit={handleLogin} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
-                <Input 
-                  id="email" 
-                  type="email" 
+                <Input
+                  id="email"
+                  type="email"
                   placeholder="tu@email.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -810,9 +1033,9 @@ function ClientLogin({ setFlow, signIn, setAuthError, authError, setAuthSuccess,
 
               <div className="space-y-2">
                 <Label htmlFor="password">Contraseña</Label>
-                <Input 
-                  id="password" 
-                  type="password" 
+                <Input
+                  id="password"
+                  type="password"
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -841,9 +1064,9 @@ function ClientLogin({ setFlow, signIn, setAuthError, authError, setAuthSuccess,
   )
 }
 
-function ClientRegister({ setFlow, signUp, setAuthError, authError, setAuthSuccess, authSuccess }: { 
+function ClientRegister({ setFlow, signUp, setAuthError, authError, setAuthSuccess, authSuccess }: {
   setFlow: (flow: string) => void
-  signUp: (email: string, password: string) => Promise<{success: boolean, error?: string}>
+  signUp: (email: string, password: string) => Promise<{ success: boolean, error?: string }>
   setAuthError: (error: string) => void
   authError: string
   setAuthSuccess: (message: string) => void
@@ -862,24 +1085,24 @@ function ClientRegister({ setFlow, signUp, setAuthError, authError, setAuthSucce
 
     try {
       const result = await signUp(email, password)
-      
+
       if (result.success) {
         // Obtener el usuario actual de Firebase Auth
         const { auth } = await import("@/lib/firebase")
         const currentUser = auth.currentUser
-        
+
         if (currentUser) {
           // Actualizar perfil con nombre
           const { updateProfile } = await import("firebase/auth")
-          
+
           if (name) {
             await updateProfile(currentUser, { displayName: name })
           }
-          
+
           // Guardar usuario en Firestore con rol de cliente
           const { doc, setDoc } = await import("firebase/firestore")
           const { db } = await import("@/lib/firebase")
-          
+
           await setDoc(doc(db, 'users', currentUser.uid), {
             email: email,
             displayName: name,
@@ -890,7 +1113,7 @@ function ClientRegister({ setFlow, signUp, setAuthError, authError, setAuthSucce
             updatedAt: new Date()
           })
         }
-        
+
         setAuthSuccess("¡Cuenta creada exitosamente! Bienvenido a Punto Encuentro.")
         setTimeout(() => {
           setFlow("home")
@@ -902,7 +1125,7 @@ function ClientRegister({ setFlow, signUp, setAuthError, authError, setAuthSucce
       console.error('Error en registro:', error)
       setAuthError(error.message || "Error al registrarse")
     }
-    
+
     setLoading(false)
   }
 
@@ -910,9 +1133,9 @@ function ClientRegister({ setFlow, signUp, setAuthError, authError, setAuthSucce
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
       <div className="w-full max-w-sm space-y-8">
         <div className="text-center">
-          <img 
-            src="/logonuevo.jpeg" 
-            alt="Punto Encuentro" 
+          <img
+            src="/logonuevo.jpeg"
+            alt="Punto Encuentro"
             className="w-24 h-24 mx-auto mb-4 rounded-lg object-cover"
           />
           <h1 className="text-3xl font-bold text-primary mb-2">Punto Encuentro</h1>
@@ -942,8 +1165,8 @@ function ClientRegister({ setFlow, signUp, setAuthError, authError, setAuthSucce
             <form onSubmit={handleRegister} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="name">Nombre completo</Label>
-                <Input 
-                  id="name" 
+                <Input
+                  id="name"
                   placeholder="Juan Pérez"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
@@ -953,9 +1176,9 @@ function ClientRegister({ setFlow, signUp, setAuthError, authError, setAuthSucce
 
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
-                <Input 
-                  id="email" 
-                  type="email" 
+                <Input
+                  id="email"
+                  type="email"
                   placeholder="tu@email.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -965,9 +1188,9 @@ function ClientRegister({ setFlow, signUp, setAuthError, authError, setAuthSucce
 
               <div className="space-y-2">
                 <Label htmlFor="password">Contraseña</Label>
-                <Input 
-                  id="password" 
-                  type="password" 
+                <Input
+                  id="password"
+                  type="password"
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -1004,8 +1227,14 @@ function ClientHome({
   setSearchTerm,
   searchServices,
   user,
+<<<<<<< HEAD
   setBookingSource
 }: { 
+=======
+  userLocation,
+  setActiveChat
+}: {
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
   setFlow: (flow: string) => void
   setSelectedService: (service: any) => void
   services: any[]
@@ -1013,7 +1242,12 @@ function ClientHome({
   setSearchTerm: (term: string) => void
   searchServices: (term: string) => any[]
   user: any
+<<<<<<< HEAD
   setBookingSource: (source: any) => void
+=======
+  userLocation: { lat: number, lng: number } | null
+  setActiveChat?: (chat: any) => void
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
 }) {
   const { categories } = useCategories()
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
@@ -1046,9 +1280,35 @@ function ClientHome({
   // Mostrar solo las primeras 4 categorías en el home
   const mainCategories = allCategories.slice(0, 4)
 
-  const filteredServices = searchTerm 
+  // Servicios con distancia calculada
+  const servicesWithDistance = useMemo(() => {
+    return services.map(service => {
+      if (userLocation && service.lat && service.lng) {
+        const distance = getDistance(userLocation.lat, userLocation.lng, service.lat, service.lng)
+        return { ...service, distance }
+      }
+      return service
+    })
+  }, [services, userLocation])
+
+  const nearbyServices = useMemo(() => {
+    if (!userLocation) return []
+    return servicesWithDistance
+      .filter(s => s.distance !== undefined && s.distance < 15) // Dentro de 15km
+      .sort((a, b) => (a.distance || 0) - (b.distance || 0))
+  }, [servicesWithDistance, userLocation])
+
+  const recommendedServices = useMemo(() => {
+    // Si hay ubicación, excluir los que ya salen en "Cerca tuyo" para no repetir tanto? 
+    // O simplemente mostrar los que no están taaaan cerca pero tienen buen rating
+    return servicesWithDistance
+      .sort((a, b) => (b.rating || 0) - (a.rating || 0))
+  }, [servicesWithDistance])
+
+  const filteredServices = searchTerm
     ? searchServices(searchTerm)
     : services.filter((service) => {
+<<<<<<< HEAD
         const matchesCategory = !selectedCategory || service.category === selectedCategory
         const matchesPrice = maxPrice === "all" || Number(service.price) <= maxPrice
         
@@ -1065,6 +1325,11 @@ function ClientHome({
 
         return matchesCategory && matchesPrice && matchesNearby
       })
+=======
+      const matchesCategory = !selectedCategory || service.category === selectedCategory
+      return matchesCategory
+    })
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
 
   const generateCalendar = () => {
     const today = new Date()
@@ -1123,6 +1388,12 @@ function ClientHome({
     setViewMode("all-categories")
   }
 
+<<<<<<< HEAD
+=======
+  if (activeTab === "agenda") {
+    return <ClientAgenda setFlow={setFlow} user={user} onBack={() => setActiveTab("inicio")} setActiveChat={setActiveChat} />
+  }
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
 
 
   if (viewMode === "recommendations") {
@@ -1149,10 +1420,10 @@ function ClientHome({
                     alt={service.name}
                     className="w-full h-full object-cover"
                   />
-                  
+
                   {/* Overlay con gradiente para mejor legibilidad del texto */}
                   <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
-                  
+
                   {/* Contenido sobre la imagen */}
                   <div className="absolute bottom-0 left-0 right-0 p-4 text-white">
                     <div className="flex flex-col gap-2 mb-2">
@@ -1235,7 +1506,20 @@ function ClientHome({
             </div>
           )}
           <div className="grid grid-cols-1 gap-4">
+<<<<<<< HEAD
             {serviciosConDistancia
+=======
+            {services
+              .map(service => {
+                if (userLocation && service.lat && service.lng) {
+                  const dist = getDistance(userLocation.lat, userLocation.lng, service.lat, service.lng)
+                  return { ...service, distanceVal: dist, distance: `${dist.toFixed(1)} km` }
+                }
+                return service
+              })
+              .filter((service) => service.distance)
+              .sort((a, b) => (a.distanceVal || 999) - (b.distanceVal || 999))
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
               .map((service) => (
                 <Card
                   key={service.id}
@@ -1249,10 +1533,10 @@ function ClientHome({
                       alt={service.name}
                       className="w-full h-full object-cover"
                     />
-                    
+
                     {/* Overlay con gradiente para mejor legibilidad del texto */}
                     <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
-                    
+
                     {/* Contenido sobre la imagen */}
                     <div className="absolute bottom-0 left-0 right-0 p-4 text-white">
                       <div className="flex items-center gap-2 mb-1">
@@ -1373,42 +1657,42 @@ function ClientHome({
         <div className="p-4">
           {categoryServices.length > 0 ? (
             <div className="grid grid-cols-1 gap-4">
-            {categoryServices.map((service) => (
-              <Card
-                key={service.id}
-                className="cursor-pointer hover:shadow-md transition-shadow overflow-hidden"
-                onClick={() => handleServiceClick(service)}
-              >
-                <div className="relative w-full h-48">
-                  {/* Imagen de fondo que ocupa toda la card */}
-                  <img
-                    src={service.image || "/placeholder.svg"}
-                    alt={service.name}
-                    className="w-full h-full object-cover"
-                  />
-                  
-                  {/* Overlay con gradiente para mejor legibilidad del texto */}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
-                  
-                  {/* Contenido sobre la imagen */}
-                  <div className="absolute bottom-0 left-0 right-0 p-4 text-white">
-                    <div className="flex flex-col gap-2 mb-2">
-                      <span className="text-base font-medium">{service.providerName || 'Proveedor'}</span>
-                      <span className="text-xs bg-white/20 backdrop-blur-sm px-2 py-0.5 rounded text-white self-start">
-                        {service.category}
-                      </span>
-                    </div>
-                    <p className="text-sm mb-2 opacity-90">{service.name}</p>
-                    <div className="flex items-center gap-1 text-sm">
-                      <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
-                      <span>
-                        {service.rating} ({service.reviews} vecinos)
-                      </span>
+              {categoryServices.map((service) => (
+                <Card
+                  key={service.id}
+                  className="cursor-pointer hover:shadow-md transition-shadow overflow-hidden"
+                  onClick={() => handleServiceClick(service)}
+                >
+                  <div className="relative w-full h-48">
+                    {/* Imagen de fondo que ocupa toda la card */}
+                    <img
+                      src={service.image || "/placeholder.svg"}
+                      alt={service.name}
+                      className="w-full h-full object-cover"
+                    />
+
+                    {/* Overlay con gradiente para mejor legibilidad del texto */}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
+
+                    {/* Contenido sobre la imagen */}
+                    <div className="absolute bottom-0 left-0 right-0 p-4 text-white">
+                      <div className="flex flex-col gap-2 mb-2">
+                        <span className="text-base font-medium">{service.providerName || 'Proveedor'}</span>
+                        <span className="text-xs bg-white/20 backdrop-blur-sm px-2 py-0.5 rounded text-white self-start">
+                          {service.category}
+                        </span>
+                      </div>
+                      <p className="text-sm mb-2 opacity-90">{service.name}</p>
+                      <div className="flex items-center gap-1 text-sm">
+                        <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
+                        <span>
+                          {service.rating} ({service.reviews} vecinos)
+                        </span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </Card>
-            ))}
+                </Card>
+              ))}
             </div>
           ) : (
             <div className="text-center text-gray-500 py-8">
@@ -1560,6 +1844,7 @@ function ClientHome({
             )}
           </div>
           {filteredServices.length > 0 ? (
+<<<<<<< HEAD
             <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide">
               {filteredServices.slice(0, 4).map((service) => (
                 <Card
@@ -1594,9 +1879,41 @@ function ClientHome({
                           <MapPin className="h-2.5 w-2.5" />
                           <span>A {calcularDistanciaServicio(service)} de ti</span>
                         </div>
+=======
+            <div className="flex gap-3 overflow-x-auto pb-2">
+              {recommendedServices.slice(0, 4).map((service) => (
+                <Card
+                  key={service.id}
+                  className="cursor-pointer hover:shadow-md transition-shadow flex-shrink-0 w-48 overflow-hidden"
+                  onClick={() => handleServiceClick(service)}
+                >
+                  <div className="relative w-full h-32">
+                    <img
+                      src={service.image || "/placeholder.svg"}
+                      alt={service.name}
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
+                    <div className="absolute bottom-2 left-2 right-2 text-white">
+                      <p className="text-xs font-bold line-clamp-1">{service.providerName}</p>
+                      {service.distance !== undefined && (
+                        <p className="text-[10px] text-primary-foreground bg-primary/20 backdrop-blur-sm rounded px-1 inline-block">
+                          a {service.distance.toFixed(1)} km
+                        </p>
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                       )}
                     </div>
                   </div>
+                  <CardContent className="p-3">
+                    <h3 className="text-xs font-semibold line-clamp-1 mb-1">{service.name}</h3>
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-1 text-[10px]">
+                        <Star className="h-2 w-2 fill-yellow-400 text-yellow-400" />
+                        <span>{service.rating}</span>
+                      </div>
+                      <span className="text-sm font-bold text-primary">${service.price}</span>
+                    </div>
+                  </CardContent>
                 </Card>
               ))}
             </div>
@@ -1613,6 +1930,7 @@ function ClientHome({
           )}
         </div>
 
+<<<<<<< HEAD
         <div className="pb-8">
           <h2 className="text-xl font-bold mb-4">Cerca tuyo</h2>
           {filteredServices.length > 0 ? (
@@ -1628,10 +1946,30 @@ function ClientHome({
                       <div className="w-24 h-24 rounded-xl overflow-hidden flex-shrink-0">
                         <img 
                           src={service.image || "/placeholder.svg"} 
+=======
+        <div>
+          <button onClick={handleCercaTuyo} className="text-lg font-semibold mb-3 text-left">
+            Cerca tuyo
+          </button>
+          {nearbyServices.length > 0 ? (
+            <div className="space-y-3">
+              {nearbyServices.slice(0, 3).map((service) => (
+                <Card
+                  key={service.id}
+                  className="cursor-pointer hover:shadow-md transition-shadow"
+                  onClick={() => handleServiceClick(service)}
+                >
+                  <CardContent className="p-4">
+                    <div className="flex gap-3">
+                      <div className="w-20 h-20 bg-gray-200 rounded-lg overflow-hidden flex-shrink-0">
+                        <img
+                          src={service.image || "/placeholder.svg"}
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                           alt={service.name}
                           className="w-full h-full object-cover"
                         />
                       </div>
+<<<<<<< HEAD
                       <div className="flex-1 flex flex-col justify-center py-1">
                         <div className="flex items-center gap-2 mb-1">
                           <span className="text-[10px] font-bold text-primary uppercase tracking-wider bg-primary/5 px-2 py-0.5 rounded-full">
@@ -1656,18 +1994,57 @@ function ClientHome({
                       <button className="self-start mt-1 text-gray-300">
                         <Filter className="h-4 w-4" />
                       </button>
+=======
+                      <div className="flex-1">
+                        <div className="flex justify-between items-start mb-1">
+                          <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded font-medium">
+                            {service.category}
+                          </span>
+                          {service.distance !== undefined && (
+                            <span className="text-[10px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded border border-green-100">
+                              ESTÁ MUY CERCA ({service.distance.toFixed(1)} km)
+                            </span>
+                          )}
+                        </div>
+                        <h3 className="font-semibold text-sm line-clamp-1">{service.name}</h3>
+                        <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
+                          <User className="h-3 w-3" /> {service.providerName}
+                        </p>
+                        <div className="flex justify-between items-end">
+                          <div className="flex items-center gap-1 text-xs">
+                            <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                            <span className="font-medium">{service.rating}</span>
+                          </div>
+                          <div className="text-lg font-bold text-primary">${service.price}</div>
+                        </div>
+                      </div>
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                     </div>
                   </CardContent>
                 </Card>
               ))}
             </div>
           ) : (
-            <Card>
-              <CardContent className="p-4">
-                <div className="text-center text-gray-500 py-8">
-                  <div className="text-4xl mb-2">🔍</div>
-                  <p>No hay servicios disponibles cerca tuyo</p>
-                  <p className="text-sm mt-1">Prueba buscando en otra categoría</p>
+            <Card className="border-dashed">
+              <CardContent className="p-8">
+                <div className="text-center text-gray-500">
+                  <div className="text-4xl mb-3">📍</div>
+                  <p className="font-medium text-gray-700">Sin servicios súper cercanos</p>
+                  <p className="text-sm mt-1">Comparte tu ubicación para ver quién está a la vuelta de tu casa</p>
+                  {!userLocation && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-4"
+                      onClick={() => {
+                        if ("geolocation" in navigator) {
+                          navigator.geolocation.getCurrentPosition(() => window.location.reload())
+                        }
+                      }}
+                    >
+                      Permitir ubicación
+                    </Button>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -1675,6 +2052,7 @@ function ClientHome({
         </div>
       </div>
 
+<<<<<<< HEAD
       {/* Overlay de Filtros */}
       {isFilterOpen && (
         <div className="fixed inset-0 z-50 flex items-end justify-center">
@@ -1755,6 +2133,13 @@ function ClientHome({
               <Home className="h-6 w-6" />
             </div>
             <span className="text-[10px] font-medium text-primary">Inicio</span>
+=======
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 pb-[env(safe-area-inset-bottom)]">
+        <div className="flex justify-around py-2">
+          <button onClick={() => setActiveTab("inicio")} className="flex flex-col items-center py-2 px-4">
+            <div className="text-primary mb-1">🏠</div>
+            <span className="text-xs text-primary">Inicio</span>
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
           </button>
           <button onClick={() => setFlow("agenda")} className="flex flex-col items-center gap-1">
             <div className="text-gray-400">
@@ -1774,6 +2159,7 @@ function ClientHome({
   )
 }
 
+<<<<<<< HEAD
 function ServiceDetail({ service, setFlow, bookingSource }: { service: any; setFlow: (flow: string) => void; bookingSource: string }) {
   const { position: userPosition } = useGeolocation()
   const [providerProfile, setProviderProfile] = useState<any>(null)
@@ -1813,6 +2199,9 @@ function ServiceDetail({ service, setFlow, bookingSource }: { service: any; setF
     loadProvider()
   }, [service?.providerId, service?.latitude, service?.longitude])
 
+=======
+function ServiceDetail({ service, setFlow, userLocation, setActiveChat }: { service: any; setFlow: (flow: string) => void, userLocation: { lat: number, lng: number } | null, setActiveChat: (chat: any) => void }) {
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
   if (!service) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
@@ -1898,6 +2287,7 @@ function ServiceDetail({ service, setFlow, bookingSource }: { service: any; setF
         </div>
       </div>
 
+<<<<<<< HEAD
       {/* Nombre, ciudad, rating */}
       <div className="text-center mt-14 px-4">
         <h2 className="text-xl font-bold text-gray-800">{providerName}</h2>
@@ -1906,6 +2296,44 @@ function ServiceDetail({ service, setFlow, bookingSource }: { service: any; setF
             <div className="flex items-center gap-1 text-sm text-gray-500 font-medium">
               <MapPin className="h-3.5 w-3.5 text-primary" />
               <span className="max-w-[150px] truncate">{providerCity}</span>
+=======
+      <div className="p-4 space-y-4">
+        {/* Service Image */}
+        <Card className="bg-white">
+          <CardContent className="p-0">
+            <img
+              src={service.image || "/placeholder.svg"}
+              alt={service.name}
+              className="w-full h-48 object-cover rounded-t-lg"
+            />
+            <div className="p-4">
+              <div className="flex justify-between items-start mb-2">
+                <div>
+                  <h2 className="text-2xl font-bold">{service.name}</h2>
+                  {userLocation && service.lat && service.lng && (
+                    <p className="text-sm font-bold text-green-600 flex items-center gap-1 mt-1">
+                      <MapPin className="h-4 w-4" />
+                      A {getDistance(userLocation.lat, userLocation.lng, service.lat, service.lng).toFixed(1)} km de ti
+                    </p>
+                  )}
+                </div>
+                <span className="text-2xl font-bold text-primary">${service.price}</span>
+              </div>
+
+              <div className="flex items-center gap-2 mb-3">
+                <Star className="h-5 w-5 fill-yellow-400 text-yellow-400" />
+                <span className="font-semibold">{service.rating || 0}</span>
+                <span className="text-muted-foreground">• {service.reviews || 0} reseñas</span>
+                <span className="text-muted-foreground">• {service.category}</span>
+              </div>
+
+              <p className="text-muted-foreground mb-3">{service.description || 'Sin descripción'}</p>
+
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <User className="h-4 w-4" />
+                <span>{service.providerName || 'Proveedor'}</span>
+              </div>
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
             </div>
           )}
           
@@ -1915,6 +2343,7 @@ function ServiceDetail({ service, setFlow, bookingSource }: { service: any; setF
             </div>
           )}
 
+<<<<<<< HEAD
           {(providerCity || distText) && <span className="text-gray-300">•</span>}
           
           <div className="flex items-center gap-1">
@@ -1990,10 +2419,85 @@ function ServiceDetail({ service, setFlow, bookingSource }: { service: any; setF
             Agendar
           </Button>
         </div>
+=======
+        {/* Action Buttons */}
+        <div className="flex gap-3 items-center">
+          <Button
+            onClick={() => setFlow("booking")}
+            className="flex-[2] h-14 text-sm font-bold rounded-2xl shadow-md hover:shadow-lg transition-all active:scale-95"
+            variant="orange"
+          >
+            Agendar turno
+          </Button>
+
+          <Button
+            variant="outline"
+            className="flex-1 h-14 p-0 flex flex-col items-center justify-center shrink-0 border-2 border-primary/20 bg-primary/5 text-primary rounded-2xl hover:bg-primary/10 hover:border-primary/40 transition-all active:scale-95 group shadow-sm"
+            onClick={() => {
+              setActiveChat({
+                partnerId: service.providerId,
+                partnerName: service.providerName || "Proveedor"
+              })
+              setFlow("chat")
+            }}
+          >
+            <div className="relative">
+              <MessageSquare className="h-5 w-5 mb-0.5 transition-transform group-hover:scale-110" />
+              <span className="absolute -top-1 -right-1 flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+              </span>
+            </div>
+            <span className="text-[10px] font-black uppercase tracking-tight">Chat</span>
+          </Button>
+        </div>
+
+        {/* Reviews Section */}
+        <ServiceReviews serviceId={service.id} />
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
       </div>
     </div>
   )
 }
+
+function ServiceReviews({ serviceId }: { serviceId: string }) {
+  const { reviews, loading } = useReviews(serviceId)
+
+  return (
+    <Card className="bg-white">
+      <CardContent className="p-4">
+        <h3 className="font-semibold mb-4">Reseñas de vecinos</h3>
+        {loading ? (
+          <div className="flex justify-center py-4">
+            <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full"></div>
+          </div>
+        ) : reviews.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-4">Aún no hay reseñas para este servicio.</p>
+        ) : (
+          <div className="space-y-4">
+            {reviews.map((review) => (
+              <div key={review.id} className="border-b last:border-0 pb-4 last:pb-0">
+                <div className="flex justify-between items-start mb-1">
+                  <p className="font-medium text-sm">{review.clientName}</p>
+                  <div className="flex text-yellow-400">
+                    {[...Array(5)].map((_, i) => (
+                      <Star key={i} className={`h-3 w-3 ${i < review.rating ? "fill-current" : ""}`} />
+                    ))}
+                  </div>
+                </div>
+                <p className="text-sm text-gray-700 leading-relaxed">{review.comment}</p>
+                <p className="text-[10px] text-muted-foreground mt-2">
+                  {new Date(review.createdAt).toLocaleDateString()}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 
 function BookingCalendar({
   service,
@@ -2184,19 +2688,29 @@ function PaymentScreen({
   setFlow,
   user,
   createBooking,
+<<<<<<< HEAD
   bookingSource,
+=======
+  setActiveChat,
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
 }: {
   service: any
   selectedDate: string
   selectedTime: string
   setFlow: (flow: string) => void
   user: any
+<<<<<<< HEAD
   createBooking: (bookingData: any) => Promise<{success: boolean, error?: string}>
   bookingSource: string
+=======
+  createBooking: (bookingData: any) => Promise<{ success: boolean, error?: string }>
+  setActiveChat: (chat: any) => void
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
 }) {
   const [selectedPayment, setSelectedPayment] = useState<string>("")
   const [showTransferDetails, setShowTransferDetails] = useState(false)
   const [loading, setLoading] = useState(false)
+<<<<<<< HEAD
   const [providerBankDetails, setProviderBankDetails] = useState<{cbu?: string, alias?: string, accountHolder?: string} | null>(null)
   
   // Obtener datos bancarios reales del proveedor
@@ -2222,9 +2736,12 @@ function PaymentScreen({
     }
     fetchProviderBankDetails()
   }, [service?.providerId])
+=======
+  const [isSuccess, setIsSuccess] = useState(false)
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
 
   const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr)
+    const date = new Date(dateStr + 'T00:00:00')
     return date.toLocaleDateString("es-ES", {
       weekday: "long",
       year: "numeric",
@@ -2249,7 +2766,7 @@ function PaymentScreen({
     }
 
     setLoading(true)
-    
+
     try {
       const bookingData = {
         serviceId: service.id,
@@ -2269,10 +2786,9 @@ function PaymentScreen({
       }
 
       const result = await createBooking(bookingData)
-      
+
       if (result.success) {
-        alert("¡Turno confirmado! Recibirás un email de confirmación.")
-        setFlow("home")
+        setIsSuccess(true)
       } else {
         alert("Error al confirmar el turno. Por favor intenta nuevamente.")
       }
@@ -2282,6 +2798,43 @@ function PaymentScreen({
     } finally {
       setLoading(false)
     }
+  }
+
+  if (isSuccess) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
+        <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-6 animate-bounce">
+          <div className="text-4xl text-green-600">✓</div>
+        </div>
+        <h2 className="text-2xl font-bold text-gray-900 mb-2">¡Reserva Confirmada!</h2>
+        <p className="text-gray-600 mb-8 max-w-sm">
+          Tu turno para <span className="font-bold text-primary">{service.name}</span> ha sido registrado exitosamente.
+        </p>
+
+        <div className="w-full max-w-sm space-y-3">
+          <Button
+            className="w-full h-12 rounded-xl bg-primary hover:bg-primary/90 text-white font-bold shadow-lg"
+            onClick={() => {
+              setActiveChat({
+                partnerId: service.providerId,
+                partnerName: service.providerName || "Proveedor"
+              })
+              setFlow("chat")
+            }}
+          >
+            <MessageSquare className="h-4 w-4 mr-2" />
+            Chatear con el profesional
+          </Button>
+          <Button
+            variant="ghost"
+            className="w-full h-12 rounded-xl text-gray-500 font-medium"
+            onClick={() => setFlow("home")}
+          >
+            Volver al inicio
+          </Button>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -2383,9 +2936,9 @@ function PaymentScreen({
         )}
 
         {/* Confirm Payment */}
-        <Button 
-          onClick={handleConfirmPayment} 
-          disabled={!selectedPayment || loading} 
+        <Button
+          onClick={handleConfirmPayment}
+          disabled={!selectedPayment || loading}
           className="w-full h-12 text-base"
           variant="orange"
         >
@@ -2414,6 +2967,7 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
   const [uploadingImage, setUploadingImage] = useState(false)
   const [success, setSuccess] = useState("")
 
+<<<<<<< HEAD
   // Cargar datos del perfil desde Firestore al montar
   useEffect(() => {
     const loadProfile = async () => {
@@ -2440,6 +2994,37 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
     loadProfile()
   }, [user])
   
+=======
+  // Cargar datos actuales de Firestore al iniciar
+  useEffect(() => {
+    const loadProfileData = async () => {
+      if (!user?.uid) return
+
+      try {
+        const { getDoc, doc } = await import("firebase/firestore")
+        const { db } = await import("@/lib/firebase")
+
+        const docRef = doc(db, 'users', user.uid)
+        const docSnap = await getDoc(docRef)
+
+        if (docSnap.exists()) {
+          const data = docSnap.data()
+          setProfileData(prev => ({
+            ...prev,
+            ...data,
+            name: data.displayName || data.name || user.displayName || "",
+            email: data.email || user.email || ""
+          }))
+        }
+      } catch (error) {
+        console.error("Error cargando perfil:", error)
+      }
+    }
+
+    loadProfileData()
+  }, [user])
+
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
   const handleLogout = async () => {
     setLoading(true)
     try {
@@ -2462,19 +3047,19 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
       const { db } = await import("@/lib/firebase")
       const { updateProfile } = await import("firebase/auth")
       const { auth } = await import("@/lib/firebase")
-      
+
       if (user?.uid) {
         // Actualizar perfil de Firebase Auth
         if (profileData.name) {
           await updateProfile(auth.currentUser!, { displayName: profileData.name })
         }
-        
+
         // Actualizar en Firestore
         await setDoc(doc(db, 'users', user.uid), {
           ...profileData,
           updatedAt: new Date()
         }, { merge: true })
-        
+
         setSuccess("¡Perfil actualizado exitosamente!")
         setIsEditing(false)
         setTimeout(() => setSuccess(""), 3000)
@@ -2502,6 +3087,7 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
     }
 
     setUploadingImage(true)
+<<<<<<< HEAD
     
     try {
       const { uploadImage } = await import("@/lib/uploadImage")
@@ -2525,13 +3111,42 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
       console.error('Error subiendo imagen:', error)
       setUploadingImage(false)
       alert(error.message || 'Error al subir la imagen')
+=======
+
+    // URL temporal para feedback visual inmediato
+    const imageUrl = URL.createObjectURL(file)
+    setProfileData(prev => ({ ...prev, profileImage: imageUrl }))
+
+    setUploadingImage(true)
+
+    // Subida real a Firebase Storage
+    try {
+      const storagePath = `users/${user.uid}/profile_${Date.now()}`
+      const downloadURL = await uploadFile(file, storagePath)
+
+      setProfileData(prev => ({ ...prev, profileImage: downloadURL }))
+
+      // Actualizar inmediatamente en Firestore si no estamos en modo edición (o incluso si lo estamos)
+      await setDoc(doc(db, 'users', user.uid), {
+        profileImage: downloadURL,
+        updatedAt: new Date()
+      }, { merge: true })
+
+      setSuccess('¡Imagen de perfil actualizada!')
+      setTimeout(() => setSuccess(""), 3000)
+    } catch (error) {
+      console.error('Error al subir imagen:', error)
+      alert('Error al subir la imagen. Intenta de nuevo.')
+    } finally {
+      setUploadingImage(false)
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
     }
   }
 
   const handleInputChange = (field: string, value: string) => {
     setProfileData(prev => ({ ...prev, [field]: value }))
   }
-  
+
   return (
     <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
       <div className="bg-white shadow-sm p-4">
@@ -2561,9 +3176,9 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
               <div className="relative inline-block">
                 <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-3 overflow-hidden">
                   {profileData.profileImage && profileData.profileImage !== "/placeholder.svg" ? (
-                    <img 
-                      src={profileData.profileImage} 
-                      alt="Profile" 
+                    <img
+                      src={profileData.profileImage}
+                      alt="Profile"
                       className="w-full h-full object-cover"
                     />
                   ) : (
@@ -2586,9 +3201,9 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
                       className="hidden"
                       id="client-profile-upload"
                     />
-                    <Button 
-                      size="sm" 
-                      variant="secondary" 
+                    <Button
+                      size="sm"
+                      variant="secondary"
                       className="w-8 h-8 rounded-full p-0"
                       onClick={() => document.getElementById('client-profile-upload')?.click()}
                       disabled={uploadingImage}
@@ -2657,8 +3272,8 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
                       📞 {profileData.phone}
                     </p>
                   )}
-                  <Button 
-                    variant="outline" 
+                  <Button
+                    variant="outline"
                     className="w-full bg-transparent mt-4"
                     onClick={() => setIsEditing(true)}
                   >
@@ -2692,17 +3307,16 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
                             {booking.date || 'Fecha no disponible'} - {booking.time || 'Hora no disponible'}
                           </p>
                           <div className="flex items-center gap-2 mt-1">
-                            <span className={`text-xs px-2 py-1 rounded ${
-                              booking.status === 'confirmed' ? 'bg-green-100 text-green-800' :
+                            <span className={`text-xs px-2 py-1 rounded ${booking.status === 'confirmed' ? 'bg-green-100 text-green-800' :
                               booking.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-                              booking.status === 'cancelled' ? 'bg-red-100 text-red-800' :
-                              'bg-blue-100 text-blue-800'
-                            }`}>
+                                booking.status === 'cancelled' ? 'bg-red-100 text-red-800' :
+                                  'bg-blue-100 text-blue-800'
+                              }`}>
                               {booking.status === 'confirmed' ? 'Confirmada' :
-                               booking.status === 'pending' ? 'Pendiente' :
-                               booking.status === 'cancelled' ? 'Cancelada' :
-                               booking.status === 'completed' ? 'Completada' :
-                               'Desconocido'}
+                                booking.status === 'pending' ? 'Pendiente' :
+                                  booking.status === 'cancelled' ? 'Cancelada' :
+                                    booking.status === 'completed' ? 'Completada' :
+                                      'Desconocido'}
                             </span>
                             <span className="text-xs text-muted-foreground">
                               ${booking.price || 0}
@@ -2729,6 +3343,7 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
           </CardContent>
         </Card>
 
+<<<<<<< HEAD
         {roleAlert && (
           <div className="p-0">
             <CustomAlert
@@ -2790,6 +3405,11 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
         <Button 
           variant="destructive" 
           className="w-full" 
+=======
+        <Button
+          variant="destructive"
+          className="w-full"
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
           onClick={handleLogout}
           disabled={loading}
         >
@@ -2824,11 +3444,18 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
   )
 }
 
-function ClientAgenda({ setFlow, user }: { setFlow: (flow: string) => void; user: any }) {
+function ClientAgenda({ setFlow, user, setActiveChat, onBack }: { setFlow: (flow: string) => void; user: any; setActiveChat?: (chat: any) => void; onBack?: () => void }) {
   const { getBookingsByClient, cancelBooking, fetchBookings } = useBookings()
-  const [selectedDate, setSelectedDate] = useState<string>("")
+  const { addReview } = useReviews()
+  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0])
   const [currentMonth, setCurrentMonth] = useState(new Date())
   const [loading, setLoading] = useState(false)
+
+  // Estado para calificar
+  const [showRateModal, setShowRateModal] = useState(false)
+  const [ratingBooking, setRatingBooking] = useState<any>(null)
+  const [ratingScore, setRatingScore] = useState(5)
+  const [ratingComment, setRatingComment] = useState("")
 
   // Obtener reservas del cliente
   const clientBookings = getBookingsByClient(user?.uid) || []
@@ -2837,7 +3464,7 @@ function ClientAgenda({ setFlow, user }: { setFlow: (flow: string) => void; user
     if (!confirm('¿Estás seguro de que quieres cancelar esta reserva?')) {
       return
     }
-    
+
     setLoading(true)
     try {
       const result = await cancelBooking(bookingId)
@@ -2865,7 +3492,7 @@ function ClientAgenda({ setFlow, user }: { setFlow: (flow: string) => void; user
     const startingDayOfWeek = firstDay.getDay()
 
     const days = []
-    
+
     // Días del mes anterior (para completar la semana)
     for (let i = startingDayOfWeek - 1; i >= 0; i--) {
       const prevMonth = new Date(year, month, -i)
@@ -2880,10 +3507,10 @@ function ClientAgenda({ setFlow, user }: { setFlow: (flow: string) => void; user
     // Días del mes actual
     for (let day = 1; day <= daysInMonth; day++) {
       const fullDate = new Date(year, month, day).toISOString().split('T')[0]
-      const dayBookings = clientBookings.filter(booking => 
+      const dayBookings = clientBookings.filter(booking =>
         booking.date === fullDate
       )
-      
+
       days.push({
         date: day,
         fullDate,
@@ -2908,7 +3535,7 @@ function ClientAgenda({ setFlow, user }: { setFlow: (flow: string) => void; user
   }
 
   const calendarDays = generateCalendarDays()
-  const selectedDateBookings = selectedDate ? 
+  const selectedDateBookings = selectedDate ?
     clientBookings.filter(booking => booking.date === selectedDate) : []
 
   const navigateMonth = (direction: 'prev' | 'next') => {
@@ -2924,6 +3551,7 @@ function ClientAgenda({ setFlow, user }: { setFlow: (flow: string) => void; user
   }
 
   return (
+<<<<<<< HEAD
     <div className="min-h-screen bg-[#f7fdfd] pb-24">
       <div className="p-4 flex items-center justify-between sticky top-0 bg-[#f7fdfd] z-10">
         <button onClick={() => setFlow("home")} className="p-2">
@@ -3053,6 +3681,388 @@ function ClientAgenda({ setFlow, user }: { setFlow: (flow: string) => void; user
             <span className="text-[10px] font-medium text-gray-400">Perfil</span>
           </button>
         </div>
+=======
+    <div className="min-h-screen pb-20" style={{ backgroundColor: 'oklch(0.99 0.01 200)' }}>
+      {/* Header Premium */}
+      <div className="bg-white/80 backdrop-blur-md sticky top-0 z-30 border-b border-gray-100 px-4 py-4">
+        <div className="max-w-4xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => onBack ? onBack() : setFlow("home")}
+              className="rounded-full hover:bg-gray-100"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+            <div>
+              <h1 className="text-xl font-bold text-gray-900">Mis Reservas</h1>
+              <p className="text-xs text-muted-foreground">Gestiona tus próximos encuentros</p>
+            </div>
+          </div>
+          <div className="bg-primary/10 p-2 rounded-full">
+            <Calendar className="h-5 w-5 text-primary" />
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-4xl mx-auto p-4 space-y-6">
+        {/* Calendario Moderno */}
+        <Card className="overflow-hidden border-none shadow-xl shadow-gray-200/50 bg-white/50 backdrop-blur-sm">
+          <CardContent className="p-0">
+            <div className="p-6 bg-gradient-to-br from-primary/5 via-transparent to-transparent">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                  Calendario
+                </h3>
+                <div className="flex items-center gap-1 bg-white p-1 rounded-full shadow-sm border border-gray-100">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 rounded-full"
+                    onClick={() => navigateMonth('prev')}
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                  </Button>
+                  <span className="text-sm font-bold min-w-[140px] text-center capitalize">
+                    {currentMonth.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 rounded-full rotate-180"
+                    onClick={() => navigateMonth('next')}
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+
+              {/* Días de la semana */}
+              <div className="grid grid-cols-7 gap-1 mb-2">
+                {['D', 'L', 'M', 'M', 'J', 'V', 'S'].map((day, i) => (
+                  <div key={i} className="text-center text-[10px] font-black text-gray-400 uppercase tracking-widest py-2">
+                    {day}
+                  </div>
+                ))}
+              </div>
+
+              {/* Días del calendario */}
+              <div className="grid grid-cols-7 gap-2">
+                {calendarDays.map((day, index) => {
+                  const isToday = day.fullDate === new Date().toISOString().split('T')[0];
+                  const isSelected = selectedDate === day.fullDate;
+                  const hasBookings = day.bookings.length > 0 && day.isCurrentMonth;
+
+                  return (
+                    <button
+                      key={index}
+                      onClick={() => day.isCurrentMonth && setSelectedDate(day.fullDate)}
+                      className={`
+                        relative aspect-square flex flex-col items-center justify-center rounded-xl transition-all duration-200
+                        ${day.isCurrentMonth
+                          ? 'hover:bg-primary/5 active:scale-90 cursor-pointer'
+                          : 'opacity-20 cursor-default'}
+                        ${isSelected
+                          ? 'bg-primary text-white shadow-lg shadow-primary/30 scale-105 z-10'
+                          : 'text-gray-700'}
+                        ${isToday && !isSelected ? 'border-2 border-primary/20 bg-primary/5' : ''}
+                      `}
+                    >
+                      <span className={`text-sm font-bold ${isSelected ? 'text-white' : ''}`}>
+                        {day.date}
+                      </span>
+                      {hasBookings && (
+                        <span className={`
+                          absolute bottom-1.5 w-1.5 h-1.5 rounded-full
+                          ${isSelected ? 'bg-white' : 'bg-primary'}
+                        `} />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Reservas del día seleccionado */}
+        {selectedDate && (
+          <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="flex items-center justify-between px-1">
+              <h3 className="font-bold text-gray-800 capitalize flex items-center gap-2">
+                <div className="w-1.5 h-6 bg-primary rounded-full transition-all" />
+                {new Date(selectedDate + 'T00:00:00').toLocaleDateString('es-ES', {
+                  weekday: 'long',
+                  day: 'numeric',
+                  month: 'long'
+                })}
+              </h3>
+              <span className="text-xs font-medium text-muted-foreground bg-gray-100 px-2 py-1 rounded-full">
+                {selectedDateBookings.length} {selectedDateBookings.length === 1 ? 'reserva' : 'reservas'}
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              {selectedDateBookings.length > 0 ? (
+                selectedDateBookings.map((booking) => (
+                  <Card key={booking.id} className="group overflow-hidden border-none shadow-md hover:shadow-xl transition-all duration-300 bg-white">
+                    <CardContent className="p-0">
+                      <div className="flex h-full">
+                        <div className={`w-1.5 ${booking.status === 'confirmed' ? 'bg-green-500' :
+                          booking.status === 'pending' ? 'bg-yellow-500' :
+                            booking.status === 'cancelled' ? 'bg-red-500' : 'bg-blue-500'
+                          }`} />
+                        <div className="flex-1 p-4 lg:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                          <div className="flex items-start gap-4">
+                            <div className="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                              <Clock className="h-6 w-6 text-primary" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2 mb-1">
+                                <h4 className="font-bold text-gray-900">{booking.serviceName}</h4>
+                                <span className="text-xs font-bold text-primary bg-primary/5 px-2 py-0.5 rounded cursor-default">
+                                  ${booking.price}
+                                </span>
+                              </div>
+                              <p className="text-sm text-gray-500 flex items-center gap-1.5">
+                                <User className="h-3.5 w-3.5" />
+                                {booking.providerName}
+                              </p>
+                              <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1.5">
+                                <Clock className="h-3 w-3" />
+                                {booking.time}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-row sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-3">
+                            <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full ${booking.status === 'confirmed' ? 'bg-green-100 text-green-700' :
+                              booking.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
+                                booking.status === 'cancelled' ? 'bg-red-100 text-red-700' :
+                                  'bg-blue-100 text-blue-700'
+                              }`}>
+                              {booking.status === 'confirmed' ? 'Confirmada' :
+                                booking.status === 'pending' ? 'Pendiente' :
+                                  booking.status === 'cancelled' ? 'Cancelada' : 'Completada'}
+                            </span>
+
+                            <div className="flex gap-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  setActiveChat({
+                                    partnerId: booking.providerId,
+                                    partnerName: booking.providerName || "Proveedor"
+                                  })
+                                  setFlow("chat")
+                                }}
+                                className="h-10 w-12 p-0 bg-primary/5 text-primary hover:bg-primary/10 rounded-xl flex flex-col items-center justify-center transition-all active:scale-90 border border-primary/10 shadow-sm"
+                                title="Chatear con el profesional"
+                              >
+                                <div className="relative">
+                                  <MessageSquare className="h-4 w-4" />
+                                  <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-primary rounded-full border border-white"></span>
+                                </div>
+                                <span className="text-[8px] font-black uppercase mt-0.5">Chat</span>
+                              </Button>
+
+                              {booking.status !== 'cancelled' && booking.status !== 'completed' && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleCancelBooking(booking.id)}
+                                  disabled={loading}
+                                  className="h-8 text-xs font-bold text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg"
+                                >
+                                  Cancelar
+                                </Button>
+                              )}
+                              {booking.status === 'completed' && !booking.reviewed && (
+                                <Button
+                                  size="sm"
+                                  onClick={() => {
+                                    setRatingBooking(booking)
+                                    setShowRateModal(true)
+                                  }}
+                                  className="h-8 text-xs font-bold bg-yellow-400 hover:bg-yellow-500 text-white rounded-lg shadow-lg shadow-yellow-200"
+                                >
+                                  Calificar
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))
+              ) : (
+                <div className="flex flex-col items-center justify-center py-12 px-4 rounded-3xl bg-white/30 border-2 border-dashed border-gray-200">
+                  <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4 opacity-50">
+                    <Clock className="h-8 w-8 text-gray-400" />
+                  </div>
+                  <p className="text-gray-500 font-medium text-center">No hay reservas para este día</p>
+                  <p className="text-xs text-muted-foreground text-center mt-1">Selecciona otra fecha en el calendario</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Todas las reservas Modernizadas */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between px-1">
+            <h3 className="font-bold text-gray-800 flex items-center gap-2">
+              <div className="w-1.5 h-6 bg-gray-300 rounded-full" />
+              Historial de Reservas
+            </h3>
+            <span className="text-xs font-medium text-muted-foreground">Últimas 10</span>
+          </div>
+
+          <div className="grid gap-3">
+            {clientBookings.length > 0 ? (
+              clientBookings.slice(0, 10).map((booking) => (
+                <div
+                  key={booking.id}
+                  className="flex items-center gap-4 p-4 bg-white rounded-2xl shadow-sm border border-gray-50 hover:border-primary/20 transition-all group"
+                >
+                  <div className="w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center shrink-0 group-hover:bg-primary/5 transition-colors">
+                    <Clock className={`h-5 w-5 ${booking.status === 'confirmed' ? 'text-green-500' :
+                      booking.status === 'pending' ? 'text-yellow-500' : 'text-gray-400'
+                      }`} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h4 className="font-bold text-gray-900 truncate">{booking.serviceName}</h4>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <p className="text-xs text-muted-foreground font-medium">
+                        {new Date(booking.date).toLocaleDateString('es-ES', { day: '2-digit', month: 'short' })} • {booking.time}
+                      </p>
+                      <span className="w-1 h-1 bg-gray-300 rounded-full" />
+                      <p className="text-xs text-muted-foreground truncate">{booking.providerName}</p>
+                    </div>
+                  </div>
+                  <div className="shrink-0 flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setActiveChat({
+                          partnerId: booking.providerId,
+                          partnerName: booking.providerName || "Proveedor"
+                        })
+                        setFlow("chat")
+                      }}
+                      className="h-10 w-12 p-0 bg-gray-50 text-gray-400 hover:text-primary hover:bg-primary/5 rounded-xl flex flex-col items-center justify-center transition-all active:scale-90 border border-gray-100"
+                      title="Chatear"
+                    >
+                      <MessageSquare className="h-3.5 w-3.5" />
+                      <span className="text-[8px] font-black uppercase mt-0.5">Chat</span>
+                    </Button>
+                    <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-md ${booking.status === 'confirmed' ? 'bg-green-50 text-green-600 border border-green-100' :
+                      booking.status === 'pending' ? 'bg-yellow-50 text-yellow-600 border border-yellow-100' :
+                        'bg-gray-50 text-gray-500 border border-gray-100'
+                      }`}>
+                      {booking.status === 'confirmed' ? 'Ok' :
+                        booking.status === 'pending' ? 'Wait' :
+                          booking.status === 'cancelled' ? 'No' : 'Fin'}
+                    </span>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="text-center py-10 bg-white rounded-3xl border border-gray-100 italic text-gray-400 text-sm">
+                Aún no tienes historial de reservas
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Modal de Calificación */}
+        {showRateModal && ratingBooking && (
+          <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in duration-300">
+            <Card className="w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl border-none animate-in zoom-in-95 duration-300">
+              <div className="h-24 bg-gradient-to-br from-primary to-orange-400 relative">
+                <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 w-20 h-20 bg-white rounded-2xl shadow-xl flex items-center justify-center">
+                  <Star className="h-10 w-10 text-yellow-400 fill-yellow-400" />
+                </div>
+              </div>
+              <CardContent className="pt-14 pb-6 px-6">
+                <h3 className="text-xl font-black text-gray-900 text-center mb-1">¡Danos tu opinión!</h3>
+                <p className="text-center text-sm text-muted-foreground mb-8">
+                  ¿Qué te pareció el servicio de <span className="text-primary font-bold">{ratingBooking.providerName}</span>?
+                </p>
+
+                <div className="flex justify-center gap-3 mb-8">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      type="button"
+                      onClick={() => setRatingScore(star)}
+                      className={`transition-all duration-300 hover:scale-125 ${star <= ratingScore ? "scale-110" : "grayscale opacity-50"}`}
+                    >
+                      <Star
+                        className={`h-9 w-9 ${star <= ratingScore ? "fill-yellow-400 text-yellow-400" : "text-gray-200"}`}
+                      />
+                    </button>
+                  ))}
+                </div>
+
+                <div className="space-y-2 mb-8">
+                  <label className="text-xs font-black uppercase tracking-widest text-gray-400 px-1">Tu experiencia</label>
+                  <textarea
+                    className="w-full min-h-[120px] p-4 rounded-2xl border-2 border-gray-50 bg-gray-50 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary focus:bg-white outline-none transition-all resize-none"
+                    placeholder="Escribe aquí tu comentario (opcional)..."
+                    value={ratingComment}
+                    onChange={(e) => setRatingComment(e.target.value)}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <Button
+                    variant="ghost"
+                    className="h-12 rounded-xl font-bold text-gray-500"
+                    onClick={() => setShowRateModal(false)}
+                  >
+                    Cerrar
+                  </Button>
+                  <Button
+                    className="h-12 rounded-xl font-black bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/20"
+                    onClick={async () => {
+                      setLoading(true)
+                      try {
+                        const result = await addReview({
+                          serviceId: ratingBooking.serviceId,
+                          clientId: user.uid,
+                          clientName: user.displayName || "Compañero",
+                          rating: ratingScore,
+                          comment: ratingComment
+                        }, ratingBooking.id)
+
+                        if (result.success) {
+                          alert('¡Gracias por tu reseña!')
+                          setShowRateModal(false)
+                          setRatingComment("")
+                          setRatingScore(5)
+                          if (fetchBookings) await fetchBookings()
+                        }
+                      } catch (e) {
+                        alert('Error al enviar la reseña')
+                      } finally {
+                        setLoading(false)
+                      }
+                    }}
+                    disabled={loading}
+                  >
+                    {loading ? "..." : "Enviar"}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
       </div>
     </div>
   )
@@ -3087,16 +4097,16 @@ function ProviderOnboarding({ setFlow }: { setFlow: (flow: string) => void }) {
   )
 }
 
-function ProviderLogin({ 
-  setFlow, 
-  signIn, 
-  setAuthError, 
-  authError, 
-  setAuthSuccess, 
-  authSuccess 
-}: { 
+function ProviderLogin({
+  setFlow,
+  signIn,
+  setAuthError,
+  authError,
+  setAuthSuccess,
+  authSuccess
+}: {
   setFlow: (flow: string) => void
-  signIn: (email: string, password: string) => Promise<{success: boolean, error?: string}>
+  signIn: (email: string, password: string) => Promise<{ success: boolean, error?: string }>
   setAuthError: (error: string) => void
   authError: string
   setAuthSuccess: (message: string) => void
@@ -3108,7 +4118,7 @@ function ProviderLogin({
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setAuthError("")
-    
+
     const result = await signIn(email, password)
     if (result.success) {
       setAuthSuccess("¡Inicio de sesión exitoso!")
@@ -3124,9 +4134,9 @@ function ProviderLogin({
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
       <div className="w-full max-w-sm space-y-8">
         <div className="text-center">
-          <img 
-            src="/logonuevo.jpeg" 
-            alt="Punto Encuentro" 
+          <img
+            src="/logonuevo.jpeg"
+            alt="Punto Encuentro"
             className="w-24 h-24 mx-auto mb-4 rounded-lg object-cover"
           />
           <h1 className="text-3xl font-bold text-primary mb-2">Punto Encuentro</h1>
@@ -3156,9 +4166,9 @@ function ProviderLogin({
             <form onSubmit={handleLogin} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="provider-email">Email</Label>
-                <Input 
-                  id="provider-email" 
-                  type="email" 
+                <Input
+                  id="provider-email"
+                  type="email"
                   placeholder="tu@negocio.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -3168,9 +4178,9 @@ function ProviderLogin({
 
               <div className="space-y-2">
                 <Label htmlFor="provider-password">Contraseña</Label>
-                <Input 
-                  id="provider-password" 
-                  type="password" 
+                <Input
+                  id="provider-password"
+                  type="password"
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -3199,16 +4209,16 @@ function ProviderLogin({
   )
 }
 
-function ProviderRegister({ 
-  setFlow, 
-  signUp, 
-  setAuthError, 
-  authError, 
-  setAuthSuccess, 
-  authSuccess 
-}: { 
+function ProviderRegister({
+  setFlow,
+  signUp,
+  setAuthError,
+  authError,
+  setAuthSuccess,
+  authSuccess
+}: {
   setFlow: (flow: string) => void
-  signUp: (email: string, password: string) => Promise<{success: boolean, error?: string}>
+  signUp: (email: string, password: string) => Promise<{ success: boolean, error?: string }>
   setAuthError: (error: string) => void
   authError: string
   setAuthSuccess: (message: string) => void
@@ -3225,27 +4235,27 @@ function ProviderRegister({
     e.preventDefault()
     setAuthError("")
     setAuthSuccess("")
-    
+
     try {
       const result = await signUp(formData.email, formData.password)
-      
+
       if (result.success) {
         // Obtener el usuario actual de Firebase Auth
         const { auth } = await import("@/lib/firebase")
         const currentUser = auth.currentUser
-        
+
         if (currentUser) {
           // Actualizar perfil con nombre del negocio
           const { updateProfile } = await import("firebase/auth")
-          
+
           if (formData.businessName) {
             await updateProfile(currentUser, { displayName: formData.businessName })
           }
-          
+
           // Guardar usuario en Firestore con rol de proveedor
           const { doc, setDoc } = await import("firebase/firestore")
           const { db } = await import("@/lib/firebase")
-          
+
           await setDoc(doc(db, 'users', currentUser.uid), {
             email: formData.email,
             displayName: formData.businessName,
@@ -3258,7 +4268,7 @@ function ProviderRegister({
             updatedAt: new Date()
           })
         }
-        
+
         setAuthSuccess("¡Registro exitoso! Bienvenido a Punto Encuentro")
         setTimeout(() => {
           setFlow("dashboard")
@@ -3280,9 +4290,9 @@ function ProviderRegister({
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
       <div className="w-full max-w-sm space-y-8">
         <div className="text-center">
-          <img 
-            src="/logonuevo.jpeg" 
-            alt="Punto Encuentro" 
+          <img
+            src="/logonuevo.jpeg"
+            alt="Punto Encuentro"
             className="w-24 h-24 mx-auto mb-4 rounded-lg object-cover"
           />
           <h1 className="text-3xl font-bold text-primary mb-2">Punto Encuentro</h1>
@@ -3312,8 +4322,8 @@ function ProviderRegister({
             <form onSubmit={handleRegister} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="business-name">Nombre del negocio</Label>
-                <Input 
-                  id="business-name" 
+                <Input
+                  id="business-name"
                   placeholder="Spa Relax"
                   value={formData.businessName}
                   onChange={(e) => handleInputChange("businessName", e.target.value)}
@@ -3323,9 +4333,9 @@ function ProviderRegister({
 
               <div className="space-y-2">
                 <Label htmlFor="business-email">Email</Label>
-                <Input 
-                  id="business-email" 
-                  type="email" 
+                <Input
+                  id="business-email"
+                  type="email"
                   placeholder="contacto@sparelax.com"
                   value={formData.email}
                   onChange={(e) => handleInputChange("email", e.target.value)}
@@ -3335,8 +4345,8 @@ function ProviderRegister({
 
               <div className="space-y-2">
                 <Label htmlFor="business-phone">Teléfono</Label>
-                <Input 
-                  id="business-phone" 
+                <Input
+                  id="business-phone"
                   placeholder="11 1234-5678"
                   value={formData.phone}
                   onChange={(e) => handleInputChange("phone", e.target.value)}
@@ -3346,9 +4356,9 @@ function ProviderRegister({
 
               <div className="space-y-2">
                 <Label htmlFor="business-password">Contraseña</Label>
-                <Input 
-                  id="business-password" 
-                  type="password" 
+                <Input
+                  id="business-password"
+                  type="password"
                   placeholder="••••••••"
                   value={formData.password}
                   onChange={(e) => handleInputChange("password", e.target.value)}
@@ -3377,33 +4387,62 @@ function ProviderRegister({
   )
 }
 
-function ProviderDashboard({ setFlow, user, services }: { setFlow: (flow: string) => void; user: any; services: any[] }) {
+function ProviderDashboard({ setFlow, user, services, logout }: { setFlow: (flow: string) => void; user: any; services: any[]; logout: () => Promise<{ success: boolean }> }) {
   const { getBookingsByProvider } = useBookings()
-  
+
   // Filtrar servicios del proveedor actual
   const providerServices = (services || []).filter(service => service.providerId === user?.uid)
-  
+
   // Obtener reservas del proveedor
   const providerBookings = getBookingsByProvider(user?.uid) || []
-  
+
   // Calcular estadísticas
   const totalClients = new Set(providerBookings.map(booking => booking.clientId)).size
   const totalRevenue = providerBookings
     .filter(booking => booking.paymentStatus === 'paid')
     .reduce((sum, booking) => sum + booking.price, 0)
-  
+
   // Próximas citas (próximos 7 días)
   const upcomingAppointments = providerBookings
     .filter(booking => {
-      const bookingDate = new Date(booking.date)
       const today = new Date()
-      const nextWeek = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000)
-      return bookingDate >= today && bookingDate <= nextWeek && booking.status !== 'cancelled'
+      today.setHours(0, 0, 0, 0)
+      const bookingDate = new Date(booking.date)
+      return bookingDate >= today && booking.status === 'confirmed'
     })
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
     .slice(0, 3)
 
+  // Solicitudes pendientes
+  const pendingRequests = providerBookings.filter(b => b.status === 'pending')
+
   const [isSubscribed, setIsSubscribed] = useState(false)
+  const [loading, setLoading] = useState(false)
+
+  const handleConfirmBooking = async (bookingId: string) => {
+    setLoading(true)
+    try {
+      await updateBooking(bookingId, { status: 'confirmed' })
+      alert('Reserva confirmada')
+    } catch (e) {
+      alert('Error al confirmar')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleCancelBooking = async (bookingId: string) => {
+    if (!confirm('¿Rechazar esta reserva?')) return
+    setLoading(true)
+    try {
+      await updateBooking(bookingId, { status: 'cancelled' })
+      alert('Reserva rechazada')
+    } catch (e) {
+      alert('Error al rechazar')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   return (
     <div className="min-h-screen pb-24" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
@@ -3411,9 +4450,23 @@ function ProviderDashboard({ setFlow, user, services }: { setFlow: (flow: string
       <div className="bg-white shadow-sm p-4">
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-xl font-bold text-primary">Panel de Control</h1>
-          <Button variant="ghost" size="sm" onClick={() => setFlow("profile")}>
-            Perfil
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setFlow("agenda")}>
+              Mis Reservas
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setFlow("profile")}>
+              Perfil
+            </Button>
+            <Button variant="ghost" size="sm" onClick={async () => {
+              const result = await logout()
+              if (result.success) {
+                localStorage.removeItem('userType')
+                window.location.reload()
+              }
+            }} className="text-red-600 hover:text-red-700 hover:bg-red-50">
+              Salir
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -3429,6 +4482,37 @@ function ProviderDashboard({ setFlow, user, services }: { setFlow: (flow: string
                 <Button size="sm" onClick={() => setFlow("subscription")}>
                   Ver planes
                 </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Pending Requests Alert */}
+        {pendingRequests.length > 0 && (
+          <Card className="border-yellow-200 bg-yellow-50">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" />
+                  <h3 className="font-bold text-yellow-900">Tienes {pendingRequests.length} solicitudes pendientes</h3>
+                </div>
+                <Button size="sm" className="bg-yellow-500 hover:bg-yellow-600 text-white" onClick={() => setFlow("agenda")}>
+                  Ver todas
+                </Button>
+              </div>
+              <div className="space-y-2">
+                {pendingRequests.slice(0, 2).map(req => (
+                  <div key={req.id} className="bg-white/50 p-3 rounded-lg flex items-center justify-between text-sm">
+                    <div>
+                      <p className="font-medium">{req.clientName}</p>
+                      <p className="text-muted-foreground">{req.serviceName} - {new Date(req.date).toLocaleDateString()} {req.time}</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="xs" className="bg-green-600 hover:bg-green-700 text-white" onClick={() => handleConfirmBooking(req.id)} disabled={loading}>Confirmar</Button>
+                      <Button size="xs" variant="outline" className="text-red-600 border-red-200" onClick={() => handleCancelBooking(req.id)} disabled={loading}>Rechazar</Button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </CardContent>
           </Card>
@@ -3493,7 +4577,7 @@ function ProviderDashboard({ setFlow, user, services }: { setFlow: (flow: string
               <h3 className="font-semibold">Próximos Turnos</h3>
               <Button size="sm" variant="outline" onClick={() => setFlow("agenda")}>
                 <Calendar className="h-4 w-4 mr-2" />
-                Ver agenda
+                Gestionar reservas
               </Button>
             </div>
             <div className="space-y-3">
@@ -3504,22 +4588,21 @@ function ProviderDashboard({ setFlow, user, services }: { setFlow: (flow: string
                     <div className="flex-1">
                       <p className="font-medium">{appointment.clientName}</p>
                       <p className="text-sm text-muted-foreground">
-                        {new Date(appointment.date).toLocaleDateString('es-ES', { 
-                          day: '2-digit', 
-                          month: '2-digit' 
+                        {new Date(appointment.date).toLocaleDateString('es-ES', {
+                          day: '2-digit',
+                          month: '2-digit'
                         })} - {appointment.time}
                       </p>
                       <p className="text-xs text-muted-foreground">{appointment.serviceName}</p>
                     </div>
                     <div className="text-right">
-                      <span className={`text-xs px-2 py-1 rounded ${
-                        appointment.status === 'confirmed' ? 'bg-green-100 text-green-800' :
+                      <span className={`text-xs px-2 py-1 rounded ${appointment.status === 'confirmed' ? 'bg-green-100 text-green-800' :
                         appointment.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-                        'bg-gray-100 text-gray-800'
-                      }`}>
+                          'bg-gray-100 text-gray-800'
+                        }`}>
                         {appointment.status === 'confirmed' ? 'Confirmado' :
-                         appointment.status === 'pending' ? 'Pendiente' :
-                         appointment.status}
+                          appointment.status === 'pending' ? 'Pendiente' :
+                            appointment.status}
                       </span>
                     </div>
                   </div>
@@ -3557,6 +4640,7 @@ function ProviderDashboard({ setFlow, user, services }: { setFlow: (flow: string
   )
 }
 
+<<<<<<< HEAD
 function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: { setFlow: (flow: string) => void; user: any; logout: () => Promise<{ success: boolean }>; onSwitchToClient: () => Promise<{ success: boolean }>; services: any[] }) {
   const { position: userPosition } = useGeolocation()
   const { getBookingsByProvider } = useBookings()
@@ -3567,6 +4651,9 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
   const [showConfirmSwitch, setShowConfirmSwitch] = useState(false)
   const [roleAlert, setRoleAlert] = useState<"success" | "error" | null>(null)
   const [roleAlertMessage, setRoleAlertMessage] = useState("")
+=======
+function ProviderProfile({ setFlow, user, logout, userLocation }: { setFlow: (flow: string) => void; user: any; logout: () => Promise<{ success: boolean }>; userLocation: { lat: number, lng: number } | null }) {
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
   const [profileData, setProfileData] = useState({
     businessName: user?.displayName || "Mi Negocio",
     email: user?.email || "",
@@ -3587,17 +4674,23 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
     },
     profileImage: "/placeholder.svg",
     coverImage: "/placeholder.svg",
+<<<<<<< HEAD
     city: "",
     cbu: "",
     alias: "",
     accountHolder: "",
     createdAt: null as any
+=======
+    lat: null as number | null,
+    lng: null as number | null
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
   })
-  
+
   const [isEditing, setIsEditing] = useState(false)
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState("")
 
+<<<<<<< HEAD
   // Stats dinámicos (después de profileData)
   const uniqueClients = new Set(providerBookings.map((b: any) => b.clientId)).size
   const avgRating = providerServices.length > 0
@@ -3645,6 +4738,67 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
     loadProfile()
   }, [user])
 
+=======
+  // Cargar datos actuales de Firestore al iniciar
+  useEffect(() => {
+    const loadProfileData = async () => {
+      if (!user?.uid) return
+
+      try {
+        const { getDoc, doc } = await import("firebase/firestore")
+        const { db } = await import("@/lib/firebase")
+
+        const docRef = doc(db, 'users', user.uid)
+        const docSnap = await getDoc(docRef)
+
+        if (docSnap.exists()) {
+          const data = docSnap.data()
+          setProfileData(prev => ({
+            ...prev,
+            ...data,
+            businessName: data.businessName || data.displayName || user.displayName || "Mi Negocio",
+            email: data.email || user.email || "",
+            // Asegurarse de que businessHours esté presente
+            businessHours: data.businessHours || prev.businessHours
+          }))
+        }
+      } catch (error) {
+        console.error("Error cargando perfil:", error)
+      }
+    }
+
+    loadProfileData()
+  }, [user])
+
+  const [isUpdatingLocation, setIsUpdatingLocation] = useState(false)
+
+  const updateLocation = () => {
+    setIsUpdatingLocation(true)
+    if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setProfileData(prev => ({
+            ...prev,
+            lat: position.coords.latitude,
+            lng: position.coords.longitude
+          }))
+          setIsUpdatingLocation(false)
+          setSuccess("Ubicación GPS capturada correctamente")
+          setTimeout(() => setSuccess(""), 3000)
+        },
+        (error) => {
+          console.error("Error obteniendo ubicación:", error)
+          alert("No se pudo obtener la ubicación. Asegúrate de dar permisos.")
+          setIsUpdatingLocation(false)
+        }
+      )
+    } else {
+      alert("Tu navegador no soporta geolocalización")
+      setIsUpdatingLocation(false)
+    }
+  }
+
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
   const handleSave = async () => {
     setLoading(true)
     try {
@@ -3653,19 +4807,19 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
       const { db } = await import("@/lib/firebase")
       const { updateProfile } = await import("firebase/auth")
       const { auth } = await import("@/lib/firebase")
-      
+
       if (user?.uid) {
         // Actualizar perfil de Firebase Auth
         if (profileData.businessName) {
           await updateProfile(auth.currentUser!, { displayName: profileData.businessName })
         }
-        
+
         // Actualizar en Firestore
         await setDoc(doc(db, 'users', user.uid), {
           ...profileData,
           updatedAt: new Date()
         }, { merge: true })
-        
+
         setSuccess("¡Perfil actualizado exitosamente!")
         setIsEditing(false)
         setTimeout(() => setSuccess(""), 3000)
@@ -3721,6 +4875,7 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
     }
 
     setUploadingImage(type)
+<<<<<<< HEAD
     
     try {
       const { uploadImage } = await import("@/lib/uploadImage")
@@ -3749,6 +4904,46 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
       console.error('Error subiendo imagen:', error)
       setUploadingImage(null)
       alert(error.message || 'Error al subir la imagen')
+=======
+
+    // URL temporal para feedback visual inmediato
+    const imageUrl = URL.createObjectURL(file)
+    if (type === 'profile') {
+      setProfileData(prev => ({ ...prev, profileImage: imageUrl }))
+    } else {
+      setProfileData(prev => ({ ...prev, coverImage: imageUrl }))
+    }
+
+    setUploadingImage(type)
+
+    // Subida real a Firebase Storage
+    try {
+      const storagePath = `users/${user.uid}/${type}_${Date.now()}`
+      const downloadURL = await uploadFile(file, storagePath)
+
+      const updateObj: any = {}
+      if (type === 'profile') {
+        updateObj.profileImage = downloadURL
+        setProfileData(prev => ({ ...prev, profileImage: downloadURL }))
+      } else {
+        updateObj.coverImage = downloadURL
+        setProfileData(prev => ({ ...prev, coverImage: downloadURL }))
+      }
+
+      // Actualizar en Firestore
+      await setDoc(doc(db, 'users', user.uid), {
+        ...updateObj,
+        updatedAt: new Date()
+      }, { merge: true })
+
+      setSuccess(`¡Imagen ${type === 'profile' ? 'de perfil' : 'de portada'} actualizada!`)
+      setTimeout(() => setSuccess(""), 3000)
+    } catch (error) {
+      console.error('Error al subir imagen:', error)
+      alert('Error al subir la imagen. Intenta de nuevo.')
+    } finally {
+      setUploadingImage(null)
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
     }
   }
 
@@ -3771,6 +4966,7 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
           </div>
         )}
 
+<<<<<<< HEAD
         <div className="p-4 space-y-6">
           {/* Cover Image */}
           <Card>
@@ -3784,9 +4980,28 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
                       <div className="animate-spin w-6 h-6 border-2 border-white border-t-transparent rounded-full mx-auto mb-2"></div>
                       <p className="text-sm">Subiendo imagen...</p>
                     </div>
+=======
+      <div className="p-4 space-y-6">
+        {/* Cover Image */}
+        <Card>
+          <CardContent className="p-0">
+            <div className="relative h-32 bg-gradient-to-r from-primary/20 to-primary/10 rounded-t-lg">
+              <img
+                src={profileData.coverImage}
+                alt="Cover"
+                className="w-full h-full object-cover rounded-t-lg"
+              />
+              <div className="absolute inset-0 bg-black/20 rounded-t-lg" />
+              {uploadingImage === 'cover' && (
+                <div className="absolute inset-0 bg-black/50 rounded-t-lg flex items-center justify-center">
+                  <div className="text-white text-center">
+                    <div className="animate-spin w-6 h-6 border-2 border-white border-t-transparent rounded-full mx-auto mb-2"></div>
+                    <p className="text-sm">Subiendo imagen...</p>
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                   </div>
                 )}
                 <div className="absolute top-2 right-2">
+<<<<<<< HEAD
                   <input type="file" accept="image/*" onChange={(e) => handleImageUpload('cover', e)} className="hidden" id="cover-upload" />
                   <Button size="sm" variant="secondary" onClick={(e) => { e.stopPropagation(); document.getElementById('cover-upload')?.click() }} disabled={uploadingImage === 'cover'}>
                     {uploadingImage === 'cover' ? 'Subiendo...' : 'Cambiar portada'}
@@ -3806,6 +5021,69 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
                     <div className="absolute -bottom-2 -right-2">
                       <input type="file" accept="image/*" onChange={(e) => handleImageUpload('profile', e)} className="hidden" id="profile-upload" />
                       <Button size="sm" variant="secondary" className="w-8 h-8 rounded-full p-0" onClick={(e) => { e.stopPropagation(); document.getElementById('profile-upload')?.click() }} disabled={uploadingImage === 'profile'}>
+=======
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => handleImageUpload('cover', e)}
+                    className="hidden"
+                    id="cover-upload"
+                  />
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      const input = document.getElementById('cover-upload')
+                      if (input) {
+                        input.click()
+                      }
+                    }}
+                    disabled={uploadingImage === 'cover'}
+                  >
+                    {uploadingImage === 'cover' ? 'Subiendo...' : 'Cambiar portada'}
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            {/* Profile Image */}
+            <div className="relative px-6 pb-6">
+              <div className="flex items-end -mt-12 gap-4">
+                <div className="relative">
+                  <img
+                    src={profileData.profileImage}
+                    alt="Profile"
+                    className="w-24 h-24 rounded-full border-4 border-white object-cover"
+                  />
+                  {uploadingImage === 'profile' && (
+                    <div className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center">
+                      <div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"></div>
+                    </div>
+                  )}
+                  {isEditing && (
+                    <div className="absolute -bottom-2 -right-2">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => handleImageUpload('profile', e)}
+                        className="hidden"
+                        id="profile-upload"
+                      />
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="w-8 h-8 rounded-full p-0"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const input = document.getElementById('profile-upload')
+                          if (input) {
+                            input.click()
+                          }
+                        }}
+                        disabled={uploadingImage === 'profile'}
+                      >
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                         {uploadingImage === 'profile' ? '⏳' : '📷'}
                       </Button>
                     </div>
@@ -3819,6 +5097,7 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
             </CardContent>
           </Card>
 
+<<<<<<< HEAD
           {/* Business Information Form */}
           <Card>
             <CardContent className="p-6">
@@ -3837,6 +5116,99 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
                 <div className="space-y-2">
                   <Label htmlFor="city">Ciudad / Localidad</Label>
                   <Input id="city" value={profileData.city} onChange={(e) => handleInputChange("city", e.target.value)} placeholder="Ej: Carmen de Areco" />
+=======
+        {/* Business Information */}
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Información del Negocio</h3>
+              <Button
+                variant="outline"
+                onClick={() => setIsEditing(!isEditing)}
+              >
+                {isEditing ? "Cancelar" : "Editar"}
+              </Button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="business-name">Nombre del Negocio</Label>
+                  <Input
+                    id="business-name"
+                    value={profileData.businessName}
+                    onChange={(e) => handleInputChange("businessName", e.target.value)}
+                    disabled={!isEditing}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="phone">Teléfono</Label>
+                  <Input
+                    id="phone"
+                    value={profileData.phone}
+                    onChange={(e) => handleInputChange("phone", e.target.value)}
+                    disabled={!isEditing}
+                    placeholder="11 1234-5678"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="address">Dirección (Escrita)</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="address"
+                    value={profileData.address}
+                    onChange={(e) => handleInputChange("address", e.target.value)}
+                    disabled={!isEditing}
+                    placeholder="Av. Corrientes 1234, CABA"
+                    className="flex-1"
+                  />
+                  {isEditing && (
+                    <Button
+                      type="button"
+                      onClick={updateLocation}
+                      variant="outline"
+                      className={profileData.lat ? "border-green-500 text-green-600" : ""}
+                      disabled={isUpdatingLocation}
+                    >
+                      <MapPin className={`h-4 w-4 mr-1 ${isUpdatingLocation ? "animate-pulse" : ""}`} />
+                      {profileData.lat ? "Actualizar GPS" : "Obtener GPS"}
+                    </Button>
+                  )}
+                </div>
+                {profileData.lat && (
+                  <p className="text-[10px] text-green-600 flex items-center gap-1">
+                    <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                    Coordenadas GPS guardadas ({profileData.lat.toFixed(4)}, {profileData.lng?.toFixed(4)})
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="description">Descripción</Label>
+                <textarea
+                  id="description"
+                  className="w-full p-3 border border-gray-300 rounded-md resize-none"
+                  rows={3}
+                  value={profileData.description}
+                  onChange={(e) => handleInputChange("description", e.target.value)}
+                  disabled={!isEditing}
+                  placeholder="Describe tu negocio y servicios..."
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="website">Sitio Web</Label>
+                  <Input
+                    id="website"
+                    value={profileData.website}
+                    onChange={(e) => handleInputChange("website", e.target.value)}
+                    disabled={!isEditing}
+                    placeholder="https://minegocio.com"
+                  />
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="address">Dirección</Label>
@@ -3858,6 +5230,7 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
                 </div>
               </div>
 
+<<<<<<< HEAD
               {/* Datos Bancarios */}
               <div className="mt-8 pt-6 border-t border-gray-100">
                 <h4 className="text-md font-semibold mb-4 text-primary">Datos para recibir transferencias</h4>
@@ -3875,6 +5248,40 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
                     <Label htmlFor="alias" className="mr-2">Alias:</Label>
                     <Input id="alias" placeholder="Ej: mi.negocio.mp" value={profileData.alias} onChange={(e) => handleInputChange("alias", e.target.value)} className="inline-block w-auto max-w-[250px]" />
                   </div>
+=======
+            {isEditing && (
+              <div className="flex gap-3 pt-4">
+                <Button variant="outline" onClick={() => setIsEditing(false)} className="flex-1">
+                  Cancelar
+                </Button>
+                <Button onClick={handleSave} disabled={loading} className="flex-1">
+                  {loading ? "Guardando..." : "Guardar Cambios"}
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Business Hours */}
+        <Card>
+          <CardContent className="p-6">
+            <h3 className="text-lg font-semibold mb-4">Horarios de Atención</h3>
+            <div className="space-y-3">
+              {Object.entries(profileData.businessHours).map(([day, hours]) => (
+                <div key={day} className="flex items-center justify-between">
+                  <span className="capitalize font-medium">{day === 'monday' ? 'Lunes' :
+                    day === 'tuesday' ? 'Martes' :
+                      day === 'wednesday' ? 'Miércoles' :
+                        day === 'thursday' ? 'Jueves' :
+                          day === 'friday' ? 'Viernes' :
+                            day === 'saturday' ? 'Sábado' : 'Domingo'}</span>
+                  <Input
+                    value={hours}
+                    onChange={(e) => handleHoursChange(day, e.target.value)}
+                    disabled={!isEditing}
+                    className="w-32 text-right"
+                  />
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                 </div>
               </div>
 
@@ -3895,6 +5302,7 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
                 <Button variant="outline" onClick={() => setIsEditing(false)} className="flex-1">Cancelar</Button>
                 <Button onClick={handleSave} disabled={loading} className="flex-1">{loading ? "Guardando..." : "Guardar Cambios"}</Button>
               </div>
+<<<<<<< HEAD
             </CardContent>
           </Card>
         </div>
@@ -3926,6 +5334,18 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
                 alt={profileData.businessName} 
                 className="w-full h-full object-cover"
               />
+=======
+              <div className="pt-4 border-t border-gray-100">
+                <Button
+                  variant="destructive"
+                  className="w-full"
+                  onClick={handleLogout}
+                  disabled={loading}
+                >
+                  Cerrar sesión
+                </Button>
+              </div>
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
             </div>
           </div>
         </div>
@@ -4119,9 +5539,9 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
   )
 }
 
-function ProviderAgenda({ setFlow, user }: { setFlow: (flow: string) => void; user: any }) {
+function ProviderAgenda({ setFlow, user, setActiveChat }: { setFlow: (flow: string) => void; user: any; setActiveChat: (chat: any) => void }) {
   const { getBookingsByProvider, updateBooking, fetchBookings } = useBookings()
-  const [selectedDate, setSelectedDate] = useState<string>("")
+  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0])
   const [currentMonth, setCurrentMonth] = useState(new Date())
   const [loading, setLoading] = useState(false)
 
@@ -4150,7 +5570,7 @@ function ProviderAgenda({ setFlow, user }: { setFlow: (flow: string) => void; us
     if (!confirm('¿Estás seguro de que quieres cancelar esta reserva?')) {
       return
     }
-    
+
     setLoading(true)
     try {
       const result = await updateBooking(bookingId, { status: 'cancelled' })
@@ -4178,7 +5598,7 @@ function ProviderAgenda({ setFlow, user }: { setFlow: (flow: string) => void; us
     const startingDayOfWeek = firstDay.getDay()
 
     const days = []
-    
+
     // Días del mes anterior (para completar la semana)
     for (let i = startingDayOfWeek - 1; i >= 0; i--) {
       const prevMonth = new Date(year, month, -i)
@@ -4193,10 +5613,10 @@ function ProviderAgenda({ setFlow, user }: { setFlow: (flow: string) => void; us
     // Días del mes actual
     for (let day = 1; day <= daysInMonth; day++) {
       const fullDate = new Date(year, month, day).toISOString().split('T')[0]
-      const dayBookings = providerBookings.filter(booking => 
+      const dayBookings = providerBookings.filter(booking =>
         booking.date === fullDate
       )
-      
+
       days.push({
         date: day,
         fullDate,
@@ -4221,7 +5641,7 @@ function ProviderAgenda({ setFlow, user }: { setFlow: (flow: string) => void; us
   }
 
   const calendarDays = generateCalendarDays()
-  const selectedDateBookings = selectedDate ? 
+  const selectedDateBookings = selectedDate ?
     providerBookings.filter(booking => booking.date === selectedDate) : []
 
   const navigateMonth = (direction: 'prev' | 'next') => {
@@ -4237,241 +5657,353 @@ function ProviderAgenda({ setFlow, user }: { setFlow: (flow: string) => void; us
   }
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
-      <div className="bg-white shadow-sm p-4">
-        <div className="flex items-center gap-3 mb-4">
-          <Button variant="ghost" size="sm" onClick={() => setFlow("dashboard")}>
-            ← Volver
-          </Button>
-          <h1 className="text-xl font-bold">Mi Agenda</h1>
+    <div className="min-h-screen pb-20" style={{ backgroundColor: 'oklch(0.99 0.01 200)' }}>
+      {/* Header Premium */}
+      <div className="bg-white/80 backdrop-blur-md sticky top-0 z-30 border-b border-gray-100 px-4 py-4">
+        <div className="max-w-4xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setFlow("dashboard")}
+              className="rounded-full hover:bg-gray-100"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+            <div>
+              <h1 className="text-xl font-bold text-gray-900">Mis Reservas</h1>
+              <p className="text-xs text-muted-foreground">Gestiona tus próximos turnos</p>
+            </div>
+          </div>
+          <div className="bg-primary/10 p-2 rounded-full">
+            <Calendar className="h-5 w-5 text-primary" />
+          </div>
         </div>
       </div>
 
-      <div className="p-4 space-y-6">
-        {/* Calendario */}
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold">Calendario</h3>
-              <div className="flex items-center gap-2">
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={() => navigateMonth('prev')}
-                >
-                  ←
-                </Button>
-                <span className="font-medium min-w-[120px] text-center">
-                  {currentMonth.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}
-                </span>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={() => navigateMonth('next')}
-                >
-                  →
-                </Button>
-              </div>
-            </div>
-
-            {/* Días de la semana */}
-            <div className="grid grid-cols-7 gap-1 mb-2">
-              {['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'].map(day => (
-                <div key={day} className="text-center text-sm font-medium text-gray-500 p-2">
-                  {day}
+      <div className="max-w-4xl mx-auto p-4 space-y-6">
+        {/* Calendario Moderno */}
+        <Card className="overflow-hidden border-none shadow-xl shadow-gray-200/50 bg-white/50 backdrop-blur-sm">
+          <CardContent className="p-0">
+            <div className="p-6 bg-gradient-to-br from-primary/5 via-transparent to-transparent">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                  Calendario
+                </h3>
+                <div className="flex items-center gap-1 bg-white p-1 rounded-full shadow-sm border border-gray-100">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 rounded-full"
+                    onClick={() => navigateMonth('prev')}
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                  </Button>
+                  <span className="text-sm font-bold min-w-[140px] text-center capitalize">
+                    {currentMonth.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 rounded-full rotate-180"
+                    onClick={() => navigateMonth('next')}
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                  </Button>
                 </div>
-              ))}
-            </div>
+              </div>
 
-            {/* Días del calendario */}
-            <div className="grid grid-cols-7 gap-1">
-              {calendarDays.map((day, index) => (
-                <button
-                  key={index}
-                  onClick={() => {
-                    if (day.isCurrentMonth) {
-                      setSelectedDate(day.fullDate)
-                    }
-                  }}
-                  className={`
-                    p-2 text-sm rounded-lg transition-colors
-                    ${day.isCurrentMonth 
-                      ? 'text-gray-900 hover:bg-gray-100' 
-                      : 'text-gray-400'
-                    }
-                    ${selectedDate === day.fullDate 
-                      ? 'bg-primary text-white hover:bg-primary/90' 
-                      : ''
-                    }
-                    ${day.bookings.length > 0 && day.isCurrentMonth
-                      ? 'bg-green-50 text-green-800 hover:bg-green-100'
-                      : ''
-                    }
-                  `}
-                >
-                  <div className="flex flex-col items-center">
-                    <span>{day.date}</span>
-                    {day.bookings.length > 0 && day.isCurrentMonth && (
-                      <div className="w-1 h-1 bg-green-600 rounded-full mt-1"></div>
-                    )}
+              {/* Días de la semana */}
+              <div className="grid grid-cols-7 gap-1 mb-2">
+                {['D', 'L', 'M', 'M', 'J', 'V', 'S'].map((day, i) => (
+                  <div key={i} className="text-center text-[10px] font-black text-gray-400 uppercase tracking-widest py-2">
+                    {day}
                   </div>
-                </button>
-              ))}
+                ))}
+              </div>
+
+              {/* Días del calendario */}
+              <div className="grid grid-cols-7 gap-2">
+                {calendarDays.map((day, index) => {
+                  const isToday = day.fullDate === new Date().toISOString().split('T')[0];
+                  const isSelected = selectedDate === day.fullDate;
+                  const hasBookings = day.bookings.length > 0 && day.isCurrentMonth;
+                  const hasPending = day.isCurrentMonth && day.bookings.some(b => b.status === 'pending');
+
+                  return (
+                    <button
+                      key={index}
+                      onClick={() => day.isCurrentMonth && setSelectedDate(day.fullDate)}
+                      className={`
+                        relative aspect-square flex flex-col items-center justify-center rounded-xl transition-all duration-200
+                        ${day.isCurrentMonth
+                          ? 'hover:bg-primary/5 active:scale-90 cursor-pointer'
+                          : 'opacity-20 cursor-default'}
+                        ${isSelected
+                          ? 'bg-primary text-white shadow-lg shadow-primary/30 scale-105 z-10'
+                          : 'text-gray-700'}
+                        ${isToday && !isSelected ? 'border-2 border-primary/20 bg-primary/5' : ''}
+                      `}
+                    >
+                      <span className={`text-sm font-bold ${isSelected ? 'text-white' : ''}`}>
+                        {day.date}
+                      </span>
+                      {hasBookings && (
+                        <span className={`
+                          absolute bottom-1.5 w-1.5 h-1.5 rounded-full
+                          ${isSelected ? 'bg-white' : (hasPending ? 'bg-yellow-500 animate-pulse' : 'bg-green-500')}
+                        `} />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </CardContent>
         </Card>
 
         {/* Citas del día seleccionado */}
         {selectedDate && (
-          <Card>
-            <CardContent className="p-4">
-              <h3 className="font-semibold mb-3">
-                Citas del {new Date(selectedDate).toLocaleDateString('es-ES', { 
-                  weekday: 'long', 
-                  year: 'numeric', 
-                  month: 'long', 
-                  day: 'numeric' 
+          <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="flex items-center justify-between px-1">
+              <h3 className="font-bold text-gray-800 capitalize flex items-center gap-2">
+                <div className="w-1.5 h-6 bg-primary rounded-full" />
+                Citas del {new Date(selectedDate + 'T00:00:00').toLocaleDateString('es-ES', {
+                  weekday: 'long',
+                  day: 'numeric',
+                  month: 'long'
                 })}
               </h3>
-              <div className="space-y-3">
-                {selectedDateBookings.length > 0 ? (
-                  selectedDateBookings.map((booking) => (
-                    <div key={booking.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                      <Clock className="h-4 w-4 text-muted-foreground" />
-                      <div className="flex-1">
-                        <p className="font-medium">{booking.clientName}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {booking.time} - {booking.serviceName}
-                        </p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-xs text-muted-foreground">${booking.price || 0}</span>
-                          <span className={`text-xs px-2 py-1 rounded-full ${
-                            booking.status === 'confirmed' 
-                              ? 'bg-green-100 text-green-800'
-                              : booking.status === 'pending'
-                              ? 'bg-yellow-100 text-yellow-800'
-                              : booking.status === 'cancelled'
-                              ? 'bg-red-100 text-red-800'
-                              : 'bg-blue-100 text-blue-800'
-                          }`}>
-                            {booking.status === 'confirmed' ? 'Confirmada' :
-                             booking.status === 'pending' ? 'Pendiente' :
-                             booking.status === 'cancelled' ? 'Cancelada' : 'Completada'}
-                          </span>
-                        </div>
-                      </div>
-                      {booking.status === 'pending' && (
-                        <div className="flex gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleConfirmBooking(booking.id)}
-                            disabled={loading}
-                            className="text-green-600 hover:text-green-700"
-                          >
-                            Confirmar
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleCancelBooking(booking.id)}
-                            disabled={loading}
-                            className="text-red-600 hover:text-red-700"
-                          >
-                            Cancelar
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-center py-8 text-muted-foreground">
-                    <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                    <p>No hay citas programadas para este día</p>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        )}
+              <span className="text-xs font-medium text-muted-foreground bg-gray-100 px-2 py-1 rounded-full">
+                {selectedDateBookings.length} {selectedDateBookings.length === 1 ? 'cita' : 'citas'}
+              </span>
+            </div>
 
-        {/* Todas las citas */}
-        <Card>
-          <CardContent className="p-4">
-            <h3 className="font-semibold mb-3">Todas las citas</h3>
             <div className="space-y-3">
-              {providerBookings.length > 0 ? (
-                providerBookings.slice(0, 10).map((booking) => (
-                  <div key={booking.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                    <Clock className="h-4 w-4 text-muted-foreground" />
-                    <div className="flex-1">
-                      <p className="font-medium">{booking.clientName}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {new Date(booking.date).toLocaleDateString('es-ES')} - {booking.time}
-                      </p>
-                      <p className="text-sm text-muted-foreground">{booking.serviceName}</p>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className="text-xs text-muted-foreground">${booking.price || 0}</span>
-                        <span className={`text-xs px-2 py-1 rounded-full ${
-                          booking.status === 'confirmed' 
-                            ? 'bg-green-100 text-green-800'
-                            : booking.status === 'pending'
-                            ? 'bg-yellow-100 text-yellow-800'
-                            : booking.status === 'cancelled'
-                            ? 'bg-red-100 text-red-800'
-                            : 'bg-blue-100 text-blue-800'
-                        }`}>
-                          {booking.status === 'confirmed' ? 'Confirmada' :
-                           booking.status === 'pending' ? 'Pendiente' :
-                           booking.status === 'cancelled' ? 'Cancelada' : 'Completada'}
-                        </span>
+              {selectedDateBookings.length > 0 ? (
+                selectedDateBookings.map((booking) => (
+                  <Card key={booking.id} className="group overflow-hidden border-none shadow-md hover:shadow-xl transition-all duration-300 bg-white">
+                    <CardContent className="p-0">
+                      <div className="flex h-full">
+                        <div className={`w-1.5 ${booking.status === 'confirmed' ? 'bg-green-500' :
+                          booking.status === 'pending' ? 'bg-yellow-500' :
+                            booking.status === 'cancelled' ? 'bg-red-500' : 'bg-blue-500'
+                          }`} />
+                        <div className="flex-1 p-4 lg:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                          <div className="flex items-start gap-4">
+                            <div className="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                              <User className="h-6 w-6 text-primary" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2 mb-1">
+                                <h4 className="font-bold text-gray-900">{booking.clientName}</h4>
+                                <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded bg-gray-100 text-gray-500">
+                                  ${booking.price}
+                                </span>
+                              </div>
+                              <p className="text-sm text-gray-500 flex items-center gap-1.5">
+                                <MessageSquare className="h-3.5 w-3.5" />
+                                {booking.serviceName}
+                              </p>
+                              <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1.5">
+                                <Clock className="h-3 w-3" />
+                                {booking.time}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-row sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-3">
+                            <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full ${booking.status === 'confirmed' ? 'bg-green-100 text-green-700' :
+                              booking.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
+                                booking.status === 'cancelled' ? 'bg-red-100 text-red-700' :
+                                  'bg-blue-100 text-blue-700'
+                              }`}>
+                              {booking.status === 'confirmed' ? 'Confirmada' :
+                                booking.status === 'pending' ? 'Pendiente' :
+                                  booking.status === 'cancelled' ? 'Cancelada' : 'Completada'}
+                            </span>
+
+                            <div className="flex gap-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  setActiveChat({
+                                    partnerId: booking.clientId,
+                                    partnerName: booking.clientName || "Cliente"
+                                  })
+                                  setFlow("chat")
+                                }}
+                                className="h-10 w-12 p-0 bg-primary/5 text-primary hover:bg-primary/10 rounded-xl flex flex-col items-center justify-center transition-all active:scale-90 border border-primary/10 shadow-sm"
+                                title="Chatear con el cliente"
+                              >
+                                <div className="relative">
+                                  <MessageSquare className="h-4 w-4" />
+                                  <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-primary rounded-full border border-white"></span>
+                                </div>
+                                <span className="text-[8px] font-black uppercase mt-0.5">Chat</span>
+                              </Button>
+
+                              {booking.status === 'confirmed' && (
+                                <>
+                                  <Button
+                                    size="sm"
+                                    onClick={async () => {
+                                      setLoading(true)
+                                      try {
+                                        await updateBooking(booking.id, { status: 'completed' })
+                                        alert('Servicio completado')
+                                      } finally {
+                                        setLoading(false)
+                                      }
+                                    }}
+                                    disabled={loading}
+                                    className="h-8 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4"
+                                  >
+                                    Finalizar
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleCancelBooking(booking.id)}
+                                    disabled={loading}
+                                    className="h-8 text-xs font-bold text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg px-4"
+                                  >
+                                    Cancelar
+                                  </Button>
+                                </>
+                              )}
+                              {booking.status === 'pending' && (
+                                <>
+                                  <Button
+                                    size="sm"
+                                    onClick={() => handleConfirmBooking(booking.id)}
+                                    disabled={loading}
+                                    className="h-8 text-xs font-bold bg-green-600 hover:bg-green-700 text-white rounded-lg px-4"
+                                  >
+                                    Confirmar
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleCancelBooking(booking.id)}
+                                    disabled={loading}
+                                    className="h-8 text-xs font-bold text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg px-4"
+                                  >
+                                    Rechazar
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                    {booking.status === 'pending' && (
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleConfirmBooking(booking.id)}
-                          disabled={loading}
-                          className="text-green-600 hover:text-green-700"
-                        >
-                          Confirmar
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleCancelBooking(booking.id)}
-                          disabled={loading}
-                          className="text-red-600 hover:text-red-700"
-                        >
-                          Cancelar
-                        </Button>
-                      </div>
-                    )}
-                  </div>
+                    </CardContent>
+                  </Card>
                 ))
               ) : (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                  <p>No tienes citas programadas</p>
+                <div className="flex flex-col items-center justify-center py-12 px-4 rounded-3xl bg-white/30 border-2 border-dashed border-gray-200">
+                  <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4 opacity-50">
+                    <Clock className="h-8 w-8 text-gray-400" />
+                  </div>
+                  <p className="text-gray-500 font-medium text-center">No hay citas para este día</p>
+                  <p className="text-xs text-muted-foreground text-center mt-1">Tu agenda está despejada</p>
                 </div>
               )}
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        )}
+
+        {/* Todas las citas (Historial) */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between px-1">
+            <h3 className="font-bold text-gray-800 flex items-center gap-2">
+              <span className="w-1.5 h-6 bg-gray-300 rounded-full" />
+              Historial de Solicitudes
+            </h3>
+            <span className="text-xs font-medium text-muted-foreground">Recientes</span>
+          </div>
+
+          <div className="grid gap-3">
+            {providerBookings.length > 0 ? (
+              providerBookings.slice(0, 10).map((booking) => (
+                <div
+                  key={booking.id}
+                  className="flex items-center gap-4 p-4 bg-white rounded-2xl shadow-sm border border-gray-50 hover:border-primary/20 transition-all group"
+                >
+                  <div className="w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center shrink-0 group-hover:bg-primary/5 transition-colors">
+                    <User className={`h-5 w-5 ${booking.status === 'confirmed' ? 'text-green-500' :
+                      booking.status === 'pending' ? 'text-yellow-500' : 'text-gray-400'
+                      }`} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h4 className="font-bold text-gray-900 truncate">{booking.clientName}</h4>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <p className="text-xs text-muted-foreground font-medium">
+                        {new Date(booking.date).toLocaleDateString('es-ES', { day: '2-digit', month: 'short' })} • {booking.time}
+                      </p>
+                      <span className="w-1 h-1 bg-gray-300 rounded-full" />
+                      <p className="text-xs text-muted-foreground truncate">{booking.serviceName}</p>
+                    </div>
+                  </div>
+                  <div className="shrink-0 flex items-center gap-3">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setActiveChat({
+                          partnerId: booking.clientId,
+                          partnerName: booking.clientName || "Cliente"
+                        })
+                        setFlow("chat")
+                      }}
+                      className="h-10 w-12 p-0 bg-gray-50 text-gray-400 hover:text-primary hover:bg-primary/5 rounded-xl flex flex-col items-center justify-center transition-all active:scale-90 border border-gray-100"
+                      title="Chatear"
+                    >
+                      <MessageSquare className="h-3.5 w-3.5" />
+                      <span className="text-[8px] font-black uppercase mt-0.5">Chat</span>
+                    </Button>
+                    <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-md ${booking.status === 'confirmed' ? 'bg-green-50 text-green-600 border border-green-100' :
+                      booking.status === 'pending' ? 'bg-yellow-50 text-yellow-600 border border-yellow-100' :
+                        'bg-gray-50 text-gray-500 border border-gray-100'
+                      }`}>
+                      {booking.status === 'confirmed' ? 'Ok' :
+                        booking.status === 'pending' ? 'Pending' :
+                          booking.status === 'cancelled' ? 'X' : 'Done'}
+                    </span>
+                    {booking.status === 'pending' && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleConfirmBooking(booking.id)}
+                        className="h-8 w-8 p-0 rounded-full text-green-600 hover:bg-green-50"
+                      >
+                        ✓
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="text-center py-10 bg-white rounded-3xl border border-gray-100 italic text-gray-400 text-sm">
+                No hay historial de citas
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   )
 }
 
+
 function ProviderServices({ setFlow, services, user, setSelectedProviderService }: { setFlow: (flow: string) => void; services: any[]; user: any; setSelectedProviderService: (service: any) => void }) {
   const { getBookingsByProvider } = useBookings()
   const { deleteService, updateService } = useServices()
-  
+
   // Filtrar servicios del proveedor actual
   const providerServices = services.filter(service => service.providerId === user?.uid)
-  
+
   // Obtener reservas para cada servicio
   const servicesWithBookings = providerServices.map(service => {
     const serviceBookings = getBookingsByProvider(user?.uid).filter(booking => booking.serviceId === service.id)
@@ -4533,9 +6065,8 @@ function ProviderServices({ setFlow, services, user, setSelectedProviderService 
                       <div className="flex items-center gap-2 mb-1">
                         <h3 className="font-semibold">{service.name}</h3>
                         <span
-                          className={`text-xs px-2 py-1 rounded-full ${
-                            service.active ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-800"
-                          }`}
+                          className={`text-xs px-2 py-1 rounded-full ${service.active ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-800"
+                            }`}
                         >
                           {service.active ? "Activo" : "Inactivo"}
                         </span>
@@ -4591,14 +6122,16 @@ function ProviderServices({ setFlow, services, user, setSelectedProviderService 
   )
 }
 
-function CreateService({ 
-  setFlow, 
-  createService, 
-  user 
-}: { 
+function CreateService({
+  setFlow,
+  createService,
+  user,
+  userLocation
+}: {
   setFlow: (flow: string) => void
-  createService: (serviceData: any) => Promise<{success: boolean, error?: string}>
+  createService: (serviceData: any) => Promise<{ success: boolean, error?: string }>
   user: any
+  userLocation: { lat: number, lng: number } | null
 }) {
   const [formData, setFormData] = useState({
     name: "",
@@ -4610,8 +6143,12 @@ function CreateService({
     longitude: null as number | null,
   })
   const [imageFile, setImageFile] = useState<File | null>(null)
+<<<<<<< HEAD
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [locationStatus, setLocationStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
+=======
+  const [uploadingImage, setUploadingImage] = useState(false)
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
@@ -4622,9 +6159,21 @@ function CreateService({
     e.preventDefault()
     setLoading(true)
     setError("")
-    
+
     try {
+<<<<<<< HEAD
       const serviceData: any = {
+=======
+      let imageUrl = "/placeholder.svg"
+      if (imageFile) {
+        setUploadingImage(true)
+        const storagePath = `services/${user.uid}/${Date.now()}_${imageFile.name}`
+        imageUrl = await uploadFile(imageFile, storagePath)
+        setUploadingImage(false)
+      }
+
+      const serviceData = {
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
         name: formData.name,
         description: formData.description,
         price: parseInt(formData.price),
@@ -4634,7 +6183,10 @@ function CreateService({
         providerName: user?.displayName || "Proveedor",
         rating: 0,
         reviews: 0,
-        image: "/placeholder.svg"
+        image: imageUrl,
+        lat: userLocation?.lat || null,
+        lng: userLocation?.lng || null,
+        active: true
       }
       // Subir imagen si fue seleccionada
       if (imageFile) {
@@ -4769,6 +6321,24 @@ function CreateService({
                 />
               </div>
 
+              <div className="space-y-2">
+                <Label htmlFor="service-image">Imagen del servicio</Label>
+                <div className="flex items-center gap-4">
+                  <Input
+                    id="service-image"
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => setImageFile(e.target.files?.[0] || null)}
+                    className="cursor-pointer"
+                  />
+                  {imageFile && (
+                    <p className="text-sm text-muted-foreground truncate max-w-[200px]">
+                      {imageFile.name}
+                    </p>
+                  )}
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="service-price">Precio</Label>
@@ -4887,15 +6457,22 @@ function CreateService({
   )
 }
 
-function EditService({ setFlow, service, user, updateService }: { 
+function EditService({ setFlow, service, user, updateService, userLocation }: {
   setFlow: (flow: string) => void
+<<<<<<< HEAD
   service: any
   user: any
   updateService?: (id: string, data: any) => Promise<{success: boolean, error?: string}>
+=======
+  service?: any
+  user?: any
+  updateService?: (id: string, data: any) => Promise<{ success: boolean, error?: string }>
+  userLocation: { lat: number, lng: number } | null
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
 }) {
   const { updateService: updateServiceHook } = useServices()
   const updateServiceFn = updateService || updateServiceHook
-  
+
   const [formData, setFormData] = useState({
     name: service?.name || "",
     description: service?.description || "",
@@ -4905,9 +6482,14 @@ function EditService({ setFlow, service, user, updateService }: {
     latitude: service?.latitude || null,
     longitude: service?.longitude || null,
   })
+<<<<<<< HEAD
   const [locationStatus, setLocationStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string | null>(service?.image || null)
+=======
+  const [imageFile, setImageFile] = useState<File | null>(null)
+  const [uploadingImage, setUploadingImage] = useState(false)
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
@@ -4935,18 +6517,31 @@ function EditService({ setFlow, service, user, updateService }: {
       setError("No se encontró el servicio a editar")
       return
     }
-    
+
     setLoading(true)
     setError("")
     setSuccess("")
-    
+
     try {
+<<<<<<< HEAD
       const serviceData: any = {
+=======
+      let imageUrl = (service as any)?.image
+      if (imageFile) {
+        setUploadingImage(true)
+        const storagePath = `services/${user.uid}/edit_${Date.now()}_${imageFile.name}`
+        imageUrl = await uploadFile(imageFile, storagePath)
+        setUploadingImage(false)
+      }
+
+      const serviceData = {
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
         name: formData.name,
         description: formData.description,
         price: parseInt(formData.price.replace('$', '').replace(/\./g, '')) || parseInt(formData.price),
         duration: formData.duration,
         category: formData.category,
+<<<<<<< HEAD
         latitude: formData.latitude,
         longitude: formData.longitude,
       }
@@ -4961,10 +6556,17 @@ function EditService({ setFlow, service, user, updateService }: {
           setLoading(false)
           return
         }
+=======
+        image: imageUrl,
+        lat: userLocation?.lat || (service as any)?.lat || null,
+        lng: userLocation?.lng || (service as any)?.lng || null,
+        active: (service as any)?.active !== false,
+        updatedAt: new Date()
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
       }
 
       const result = await updateServiceFn(service.id, serviceData)
-      
+
       if (result.success) {
         setSuccess("¡Servicio actualizado exitosamente!")
         setTimeout(() => {
@@ -5108,6 +6710,7 @@ function EditService({ setFlow, service, user, updateService }: {
                 </select>
               </div>
 
+<<<<<<< HEAD
               {/* Botón de ubicación */}
               <div className="space-y-2">
                 <Label>Ubicación del servicio</Label>
@@ -5154,6 +6757,28 @@ function EditService({ setFlow, service, user, updateService }: {
                    '📍 Actualizar mi ubicación'}
                 </Button>
                 <p className="text-xs text-muted-foreground mt-2">Permite que los clientes vean si estás cerca de ellos.</p>
+=======
+              <div className="space-y-2">
+                <Label htmlFor="edit-service-image">Imagen del servicio</Label>
+                <div className="flex items-center gap-4">
+                  <Input
+                    id="edit-service-image"
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => setImageFile(e.target.files?.[0] || null)}
+                    className="cursor-pointer"
+                  />
+                  {(imageFile || (service as any)?.image) && (
+                    <div className="w-12 h-12 rounded border overflow-hidden bg-gray-50 flex-shrink-0">
+                      <img
+                        src={imageFile ? URL.createObjectURL(imageFile) : (service as any)?.image}
+                        alt="Preview"
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                  )}
+                </div>
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
               </div>
 
               <div className="flex gap-3 pt-4">
@@ -5172,6 +6797,7 @@ function EditService({ setFlow, service, user, updateService }: {
   )
 }
 
+<<<<<<< HEAD
 function ProviderStatistics({ setFlow, user, services, profileData }: { setFlow: (flow: string) => void; user: any; services: any[]; profileData: any }) {
   const { getBookingsByProvider, bookings } = useBookings()
   
@@ -5180,10 +6806,21 @@ function ProviderStatistics({ setFlow, user, services, profileData }: { setFlow:
   const providerBookings = getBookingsByProvider(user?.uid) || []
   
   // Calcular estadísticas generales
+=======
+function ProviderStatistics({ setFlow, user, services }: { setFlow: (flow: string) => void; user: any; services: any[] }) {
+  const { getBookingsByProvider } = useBookings()
+
+  // Filtrar servicios del proveedor
+  const providerServices = services.filter(service => service.providerId === user?.uid)
+  const providerBookings = getBookingsByProvider(user?.uid) || []
+
+  // Calcular estadísticas
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
   const totalViews = providerServices.reduce((sum, s) => sum + ((s as any).views || 0), 0)
   const totalBookings = providerBookings.length
   const totalContacts = totalBookings
   const conversionRate = totalViews > 0 ? (totalBookings / totalViews) * 100 : 0
+<<<<<<< HEAD
   
   // Ciudad dinámica
   const city = profileData?.city || "tu localidad"
@@ -5232,6 +6869,24 @@ function ProviderStatistics({ setFlow, user, services, profileData }: { setFlow:
 
     if (totalBookings === 0) {
       return sources.map(s => ({ ...s, value: 0 }))
+=======
+
+  // Estadísticas por servicio
+  const serviceStats = providerServices.map(service => {
+    const serviceBookings = providerBookings.filter(b => b.serviceId === service.id)
+    const serviceRevenue = serviceBookings
+      .filter(b => b.paymentStatus === 'paid')
+      .reduce((sum, b) => sum + (b.price || 0), 0)
+    const serviceViews = (service as any).views || 0
+    const serviceConversion = serviceViews > 0 ? (serviceBookings.length / serviceViews) * 100 : 0
+
+    return {
+      ...service,
+      bookings: serviceBookings.length,
+      revenue: serviceRevenue,
+      views: serviceViews,
+      conversion: serviceConversion
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
     }
 
     return sources.map(s => {
@@ -5348,6 +7003,7 @@ function ProviderStatistics({ setFlow, user, services, profileData }: { setFlow:
         {/* Card Resumen / Evolución */}
         <Card className="bg-white border-none rounded-[2rem] shadow-sm overflow-hidden">
           <CardContent className="p-6">
+<<<<<<< HEAD
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-lg font-black text-gray-800">Resumen Semanal</h3>
               <div className="flex gap-4 text-xs font-bold">
@@ -5364,6 +7020,41 @@ function ProviderStatistics({ setFlow, user, services, profileData }: { setFlow:
                     <circle key={i} cx={`${(i * 100) / 6}%`} cy={`${80 - (val * 60) / maxWeekly}%`} r="3" className="fill-white stroke-primary stroke-2" />
                   ))}
                 </svg>
+=======
+            <h3 className="text-lg font-semibold mb-4">Rendimiento por Servicio</h3>
+            <div className="space-y-4">
+              {serviceStats.length > 0 ? (
+                serviceStats.map((service) => (
+                  <div key={service.id} className="p-4 bg-gray-50 rounded-lg">
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="font-semibold">{service.name}</h4>
+                      <span className="text-sm text-muted-foreground">${service.revenue.toLocaleString()}</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-4 text-sm">
+                      <div>
+                        <p className="text-muted-foreground">Visualizaciones</p>
+                        <p className="font-semibold">{service.views}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Reservas</p>
+                        <p className="font-semibold">{service.bookings}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Conversión</p>
+                        <p className="font-semibold">{service.conversion.toFixed(1)}%</p>
+                      </div>
+                    </div>
+                    <div className="mt-3">
+                      <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div
+                          className="bg-primary h-2 rounded-full"
+                          style={{ width: `${Math.min(service.conversion, 100)}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                  </div>
+                ))
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
               ) : (
                 <div className="h-full flex items-center justify-center text-gray-300 text-[10px] uppercase font-bold tracking-widest">
                   Sin datos esta semana
@@ -5376,6 +7067,7 @@ function ProviderStatistics({ setFlow, user, services, profileData }: { setFlow:
         {/* Orígenes de contacto Dinámicos */}
         <Card className="bg-white border-none rounded-[2rem] shadow-sm overflow-hidden">
           <CardContent className="p-6">
+<<<<<<< HEAD
             <h3 className="text-lg font-black text-gray-800 mb-6">Orígenes de contacto</h3>
             
             <div className="flex flex-col items-center mb-8">
@@ -5403,6 +7095,18 @@ function ProviderStatistics({ setFlow, user, services, profileData }: { setFlow:
                   Esperando tus primeros contactos
                 </p>
               )}
+=======
+            <h3 className="text-lg font-semibold mb-4">Tendencias</h3>
+            <div className="text-center py-8 text-muted-foreground">
+              <p className="text-sm">Los gráficos detallados están disponibles en la versión Premium</p>
+              <Button
+                variant="outline"
+                className="mt-4"
+                onClick={() => setFlow("subscription")}
+              >
+                Actualizar a Premium
+              </Button>
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
             </div>
           </CardContent>
         </Card>
@@ -5464,6 +7168,86 @@ function ProviderSubscription({ setFlow }: { setFlow: (flow: string) => void }) 
             </Button>
           </CardContent>
         </Card>
+<<<<<<< HEAD
+=======
+
+        {/* Features */}
+        <Card>
+          <CardContent className="p-6">
+            <h3 className="text-lg font-semibold mb-4">Beneficios Premium</h3>
+            <div className="space-y-3">
+              {premiumFeatures.map((feature, index) => (
+                <div key={index} className="flex items-center gap-3">
+                  <div className="w-6 h-6 bg-primary/20 rounded-full flex items-center justify-center">
+                    <Star className="h-3 w-3 text-primary" />
+                  </div>
+                  <span className="text-sm">{feature}</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Pricing Plans */}
+        <div className="space-y-3">
+          <h3 className="text-lg font-semibold">Elige tu plan</h3>
+
+          {/* Monthly Plan */}
+          <Card
+            className={`cursor-pointer transition-all ${selectedPlan === "monthly" ? "ring-2 ring-primary border-primary" : ""
+              }`}
+            onClick={() => setSelectedPlan("monthly")}
+          >
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="font-semibold">Plan Mensual</h4>
+                  <p className="text-sm text-muted-foreground">Facturación mensual</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-2xl font-bold text-primary">$2,999</p>
+                  <p className="text-sm text-muted-foreground">por mes</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Annual Plan */}
+          <Card
+            className={`cursor-pointer transition-all relative ${selectedPlan === "annual" ? "ring-2 ring-primary border-primary" : ""
+              }`}
+            onClick={() => setSelectedPlan("annual")}
+          >
+            <div className="absolute -top-2 -right-2 bg-primary text-primary-foreground text-xs px-2 py-1 rounded-full">
+              20% OFF
+            </div>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="font-semibold">Plan Anual</h4>
+                  <p className="text-sm text-muted-foreground">Facturación anual - Ahorra $7,200</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-2xl font-bold text-primary">$28,800</p>
+                  <p className="text-sm text-muted-foreground">por año</p>
+                  <p className="text-xs text-green-600">$2,400/mes</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Subscribe Button */}
+        <Button onClick={handleSubscribe} disabled={!selectedPlan} className="w-full h-12 text-base">
+          Suscribirme ahora
+        </Button>
+
+        {/* Terms */}
+        <div className="text-center text-xs text-muted-foreground">
+          <p>Al suscribirte aceptas nuestros términos y condiciones.</p>
+          <p>Puedes cancelar tu suscripción en cualquier momento.</p>
+        </div>
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
       </div>
     </div>
   )
@@ -5476,12 +7260,12 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
   const { users, loading: usersLoading, updateUserRole, toggleUserStatus, deleteUser, getUsersByRole } = useUsers()
   const { analytics, loading: analyticsLoading } = useAnalytics()
   const { stats, loading: dashboardLoading, refresh } = useAdminDashboard()
-  
+
   const [activeTab, setActiveTab] = useState<'dashboard' | 'categories' | 'users' | 'services' | 'analytics' | 'reports' | 'settings'>('dashboard')
   const [showAlerts, setShowAlerts] = useState(false)
   const [reportType, setReportType] = useState<'daily' | 'weekly' | 'monthly'>('daily')
   const { dailyReport, weeklyReport, monthlyReport, loading: reportsLoading, generateDailyReport, generateWeeklyReport, generateMonthlyReport } = useReports()
-  
+
   // Generar informe diario automáticamente cuando se abre la pestaña de informes
   useEffect(() => {
     if (activeTab === 'reports' && reportType === 'daily' && !dailyReport && !reportsLoading) {
@@ -5500,7 +7284,7 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
   const [editingUser, setEditingUser] = useState<any>(null)
   const [userFilter, setUserFilter] = useState<'all' | 'client' | 'provider' | 'admin'>('all')
   const [serviceFilter, setServiceFilter] = useState<'all' | 'active' | 'inactive'>('all')
-  
+
   // Estados para configuración
   const [settings, setSettings] = useState({
     emailNotifications: true,
@@ -5562,15 +7346,15 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
     }
   }
 
-  const filteredUsers = userFilter === 'all' 
-    ? users 
+  const filteredUsers = userFilter === 'all'
+    ? users
     : getUsersByRole(userFilter as any)
 
-  const filteredServices = serviceFilter === 'all' 
-    ? services 
-    : services.filter(service => 
-        serviceFilter === 'active' ? (service as any).active !== false : (service as any).active === false
-      )
+  const filteredServices = serviceFilter === 'all'
+    ? services
+    : services.filter(service =>
+      serviceFilter === 'active' ? (service as any).active !== false : (service as any).active === false
+    )
 
   // Funciones para configuración
   const handleSettingChange = (key: string, value: any) => {
@@ -5589,6 +7373,7 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
   }
 
   return (
+<<<<<<< HEAD
     <div className="min-h-screen bg-gray-50/50 flex flex-col md:flex-row">
       {/* Navegación para escritorio */}
       <AdminSidebar activeTab={activeTab} setActiveTab={setActiveTab} logout={async () => {
@@ -5610,6 +7395,57 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
             <div className="flex items-center gap-3">
               <div className="md:hidden">
                 <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center text-white text-xs font-black">P</div>
+=======
+    <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
+      {/* Header */}
+      <div className="bg-white shadow-sm p-4">
+        <div className="flex items-center justify-between">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-lg md:text-xl font-bold text-primary truncate">Panel de Administración</h1>
+            <p className="text-xs md:text-sm text-muted-foreground truncate">Bienvenido, {user?.displayName || user?.email}</p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              const result = await logout()
+              if (result.success) {
+                localStorage.removeItem('userType')
+                window.location.reload()
+              }
+            }}
+            className="ml-2 flex-shrink-0"
+          >
+            <span className="hidden sm:inline">Cerrar sesión</span>
+            <span className="sm:hidden">Salir</span>
+          </Button>
+        </div>
+      </div>
+
+      {/* Navigation */}
+      <div className="bg-white border-b border-gray-200">
+        <div className="flex w-full">
+          {[
+            { id: 'dashboard', label: 'Dashboard', icon: '📊' },
+            { id: 'categories', label: 'Categorías', icon: '📁' },
+            { id: 'users', label: 'Usuarios', icon: '👥' },
+            { id: 'services', label: 'Servicios', icon: '🛠️' },
+            { id: 'analytics', label: 'Analytics', icon: '📈' },
+            { id: 'reports', label: 'Informes', icon: '📄' },
+            { id: 'settings', label: 'Configuración', icon: '⚙️' }
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
+              className={`flex-1 py-3 px-1 md:py-4 md:px-2 border-b-2 font-medium text-xs md:text-sm ${activeTab === tab.id
+                ? 'border-primary text-primary'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}
+            >
+              <div className="flex flex-col items-center space-y-1">
+                <span className="text-lg md:text-xl">{tab.icon}</span>
+                <span className="hidden sm:block text-xs md:text-sm">{tab.label}</span>
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
               </div>
               <div>
                 <h1 className="text-sm md:text-lg font-bold text-gray-900 leading-none">
@@ -5651,7 +7487,7 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
               <>
                 {/* Botón de Alertas */}
                 <div className="flex justify-end">
-                  <Button 
+                  <Button
                     onClick={() => setShowAlerts(!showAlerts)}
                     variant={stats.alerts.length > 0 ? "default" : "outline"}
                     className="relative"
@@ -5801,6 +7637,7 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
         )}
 
         {activeTab === 'categories' && (
+<<<<<<< HEAD
           <div className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
               <div className="hidden md:block">
@@ -5808,6 +7645,12 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                 <p className="text-xs text-muted-foreground mt-1">Administra los rubros disponibles en la plataforma</p>
               </div>
               <Button 
+=======
+          <div className="space-y-4 md:space-y-6">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+              <h2 className="text-lg font-semibold">Gestión de Categorías</h2>
+              <Button
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                 onClick={() => setShowCreateCategory(true)}
                 className="bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/20"
               >
@@ -5873,8 +7716,18 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                           {category.description}
                         </p>
                       )}
+<<<<<<< HEAD
 
                       <div className="grid grid-cols-2 gap-2 mt-5">
+=======
+                      <div className="flex items-center justify-between">
+                        <span className={`text-xs px-2 py-1 rounded-full ${category.active
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-red-100 text-red-800'
+                          }`}>
+                          {category.active ? 'Activa' : 'Inactiva'}
+                        </span>
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                         <Button
                           variant="outline"
                           size="sm"
@@ -5904,6 +7757,7 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
         )}
 
         {activeTab === 'users' && (
+<<<<<<< HEAD
           <div className="space-y-6 animate-in fade-in duration-500">
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
               <div className="hidden md:block">
@@ -5928,6 +7782,22 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                     {filter.label}
                   </button>
                 ))}
+=======
+          <div className="space-y-4 md:space-y-6">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+              <h2 className="text-lg font-semibold">Gestión de Usuarios</h2>
+              <div className="flex space-x-2">
+                <select
+                  value={userFilter}
+                  onChange={(e) => setUserFilter(e.target.value as any)}
+                  className="px-3 py-2 border border-gray-300 rounded-md text-sm w-full sm:w-auto"
+                >
+                  <option value="all">Todos</option>
+                  <option value="client">Clientes</option>
+                  <option value="provider">Proveedores</option>
+                  <option value="admin">Admins</option>
+                </select>
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
               </div>
             </div>
 
@@ -5951,6 +7821,7 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                             <p className="text-[10px] text-gray-500">{user.email}</p>
                           </div>
                         </div>
+<<<<<<< HEAD
                         <Badge variant="outline" className={`text-[9px] uppercase ${
                           user.role === 'admin' ? 'border-primary text-primary' : 
                           user.role === 'provider' ? 'border-purple-200 text-purple-700' : 
@@ -5974,6 +7845,32 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                   </Card>
                 ))
               )}
+=======
+
+                        <div className="flex items-center justify-between">
+                          <div className="flex space-x-2">
+                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${user.role === 'admin' ? 'bg-purple-100 text-purple-800' :
+                              user.role === 'provider' ? 'bg-blue-100 text-blue-800' :
+                                'bg-green-100 text-green-800'
+                              }`}>
+                              {user.role === 'admin' ? 'Admin' :
+                                user.role === 'provider' ? 'Proveedor' : 'Cliente'}
+                            </span>
+                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${user.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                              }`}>
+                              {user.isActive ? 'Activo' : 'Inactivo'}
+                            </span>
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {user.createdAt.toLocaleDateString()}
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))
+                )}
+              </div>
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
             </div>
 
             {/* Lista de usuarios - Desktop Table */}
@@ -6025,14 +7922,94 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                         </div>
                       </td>
                     </tr>
+<<<<<<< HEAD
                   ))}
                 </tbody>
               </table>
+=======
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {usersLoading ? (
+                      <tr>
+                        <td colSpan={5} className="px-6 py-4 text-center">
+                          <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full mx-auto mb-2"></div>
+                          <p className="text-muted-foreground">Cargando usuarios...</p>
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredUsers.map(user => (
+                        <tr key={user.id}>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex items-center">
+                              <div className="flex-shrink-0 h-10 w-10">
+                                <div className="h-10 w-10 rounded-full bg-primary text-white flex items-center justify-center">
+                                  {(user.displayName?.charAt(0) || user.email?.charAt(0) || 'U').toUpperCase()}
+                                </div>
+                              </div>
+                              <div className="ml-4">
+                                <div className="text-sm font-medium text-gray-900">
+                                  {user.displayName || 'Sin nombre'}
+                                </div>
+                                <div className="text-sm text-gray-500">{user.email || 'Sin email'}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${user.role === 'admin' ? 'bg-purple-100 text-purple-800' :
+                              user.role === 'provider' ? 'bg-blue-100 text-blue-800' :
+                                'bg-green-100 text-green-800'
+                              }`}>
+                              {user.role === 'admin' ? 'Admin' :
+                                user.role === 'provider' ? 'Proveedor' : 'Cliente'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${user.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                              }`}>
+                              {user.isActive ? 'Activo' : 'Inactivo'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {user.createdAt.toLocaleDateString()}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                            <div className="flex space-x-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setEditingUser(user)}
+                              >
+                                ✏️
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleToggleUserStatus(user.id)}
+                              >
+                                {user.isActive ? '🚫' : '✅'}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleDeleteUser(user.id)}
+                              >
+                                🗑️
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
             </div>
           </div>
         )}
 
         {activeTab === 'services' && (
+<<<<<<< HEAD
           <div className="space-y-6 animate-in fade-in duration-500">
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
               <div className="hidden md:block">
@@ -6057,11 +8034,27 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                     {filter.label}
                   </button>
                 ))}
+=======
+          <div className="space-y-4 md:space-y-6">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+              <h2 className="text-lg font-semibold">Gestión de Servicios</h2>
+              <div className="flex space-x-2">
+                <select
+                  value={serviceFilter}
+                  onChange={(e) => setServiceFilter(e.target.value as any)}
+                  className="px-3 py-2 border border-gray-300 rounded-md text-sm w-full sm:w-auto"
+                >
+                  <option value="all">Todos</option>
+                  <option value="active">Activos</option>
+                  <option value="inactive">Inactivos</option>
+                </select>
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
               </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
               {filteredServices.map(service => (
+<<<<<<< HEAD
                 <Card key={service.id} className="border-none shadow-sm group hover:shadow-md transition-all overflow-hidden bg-white">
                   <CardContent className="p-5">
                     <div className="flex justify-between items-start mb-4">
@@ -6082,6 +8075,26 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                       <div className="flex justify-between items-center text-xs">
                         <span className="text-gray-400 font-medium">Proveedor</span>
                         <span className="font-bold text-gray-700 truncate max-w-[150px]">{service.providerName}</span>
+=======
+                <Card key={service.id}>
+                  <CardContent className="p-3 md:p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="font-semibold text-sm md:text-lg truncate flex-1 mr-2">{service.name}</h3>
+                      <span className={`text-xs px-2 py-1 rounded-full flex-shrink-0 ${(service as any).active !== false
+                        ? 'bg-green-100 text-green-800'
+                        : 'bg-red-100 text-red-800'
+                        }`}>
+                        {(service as any).active !== false ? 'Activo' : 'Inactivo'}
+                      </span>
+                    </div>
+
+                    <p className="text-xs md:text-sm text-gray-600 mb-3 line-clamp-2">{service.description}</p>
+
+                    <div className="space-y-1 md:space-y-2 mb-4">
+                      <div className="flex justify-between text-xs md:text-sm">
+                        <span className="text-gray-500">Proveedor:</span>
+                        <span className="font-medium truncate ml-2">{service.providerName}</span>
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                       </div>
                       <div className="flex justify-between items-center text-xs">
                         <span className="text-gray-400 font-medium">Categoría</span>
@@ -6094,10 +8107,21 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                         <span className="text-lg font-black text-primary">${service.price}</span>
                       </div>
                     </div>
+<<<<<<< HEAD
                     
                     <div className="grid grid-cols-2 gap-3 mt-6">
                       <Button variant="outline" size="sm" className="rounded-xl h-10 font-bold text-xs">
                         Editar
+=======
+
+                    <div className="flex space-x-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="flex-1 text-xs"
+                      >
+                        ✏️ Editar
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                       </Button>
                       <Button variant="ghost" size="sm" className="rounded-xl h-10 font-bold text-xs text-red-600 hover:bg-red-50">
                         Eliminar
@@ -6163,6 +8187,7 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
 
                 {/* Informe Semanal */}
                 {reportType === 'weekly' && weeklyReport && (
+<<<<<<< HEAD
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <Card className="border-none shadow-sm">
                       <CardContent className="p-6">
@@ -6187,6 +8212,78 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                              </div>
                            ))}
                          </div>
+=======
+                  <div className="space-y-4">
+                    <Card>
+                      <CardContent className="p-4">
+                        <h3 className="text-lg font-semibold mb-4">📊 Informe Semanal - {weeklyReport.week}</h3>
+
+                        {/* Ranking de búsquedas por ciudad */}
+                        <div className="mb-6">
+                          <h4 className="font-semibold mb-3">🔍 Ranking de búsquedas por ciudad</h4>
+                          {weeklyReport.topSearchesByCity.length > 0 ? (
+                            <div className="space-y-4">
+                              {weeklyReport.topSearchesByCity.map((cityData, index) => (
+                                <Card key={index} className="bg-gray-50">
+                                  <CardContent className="p-4">
+                                    <h5 className="font-medium mb-2">{cityData.city}</h5>
+                                    <div className="space-y-1">
+                                      {cityData.searches.slice(0, 5).map((search, idx) => (
+                                        <div key={idx} className="flex items-center justify-between text-sm">
+                                          <span>#{idx + 1} {search.term}</span>
+                                          <span className="text-gray-500">{search.count} búsquedas</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </CardContent>
+                                </Card>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-sm text-gray-500">No hay datos de búsquedas por ciudad</p>
+                          )}
+                        </div>
+
+                        {/* Promociones con mejor rendimiento */}
+                        <div className="mb-6">
+                          <h4 className="font-semibold mb-3">⭐ Promociones con mejor rendimiento</h4>
+                          {weeklyReport.bestPerformingPromos.length > 0 ? (
+                            <div className="space-y-2">
+                              {weeklyReport.bestPerformingPromos.map((promo, index) => (
+                                <div key={promo.id} className="flex items-center justify-between p-3 bg-green-50 rounded">
+                                  <div className="flex items-center space-x-3">
+                                    <span className="text-lg font-bold text-green-600">#{index + 1}</span>
+                                    <span className="text-sm font-medium">{promo.name}</span>
+                                  </div>
+                                  <span className="text-sm text-green-600 font-semibold">{promo.performance.toFixed(2)}%</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-sm text-gray-500">No hay promociones activas</p>
+                          )}
+                        </div>
+
+                        {/* Promociones con peor rendimiento */}
+                        <div>
+                          <h4 className="font-semibold mb-3">📉 Promociones con peor rendimiento</h4>
+                          {weeklyReport.worstPerformingPromos.length > 0 ? (
+                            <div className="space-y-2">
+                              {weeklyReport.worstPerformingPromos.map((promo, index) => (
+                                <div key={promo.id} className="flex items-center justify-between p-3 bg-red-50 rounded">
+                                  <div className="flex items-center space-x-3">
+                                    <span className="text-lg font-bold text-red-600">#{index + 1}</span>
+                                    <span className="text-sm font-medium">{promo.name}</span>
+                                  </div>
+                                  <span className="text-sm text-red-600 font-semibold">{promo.performance.toFixed(2)}%</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-sm text-gray-500">No hay promociones con bajo rendimiento</p>
+                          )}
+                        </div>
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                       </CardContent>
                     </Card>
 
@@ -6222,6 +8319,7 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
 
                 {/* Informe Mensual */}
                 {reportType === 'monthly' && monthlyReport && (
+<<<<<<< HEAD
                   <div className="space-y-6">
                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <Card className="border-none shadow-sm bg-gradient-to-br from-primary/5 to-transparent">
@@ -6246,6 +8344,87 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                            </CardContent>
                         </Card>
                      </div>
+=======
+                  <div className="space-y-4">
+                    <Card>
+                      <CardContent className="p-4">
+                        <h3 className="text-lg font-semibold mb-4">📈 Informe Mensual - {monthlyReport.month}</h3>
+
+                        {/* Crecimiento general */}
+                        <div className="mb-6">
+                          <h4 className="font-semibold mb-3">📊 Crecimiento General</h4>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <div className="text-center p-3 bg-blue-50 rounded">
+                              <p className="text-2xl font-bold text-blue-600">{monthlyReport.userGrowth > 0 ? '+' : ''}{monthlyReport.userGrowth.toFixed(1)}%</p>
+                              <p className="text-sm text-gray-600">Crecimiento</p>
+                            </div>
+                            <div className="text-center p-3 bg-green-50 rounded">
+                              <p className="text-2xl font-bold text-green-600">{monthlyReport.totalUsers}</p>
+                              <p className="text-sm text-gray-600">Total usuarios</p>
+                            </div>
+                            <div className="text-center p-3 bg-purple-50 rounded">
+                              <p className="text-2xl font-bold text-purple-600">{monthlyReport.newUsers}</p>
+                              <p className="text-sm text-gray-600">Nuevos usuarios</p>
+                            </div>
+                            <div className="text-center p-3 bg-orange-50 rounded">
+                              <p className="text-2xl font-bold text-orange-600">{monthlyReport.returningUsers}</p>
+                              <p className="text-sm text-gray-600">Usuarios que volvieron</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Retención de usuarios */}
+                        <div className="mb-6">
+                          <h4 className="font-semibold mb-3">🔄 Retención de Usuarios</h4>
+                          <Card className="bg-gradient-to-r from-purple-50 to-pink-50">
+                            <CardContent className="p-4">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <p className="text-sm text-gray-600">Tasa de retención</p>
+                                  <p className="text-3xl font-bold text-purple-600">{monthlyReport.userRetention.toFixed(1)}%</p>
+                                  <p className="text-xs text-gray-500 mt-1">
+                                    {monthlyReport.returningUsers} de {monthlyReport.totalUsers} usuarios volvieron este mes
+                                  </p>
+                                </div>
+                                <div className="text-4xl">🔄</div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        </div>
+
+                        {/* Resumen de promociones */}
+                        <div>
+                          <h4 className="font-semibold mb-3">🎯 Resumen de Promociones</h4>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <Card>
+                              <CardContent className="p-4 text-center">
+                                <p className="text-2xl font-bold text-primary">{monthlyReport.promoSummary.total}</p>
+                                <p className="text-sm text-gray-600">Total promociones</p>
+                              </CardContent>
+                            </Card>
+                            <Card>
+                              <CardContent className="p-4 text-center">
+                                <p className="text-2xl font-bold text-green-600">{monthlyReport.promoSummary.active}</p>
+                                <p className="text-sm text-gray-600">Activas</p>
+                              </CardContent>
+                            </Card>
+                            <Card>
+                              <CardContent className="p-4 text-center">
+                                <p className="text-2xl font-bold text-gray-600">{monthlyReport.promoSummary.completed}</p>
+                                <p className="text-sm text-gray-600">Completadas</p>
+                              </CardContent>
+                            </Card>
+                            <Card>
+                              <CardContent className="p-4 text-center">
+                                <p className="text-2xl font-bold text-green-600">${monthlyReport.promoSummary.totalRevenue.toLocaleString()}</p>
+                                <p className="text-sm text-gray-600">Ingresos totales</p>
+                              </CardContent>
+                            </Card>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                   </div>
                 )}
               </div>
@@ -6254,6 +8433,7 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
         )}
 
         {activeTab === 'analytics' && (
+<<<<<<< HEAD
           <div className="space-y-6 animate-in fade-in duration-500">
             <div className="hidden md:block">
               <h2 className="text-xl font-bold text-gray-900 leading-none">Analíticas Avanzadas</h2>
@@ -6266,6 +8446,60 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
               <AdminStatCard title="Reservas" value={analytics.totalBookings} icon={Calendar} color="bg-blue-500" />
               <AdminStatCard title="Ingresos" value={`$${analytics.totalRevenue.toLocaleString()}`} icon={Wallet} color="bg-green-500" />
               <AdminStatCard title="Tickets" value={analytics.reportedPublications} icon={ShieldAlert} color="bg-orange-500" />
+=======
+          <div className="space-y-4 md:space-y-6">
+            <h2 className="text-lg font-semibold">Analytics y Reportes</h2>
+
+            {/* Métricas principales */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
+              <Card>
+                <CardContent className="p-3 md:p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs md:text-sm font-medium text-gray-600">Usuarios Activos</p>
+                      <p className="text-lg md:text-2xl font-bold text-green-600">{analytics.activeUsers}</p>
+                    </div>
+                    <div className="text-lg md:text-2xl">👥</div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="p-3 md:p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs md:text-sm font-medium text-gray-600">Usuarios Inactivos</p>
+                      <p className="text-lg md:text-2xl font-bold text-red-600">{analytics.inactiveUsers}</p>
+                    </div>
+                    <div className="text-lg md:text-2xl">🚫</div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="p-3 md:p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs md:text-sm font-medium text-gray-600">Ingresos Totales</p>
+                      <p className="text-sm md:text-2xl font-bold text-green-600">${analytics.totalRevenue.toLocaleString()}</p>
+                    </div>
+                    <div className="text-lg md:text-2xl">💰</div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="p-3 md:p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs md:text-sm font-medium text-gray-600">Reservas Totales</p>
+                      <p className="text-lg md:text-2xl font-bold text-blue-600">{analytics.totalBookings}</p>
+                    </div>
+                    <div className="text-lg md:text-2xl">📅</div>
+                  </div>
+                </CardContent>
+              </Card>
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -6446,6 +8680,7 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
         )}
 
         {activeTab === 'settings' && (
+<<<<<<< HEAD
           <div className="space-y-6 animate-in fade-in duration-500">
             <div className="hidden md:block">
               <h2 className="text-xl font-bold text-gray-900 leading-none">Configuración General</h2>
@@ -6472,16 +8707,82 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                        <Input value={settings.appDescription} onChange={(e) => handleSettingChange('appDescription', e.target.value)} className="rounded-xl border-gray-100 h-11" />
                     </div>
                     <Button onClick={() => saveSettings('aplicación')} className="w-full rounded-xl h-11 font-bold">Actualizar Datos</Button>
+=======
+          <div className="space-y-4 md:space-y-6">
+            <h2 className="text-lg font-semibold">Configuración General</h2>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
+              {/* Configuración de la aplicación */}
+              <Card>
+                <CardContent className="p-4 md:p-6">
+                  <h3 className="text-lg font-semibold mb-4">Configuración de la Aplicación</h3>
+                  <div className="space-y-4">
+                    <div>
+                      <Label htmlFor="app-name">Nombre de la Aplicación</Label>
+                      <Input
+                        id="app-name"
+                        value={settings.appName}
+                        onChange={(e) => handleSettingChange('appName', e.target.value)}
+                        className="text-sm"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="app-description">Descripción</Label>
+                      <Input
+                        id="app-description"
+                        value={settings.appDescription}
+                        onChange={(e) => handleSettingChange('appDescription', e.target.value)}
+                        className="text-sm"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="app-email">Email de Contacto</Label>
+                      <Input
+                        id="app-email"
+                        value={settings.appEmail}
+                        onChange={(e) => handleSettingChange('appEmail', e.target.value)}
+                        className="text-sm"
+                      />
+                    </div>
+                    <Button
+                      onClick={() => saveSettings('aplicación')}
+                      className="w-full text-sm"
+                    >
+                      Guardar Configuración
+                    </Button>
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                   </div>
                 </CardContent>
               </Card>
 
+<<<<<<< HEAD
               {/* Notificaciones */}
               <Card className="border-none shadow-sm overflow-hidden bg-white">
                 <CardContent className="p-0">
                   <div className="p-4 bg-gray-50 border-b border-gray-100 flex items-center gap-3">
                     <div className="p-2 bg-blue-500/10 rounded-lg text-blue-500">
                       <Bell className="h-4 w-4" />
+=======
+              {/* Configuración de notificaciones */}
+              <Card>
+                <CardContent className="p-4 md:p-6">
+                  <h3 className="text-lg font-semibold mb-4">Notificaciones</h3>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-sm font-medium">Notificaciones por email</span>
+                        <p className="text-xs text-gray-500">Recibe notificaciones de nuevas reservas</p>
+                      </div>
+                      <button
+                        onClick={() => handleSettingChange('emailNotifications', !settings.emailNotifications)}
+                        className={`px-3 py-1 rounded-full text-xs font-medium ${settings.emailNotifications
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-gray-100 text-gray-800'
+                          }`}
+                      >
+                        {settings.emailNotifications ? 'Activar' : 'Desactivar'}
+                      </button>
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                     </div>
                     <h3 className="font-bold text-sm text-gray-900">Notificaciones</h3>
                   </div>
@@ -6507,12 +8808,47 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                           }`} />
                         </button>
                       </div>
+<<<<<<< HEAD
                     ))}
                     <Button variant="outline" onClick={() => saveSettings('notificaciones')} className="w-full rounded-xl h-11 font-bold border-gray-100">Guardar Preferencias</Button>
+=======
+                      <button
+                        onClick={() => handleSettingChange('pushNotifications', !settings.pushNotifications)}
+                        className={`px-3 py-1 rounded-full text-xs font-medium ${settings.pushNotifications
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-gray-100 text-gray-800'
+                          }`}
+                      >
+                        {settings.pushNotifications ? 'Activar' : 'Desactivar'}
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-sm font-medium">Recordatorios de citas</span>
+                        <p className="text-xs text-gray-500">Recordatorios automáticos</p>
+                      </div>
+                      <button
+                        onClick={() => handleSettingChange('appointmentReminders', !settings.appointmentReminders)}
+                        className={`px-3 py-1 rounded-full text-xs font-medium ${settings.appointmentReminders
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-gray-100 text-gray-800'
+                          }`}
+                      >
+                        {settings.appointmentReminders ? 'Activar' : 'Desactivar'}
+                      </button>
+                    </div>
+                    <Button
+                      onClick={() => saveSettings('notificaciones')}
+                      className="w-full text-sm"
+                    >
+                      Guardar Preferencias
+                    </Button>
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                   </div>
                 </CardContent>
               </Card>
 
+<<<<<<< HEAD
               {/* Pagos y Comisiones */}
               <Card className="border-none shadow-sm overflow-hidden bg-white">
                 <CardContent className="p-0">
@@ -6534,10 +8870,54 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                        </div>
                     </div>
                     <Button onClick={() => saveSettings('pagos')} className="w-full rounded-xl h-11 font-bold">Actualizar Precios</Button>
+=======
+              {/* Configuración de pagos */}
+              <Card>
+                <CardContent className="p-4 md:p-6">
+                  <h3 className="text-lg font-semibold mb-4">Configuración de Pagos</h3>
+                  <div className="space-y-4">
+                    <div>
+                      <Label htmlFor="commission-rate">Tasa de Comisión (%)</Label>
+                      <Input
+                        id="commission-rate"
+                        type="number"
+                        value={settings.commissionRate}
+                        onChange={(e) => handleSettingChange('commissionRate', parseInt(e.target.value))}
+                        className="text-sm"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="min-price">Precio Mínimo de Servicio</Label>
+                      <Input
+                        id="min-price"
+                        type="number"
+                        value={settings.minPrice}
+                        onChange={(e) => handleSettingChange('minPrice', parseInt(e.target.value))}
+                        className="text-sm"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="max-price">Precio Máximo de Servicio</Label>
+                      <Input
+                        id="max-price"
+                        type="number"
+                        value={settings.maxPrice}
+                        onChange={(e) => handleSettingChange('maxPrice', parseInt(e.target.value))}
+                        className="text-sm"
+                      />
+                    </div>
+                    <Button
+                      onClick={() => saveSettings('pagos')}
+                      className="w-full text-sm"
+                    >
+                      Guardar Configuración
+                    </Button>
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                   </div>
                 </CardContent>
               </Card>
 
+<<<<<<< HEAD
               {/* Seguridad */}
               <Card className="border-none shadow-sm overflow-hidden bg-white">
                 <CardContent className="p-0">
@@ -6570,6 +8950,59 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                         </button>
                     </div>
                     <Button variant="outline" onClick={() => saveSettings('seguridad')} className="w-full rounded-xl h-11 font-bold border-gray-100">Aplicar Políticas</Button>
+=======
+              {/* Configuración de seguridad */}
+              <Card>
+                <CardContent className="p-4 md:p-6">
+                  <h3 className="text-lg font-semibold mb-4">Seguridad</h3>
+                  <div className="space-y-4">
+                    <div>
+                      <Label htmlFor="session-timeout">Timeout de Sesión (minutos)</Label>
+                      <Input
+                        id="session-timeout"
+                        type="number"
+                        value={settings.sessionTimeout}
+                        onChange={(e) => handleSettingChange('sessionTimeout', parseInt(e.target.value))}
+                        className="text-sm"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-sm font-medium">Verificación de email obligatoria</span>
+                        <p className="text-xs text-gray-500">Los usuarios deben verificar su email</p>
+                      </div>
+                      <button
+                        onClick={() => handleSettingChange('emailVerificationRequired', !settings.emailVerificationRequired)}
+                        className={`px-3 py-1 rounded-full text-xs font-medium ${settings.emailVerificationRequired
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-gray-100 text-gray-800'
+                          }`}
+                      >
+                        {settings.emailVerificationRequired ? 'Activar' : 'Desactivar'}
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-sm font-medium">Registro abierto</span>
+                        <p className="text-xs text-gray-500">Cualquiera puede registrarse</p>
+                      </div>
+                      <button
+                        onClick={() => handleSettingChange('openRegistration', !settings.openRegistration)}
+                        className={`px-3 py-1 rounded-full text-xs font-medium ${settings.openRegistration
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-gray-100 text-gray-800'
+                          }`}
+                      >
+                        {settings.openRegistration ? 'Activar' : 'Desactivar'}
+                      </button>
+                    </div>
+                    <Button
+                      onClick={() => saveSettings('seguridad')}
+                      className="w-full text-sm"
+                    >
+                      Guardar Configuración
+                    </Button>
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                   </div>
                 </CardContent>
               </Card>
@@ -6577,6 +9010,7 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
           </div>
         )}
 
+<<<<<<< HEAD
         {/* Modales - Deben estar dentro del layout principal pero al final */}
         {showCreateCategory && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100] animate-in fade-in zoom-in duration-300">
@@ -6586,6 +9020,58 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                   <h3 className="text-2xl font-black text-gray-900">Nueva Categoría</h3>
                   <Button variant="ghost" size="icon" onClick={() => setShowCreateCategory(false)} className="rounded-xl">
                     <X className="h-5 w-5" />
+=======
+      {/* Modal Crear Categoría */}
+      {showCreateCategory && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <Card className="w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <CardContent className="p-4 md:p-6">
+              <h3 className="text-lg font-semibold mb-4">Nueva Categoría</h3>
+              <form onSubmit={handleCreateCategory} className="space-y-4">
+                <div>
+                  <Label htmlFor="name">Nombre</Label>
+                  <Input
+                    id="name"
+                    value={newCategory.name}
+                    onChange={(e) => setNewCategory(prev => ({ ...prev, name: e.target.value }))}
+                    placeholder="Ej: Belleza"
+                    required
+                    className="text-sm"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="icon">Icono</Label>
+                  <Input
+                    id="icon"
+                    value={newCategory.icon}
+                    onChange={(e) => setNewCategory(prev => ({ ...prev, icon: e.target.value }))}
+                    placeholder="Ej: 💄"
+                    required
+                    className="text-sm"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="description">Descripción</Label>
+                  <Input
+                    id="description"
+                    value={newCategory.description}
+                    onChange={(e) => setNewCategory(prev => ({ ...prev, description: e.target.value }))}
+                    placeholder="Descripción opcional"
+                    className="text-sm"
+                  />
+                </div>
+                <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
+                  <Button type="submit" className="flex-1 text-sm">
+                    Crear Categoría
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowCreateCategory(false)}
+                    className="flex-1 text-sm"
+                  >
+                    Cancelar
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                   </Button>
                 </div>
                 <form onSubmit={handleCreateCategory} className="space-y-6">
@@ -6610,6 +9096,7 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
           </div>
         )}
 
+<<<<<<< HEAD
         {editingCategory && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100] animate-in fade-in zoom-in duration-300">
             <Card className="w-full max-w-md border-none shadow-2xl bg-white overflow-hidden rounded-3xl">
@@ -6618,6 +9105,55 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                   <h3 className="text-2xl font-black text-gray-900">Editar Categoría</h3>
                   <Button variant="ghost" size="icon" onClick={() => setEditingCategory(null)} className="rounded-xl">
                     <X className="h-5 w-5" />
+=======
+      {/* Modal Editar Categoría */}
+      {editingCategory && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <Card className="w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <CardContent className="p-4 md:p-6">
+              <h3 className="text-lg font-semibold mb-4">Editar Categoría</h3>
+              <form onSubmit={handleEditCategory} className="space-y-4">
+                <div>
+                  <Label htmlFor="edit-name">Nombre</Label>
+                  <Input
+                    id="edit-name"
+                    value={editingCategory.name}
+                    onChange={(e) => setEditingCategory((prev: any) => ({ ...prev, name: e.target.value }))}
+                    required
+                    className="text-sm"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="edit-icon">Icono</Label>
+                  <Input
+                    id="edit-icon"
+                    value={editingCategory.icon}
+                    onChange={(e) => setEditingCategory((prev: any) => ({ ...prev, icon: e.target.value }))}
+                    required
+                    className="text-sm"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="edit-description">Descripción</Label>
+                  <Input
+                    id="edit-description"
+                    value={editingCategory.description || ''}
+                    onChange={(e) => setEditingCategory((prev: any) => ({ ...prev, description: e.target.value }))}
+                    className="text-sm"
+                  />
+                </div>
+                <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
+                  <Button type="submit" className="flex-1 text-sm">
+                    Guardar Cambios
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setEditingCategory(null)}
+                    className="flex-1 text-sm"
+                  >
+                    Cancelar
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                   </Button>
                 </div>
                 <form onSubmit={handleEditCategory} className="space-y-6">
@@ -6636,6 +9172,7 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
           </div>
         )}
 
+<<<<<<< HEAD
         {editingUser && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100] animate-in fade-in zoom-in duration-300">
             <Card className="w-full max-w-md border-none shadow-2xl bg-white overflow-hidden rounded-3xl">
@@ -6644,6 +9181,62 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                   <h3 className="text-2xl font-black text-gray-900">Rol de Usuario</h3>
                   <Button variant="ghost" size="icon" onClick={() => setEditingUser(null)} className="rounded-xl">
                     <X className="h-5 w-5" />
+=======
+      {/* Modal Editar Usuario */}
+      {editingUser && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <Card className="w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <CardContent className="p-4 md:p-6">
+              <h3 className="text-lg font-semibold mb-4">Editar Usuario</h3>
+              <form onSubmit={(e) => {
+                e.preventDefault()
+                const formData = new FormData(e.target as HTMLFormElement)
+                const newRole = formData.get('role') as string
+                handleUpdateUserRole(editingUser.id, newRole)
+              }} className="space-y-4">
+                <div>
+                  <Label htmlFor="user-name">Nombre</Label>
+                  <Input
+                    id="user-name"
+                    value={editingUser.displayName || ''}
+                    disabled
+                    className="text-sm"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="user-email">Email</Label>
+                  <Input
+                    id="user-email"
+                    value={editingUser.email}
+                    disabled
+                    className="text-sm"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="user-role">Rol</Label>
+                  <select
+                    name="role"
+                    id="user-role"
+                    defaultValue={editingUser.role}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                  >
+                    <option value="client">Cliente</option>
+                    <option value="provider">Proveedor</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </div>
+                <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
+                  <Button type="submit" className="flex-1 text-sm">
+                    Guardar Cambios
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setEditingUser(null)}
+                    className="flex-1 text-sm"
+                  >
+                    Cancelar
+>>>>>>> ea7b751328e49bc4350451862377d453fbb65d9f
                   </Button>
                 </div>
                 <div className="mb-8 p-4 bg-gray-50 rounded-2xl border border-gray-100">
@@ -6674,4 +9267,144 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
     </div>
   </div>
 )
+}
+
+function ChatWindow({
+  user,
+  partnerId,
+  partnerName,
+  onBack
+}: {
+  user: any
+  partnerId: string
+  partnerName: string
+  onBack: () => void
+}) {
+  const [messages, setMessages] = useState<any[]>([])
+  const [newMessage, setNewMessage] = useState("")
+  const [loading, setLoading] = useState(true)
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  const chatId = partnerId ? [user.uid, partnerId].sort().join('_') : null
+
+  useEffect(() => {
+    if (!chatId) return
+
+    const messagesQuery = query(
+      collection(db, 'chats', chatId, 'messages'),
+      orderBy('createdAt', 'asc')
+    )
+
+    const unsubscribe = onSnapshot(messagesQuery, (snapshot) => {
+      const msgs = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }))
+      setMessages(msgs)
+      setLoading(false)
+    })
+
+    return () => unsubscribe()
+  }, [chatId])
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [messages])
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!newMessage.trim() || !user || !chatId) return
+
+    try {
+      await addDoc(collection(db, 'chats', chatId, 'messages'), {
+        text: newMessage,
+        senderId: user.uid,
+        senderName: user.displayName || user.email,
+        createdAt: serverTimestamp()
+      })
+
+      await setDoc(doc(db, 'chats', chatId), {
+        lastMessage: newMessage,
+        lastMessageAt: serverTimestamp(),
+        participants: [user.uid, partnerId],
+        participantNames: {
+          [user.uid]: user.displayName || user.email,
+          [partnerId]: partnerName
+        },
+        updatedAt: serverTimestamp()
+      }, { merge: true })
+
+      setNewMessage("")
+    } catch (error) {
+      console.error("Error al enviar mensaje:", error)
+    }
+  }
+
+  return (
+    <div className="flex flex-col h-screen bg-gray-50">
+      <div className="bg-white shadow-sm p-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="sm" onClick={onBack}>
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <div>
+            <h2 className="font-bold text-lg">{partnerName}</h2>
+            <p className="text-xs text-green-500 font-medium">En línea</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {loading ? (
+          <div className="flex justify-center items-center h-full">
+            <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full"></div>
+          </div>
+        ) : messages.length === 0 ? (
+          <div className="text-center mt-10">
+            <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-3">
+              <MessageSquare className="h-8 w-8 text-primary/40" />
+            </div>
+            <p className="text-muted-foreground text-sm">Comienza la conversación con {partnerName}</p>
+          </div>
+        ) : (
+          messages.map((msg) => (
+            <div
+              key={msg.id}
+              className={`flex ${msg.senderId === user?.uid ? "justify-end" : "justify-start"}`}
+            >
+              <div
+                className={`max-w-[80%] p-3 rounded-2xl ${msg.senderId === user?.uid
+                  ? "bg-primary text-white rounded-tr-none"
+                  : "bg-white border text-gray-800 rounded-tl-none"
+                  }`}
+              >
+                <p className="text-sm">{msg.text}</p>
+                <p className={`text-[10px] mt-1 opacity-70 text-right`}>
+                  {msg.createdAt?.toDate ?
+                    new Date(msg.createdAt.toDate()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) :
+                    "Enviando..."
+                  }
+                </p>
+              </div>
+            </div>
+          ))
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+
+      <div className="bg-white p-4 border-t">
+        <form onSubmit={handleSendMessage} className="flex gap-2">
+          <Input
+            placeholder="Escribe un mensaje..."
+            value={newMessage}
+            onChange={(e) => setNewMessage(e.target.value)}
+            className="flex-1 rounded-full bg-gray-100 border-none focus-visible:ring-primary"
+          />
+          <Button type="submit" disabled={!newMessage.trim()} className="rounded-full w-10 h-10 p-0 flex items-center justify-center shrink-0">
+            <Send className="h-4 w-4" />
+          </Button>
+        </form>
+      </div>
+    </div>
+  )
 }

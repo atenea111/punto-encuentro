@@ -1,8 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Solo usar export estático cuando se hace build para producción
-  // En desarrollo (next dev), no usar output: 'export' para evitar errores
-  ...(process.env.NODE_ENV === 'production' && process.env.NEXT_PHASE !== 'phase-development-server' && { output: 'export' }),
+  output: process.env.NODE_ENV === 'production' ? 'export' : undefined,
   trailingSlash: true,
   images: {
     unoptimized: true

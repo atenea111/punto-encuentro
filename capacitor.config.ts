@@ -5,7 +5,8 @@ const config: CapacitorConfig = {
   appName: 'Punto Encuentro',
   webDir: 'out',
   server: {
-    androidScheme: 'https'
+    androidScheme: 'https',
+    cleartext: true
   }
 };
 

@@ -87,11 +87,13 @@ export function useRoles() {
     if (!user) return { success: false, error: 'No user logged in' }
 
     try {
-      await updateDoc(doc(db, 'users', user.uid), {
+      // Usamos setDoc con merge:true para que cree el documento si no existe
+      // (updateDoc falla silenciosamente si el doc no existe)
+      await setDoc(doc(db, 'users', user.uid), {
         role: newRole,
         permissions: newPermissions,
         updatedAt: new Date()
-      })
+      }, { merge: true })
       
       setUserRole(prev => ({
         ...prev,

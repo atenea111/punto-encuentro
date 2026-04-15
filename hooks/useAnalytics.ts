@@ -1,11 +1,16 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { 
   collection, 
   getDocs, 
   query, 
   where,
   orderBy,
-  limit 
+  limit,
+  doc,
+  getDoc,
+  setDoc,
+  increment,
+  Timestamp
 } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 
@@ -22,6 +27,7 @@ export interface AnalyticsData {
   topServices: any[]
   userGrowth: any[]
   bookingTrends: any[]
+  interactions: Record<string, number>
 }
 
 export function useAnalytics() {
@@ -37,12 +43,25 @@ export function useAnalytics() {
     recentBookings: [],
     topServices: [],
     userGrowth: [],
-    bookingTrends: []
+    bookingTrends: [],
+    interactions: {}
   })
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     fetchAnalytics()
+  }, [])
+
+  const logInteraction = useCallback(async (area: string) => {
+    try {
+      const statsRef = doc(db, 'stats', 'app_interactions')
+      await setDoc(statsRef, {
+        [area]: increment(1),
+        lastUpdated: Timestamp.now()
+      }, { merge: true })
+    } catch (error) {
+      console.error('Error logging interaction:', error)
+    }
   }, [])
 
   const fetchAnalytics = async () => {
@@ -60,6 +79,16 @@ export function useAnalytics() {
       // Obtener reservas
       const bookingsSnapshot = await getDocs(collection(db, 'bookings'))
       const bookings = bookingsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+
+      // Obtener interacciones reales
+      const interactionsDoc = await getDoc(doc(db, 'stats', 'app_interactions'))
+      const interactionsData = interactionsDoc.exists() ? interactionsDoc.data() : {}
+      const interactions = Object.keys(interactionsData)
+        .filter(key => key !== 'lastUpdated')
+        .reduce((acc, key) => {
+          acc[key] = interactionsData[key]
+          return acc
+        }, {} as Record<string, number>)
       
       // Calcular estadísticas
       const totalUsers = users.length
@@ -76,7 +105,11 @@ export function useAnalytics() {
       
       // Reservas recientes (últimas 10)
       const recentBookings = bookings
-        .sort((a: any, b: any) => new Date((b as any).createdAt?.toDate?.() || (b as any).createdAt).getTime() - new Date((a as any).createdAt?.toDate?.() || (a as any).createdAt).getTime())
+        .sort((a: any, b: any) => {
+          const bTime = (b as any).createdAt?.toDate?.() || (b as any).createdAt
+          const aTime = (a as any).createdAt?.toDate?.() || (a as any).createdAt
+          return new Date(bTime).getTime() - new Date(aTime).getTime()
+        })
         .slice(0, 10)
       
       // Servicios más populares
@@ -141,7 +174,8 @@ export function useAnalytics() {
         recentBookings,
         topServices,
         userGrowth,
-        bookingTrends
+        bookingTrends,
+        interactions
       })
     } catch (error) {
       console.error('Error fetching analytics:', error)
@@ -153,6 +187,7 @@ export function useAnalytics() {
   return {
     analytics,
     loading,
-    fetchAnalytics
+    fetchAnalytics,
+    logInteraction
   }
 }

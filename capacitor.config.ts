@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.puntoencuentro.app',
+  appId: 'com.encuentro12',
   appName: 'Punto Encuentro',
   webDir: 'out',
   server: {

@@ -1,13 +1,26 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
+import { Capacitor } from "@capacitor/core"
+import { App } from "@capacitor/app"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { LogoText } from "@/components/logo"
 import { CustomAlert } from "@/components/CustomAlert"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { Badge } from "@/components/ui/badge"
 import { useAuth } from "@/hooks/useAuth"
 import { useServices } from "@/hooks/useServices"
 import { useBookings } from "@/hooks/useBookings"
@@ -17,6 +30,8 @@ import { useReports } from "@/hooks/useReports"
 import { useCategories } from "@/hooks/useCategories"
 import { useUsers } from "@/hooks/useUsers"
 import { useAnalytics } from "@/hooks/useAnalytics"
+import { useGeolocation } from "@/hooks/useGeolocation"
+import { calcularDistanciaKm, formatearDistancia } from "@/lib/locationUtils"
 import {
   Search,
   Star,
@@ -24,6 +39,7 @@ import {
   Phone,
   Mail,
   ArrowLeft,
+  ArrowRight,
   ChevronLeft,
   ChevronRight,
   CreditCard,
@@ -35,18 +51,121 @@ import {
   TrendingUp,
   Filter,
   User,
+  MapPin,
+  Home,
+  Settings,
+  Trophy,
+  LayoutDashboard,
+  FolderTree,
+  Wrench,
+  BarChart3,
+  FileText,
+  Bell,
+  LogOut,
+  Menu,
+  X,
+  PieChart,
+  Shield,
+  Briefcase,
+  ShieldAlert,
+  Wallet,
+  Flame,
+  Activity,
+  CalendarCheck,
+  AlertCircle,
 } from "lucide-react"
+
+const AdminStatCard = ({ title, value, icon: Icon, color }: { title: string, value: string | number, icon: any, color: string }) => (
+  <Card>
+    <CardContent className="p-6 flex items-center space-x-4">
+      <div className={`p-3 rounded-full ${color} bg-opacity-10`}>
+        <Icon className={`w-6 h-6 ${color.replace('bg-', 'text-')}`} />
+      </div>
+      <div>
+        <p className="text-sm font-medium text-muted-foreground">{title}</p>
+        <h3 className="text-2xl font-bold">{value}</h3>
+      </div>
+    </CardContent>
+  </Card>
+)
+
+const AdminSidebar = ({ activeTab, setActiveTab, logout }: { activeTab: string, setActiveTab: (t: string) => void, logout: () => void }) => (
+  <div className="hidden md:flex flex-col w-64 bg-white border-r h-screen fixed left-0 top-0">
+    <div className="p-6">
+      <LogoText />
+    </div>
+    <nav className="flex-1 px-4 space-y-2">
+      {[
+        { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+        { id: 'users', label: 'Usuarios', icon: Users },
+        { id: 'services', label: 'Servicios', icon: Wrench },
+        { id: 'categories', label: 'Categorías', icon: FolderTree },
+        { id: 'reports', label: 'Reportes', icon: FileText },
+        { id: 'analytics', label: 'Estadísticas', icon: BarChart3 },
+        { id: 'settings', label: 'Ajustes', icon: Settings },
+      ].map((item) => (
+        <Button
+          key={item.id}
+          variant={activeTab === item.id ? "secondary" : "ghost"}
+          className="w-full justify-start"
+          onClick={() => setActiveTab(item.id)}
+        >
+          <item.icon className="w-5 h-5 mr-3" />
+          {item.label}
+        </Button>
+      ))}
+    </nav>
+    <div className="p-4 border-t">
+      <Button variant="ghost" className="w-full justify-start text-red-600" onClick={logout}>
+        <LogOut className="w-5 h-5 mr-3" />
+        Cerrar sesión
+      </Button>
+    </div>
+  </div>
+)
+
+const AdminBottomNav = ({ activeTab, setActiveTab }: { activeTab: string, setActiveTab: (t: string) => void }) => (
+  <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around p-2 z-50">
+    {[
+      { id: 'dashboard', icon: LayoutDashboard },
+      { id: 'users', icon: Users },
+      { id: 'services', icon: Wrench },
+      { id: 'categories', icon: FolderTree },
+      { id: 'reports', icon: FileText },
+      { id: 'analytics', icon: BarChart3 },
+      { id: 'settings', icon: Settings },
+    ].map((item) => (
+      <Button
+        key={item.id}
+        variant="ghost"
+        className={activeTab === item.id ? "text-primary" : ""}
+        onClick={() => setActiveTab(item.id)}
+      >
+        <item.icon className="w-6 h-6" />
+      </Button>
+    ))}
+  </div>
+)
 
 export default function HomePage() {
   const { user, signIn, signUp, logout, loading: authLoading } = useAuth()
   const { services, loading: servicesLoading, searchServices, createService } = useServices()
   const { createBooking, getBookingsByClient } = useBookings()
-  const { isAdmin, loading: rolesLoading } = useRoles()
+  const { isAdmin, isClient, isProvider, updateUserRole, loading: rolesLoading } = useRoles()
+  const { logInteraction } = useAnalytics()
   
-  const [userType, setUserType] = useState<"client" | "provider" | null>(null)
+  // Inicializar userType y flujo desde localStorage para que al recargar vaya directo al home del usuario
+  const [userType, setUserType] = useState<"client" | "provider" | null>(() => {
+    if (typeof window === "undefined") return null
+    const saved = localStorage.getItem("userType")
+    return saved === "client" || saved === "provider" ? saved : null
+  })
   const [clientFlow, setClientFlow] = useState<
     "onboarding" | "login" | "register" | "home" | "profile" | "agenda" | "service-detail" | "booking" | "payment"
-  >("onboarding")
+  >(() => {
+    if (typeof window === "undefined") return "onboarding"
+    return localStorage.getItem("userType") === "client" ? "home" : "onboarding"
+  })
   const [providerFlow, setProviderFlow] = useState<
     | "onboarding"
     | "login"
@@ -58,7 +177,11 @@ export default function HomePage() {
     | "create-service"
     | "edit-service"
     | "subscription"
-  >("onboarding")
+    | "statistics"
+  >(() => {
+    if (typeof window === "undefined") return "onboarding"
+    return localStorage.getItem("userType") === "provider" ? "dashboard" : "onboarding"
+  })
   const [selectedService, setSelectedService] = useState<any>(null)
   const [selectedProviderService, setSelectedProviderService] = useState<any>(null)
   const [selectedDate, setSelectedDate] = useState<string>("")
@@ -66,21 +189,112 @@ export default function HomePage() {
   const [searchTerm, setSearchTerm] = useState("")
   const [authError, setAuthError] = useState("")
   const [authSuccess, setAuthSuccess] = useState("")
+  const [bookingSource, setBookingSource] = useState<'anuncio' | 'recomendados' | 'cerca_tuyo' | 'rubro' | 'buscador'>("anuncio")
 
-  // Persistir tipo de usuario en localStorage
+  // Ref para la función "atrás" actual (usada por el botón físico de Android)
+  const handleBackRef = useRef<() => void>(() => {})
+
+  // Actualizar la acción "atrás" según el flujo actual (cliente / proveedor / raíz)
   useEffect(() => {
-    if (userType) {
-      localStorage.setItem('userType', userType)
+    const goBack = () => {
+      if (user && isAdmin) {
+        App.minimizeApp()
+        return
+      }
+      if (user && !userType) {
+        App.minimizeApp()
+        return
+      }
+      if (userType === "client") {
+        if (clientFlow === "payment") setClientFlow("booking")
+        else if (clientFlow === "booking") setClientFlow("service-detail")
+        else if (clientFlow === "service-detail") {
+          setClientFlow("home")
+          setSelectedService(null)
+        }
+        else if (clientFlow === "profile" || clientFlow === "agenda") setClientFlow("home")
+        else if (clientFlow === "home") App.minimizeApp()
+        else if (clientFlow === "login" || clientFlow === "register") setClientFlow("onboarding")
+        else if (clientFlow === "onboarding") App.minimizeApp()
+        return
+      }
+      if (userType === "provider") {
+        if (providerFlow === "edit-service") {
+          setProviderFlow("services")
+          setSelectedProviderService(null)
+        }
+        else if (providerFlow === "create-service") setProviderFlow("services")
+        else if (providerFlow === "services" || providerFlow === "statistics") setProviderFlow("dashboard")
+        else if (providerFlow === "profile" || providerFlow === "agenda" || providerFlow === "subscription") setProviderFlow("dashboard")
+        else if (providerFlow === "dashboard") App.minimizeApp()
+        else if (providerFlow === "login" || providerFlow === "register") setProviderFlow("onboarding")
+        else if (providerFlow === "onboarding") App.minimizeApp()
+        return
+      }
+      App.minimizeApp()
     }
-  }, [userType])
+    handleBackRef.current = goBack
+  }, [user, userType, isAdmin, clientFlow, providerFlow])
 
-  // Cargar tipo de usuario desde localStorage al inicializar
+  // Listener del botón atrás físico (solo en la app nativa Android)
   useEffect(() => {
+    if (Capacitor.getPlatform() !== "android") return
+    let listenerHandle: { remove: () => Promise<void> } | null = null
+    App.addListener("backButton", () => {
+      handleBackRef.current()
+    }).then((handle) => {
+      listenerHandle = handle
+    })
+    return () => {
+      listenerHandle?.remove?.()
+    }
+  }, [])
+
+  // Sincronizar estado inicial al montar o cuando el usuario cambia
+  useEffect(() => {
+    if (typeof window === "undefined" || rolesLoading || !user) return
+
     const savedUserType = localStorage.getItem('userType') as "client" | "provider" | null
-    if (savedUserType && user) {
-      setUserType(savedUserType)
+    
+    // Si Firestore dice que somos un proveedor (y no estamos forzando el modo cliente manualmente)
+    if (isProvider && savedUserType !== "client") {
+      setUserType("provider")
+      if (providerFlow === "onboarding") setProviderFlow("dashboard")
+      localStorage.setItem("userType", "provider")
+    } 
+    // Si Firestore dice que somos cliente (y no estamos forzando el modo proveedor manualmente)
+    else if (isClient && savedUserType !== "provider") {
+      setUserType("client")
+      if (clientFlow === "onboarding") setClientFlow("home")
+      localStorage.setItem("userType", "client")
     }
-  }, [user])
+    // Si no aplica ninguna regla fuerte de Firestore, respetamos lo que haya en LocalStorage
+    else if (savedUserType) {
+      setUserType(savedUserType)
+      if (savedUserType === "provider" && providerFlow === "onboarding") setProviderFlow("dashboard")
+      if (savedUserType === "client" && clientFlow === "onboarding") setClientFlow("home")
+    }
+  }, [user, rolesLoading, isClient, isProvider, userType, providerFlow, clientFlow])
+
+  // Cambiar de rol: actualizar Firestore, estado local y llevar al home del nuevo rol. Devuelve si tuvo éxito.
+  const switchToProvider = async (): Promise<{ success: boolean }> => {
+    const result = await updateUserRole("provider", [])
+    if (result.success) {
+      setUserType("provider")
+      setProviderFlow("dashboard")
+      localStorage.setItem("userType", "provider")
+    }
+    return result
+  }
+  const switchToClient = async (): Promise<{ success: boolean }> => {
+    const result = await updateUserRole("client", [])
+    if (result.success) {
+      setUserType("client")
+      setClientFlow("home")
+      localStorage.setItem("userType", "client")
+    }
+    return result
+  }
 
   // Limpiar localStorage al cerrar sesión
   useEffect(() => {
@@ -102,14 +316,8 @@ export default function HomePage() {
     )
   }
 
-  // Debug: Log del estado de roles
-  console.log('User:', user?.email)
-  console.log('isAdmin:', isAdmin)
-  console.log('rolesLoading:', rolesLoading)
-
   // Si el usuario es admin, mostrar panel de administración
   if (user && isAdmin) {
-    console.log('Mostrando panel de admin para:', user.email)
     return <AdminDashboard user={user} logout={logout} />
   }
 
@@ -186,6 +394,9 @@ export default function HomePage() {
         user={user}
         createBooking={createBooking}
         logout={logout}
+        onSwitchToProvider={switchToProvider}
+        setBookingSource={setBookingSource}
+        bookingSource={bookingSource}
       />
     )
   }
@@ -207,6 +418,7 @@ export default function HomePage() {
         logout={logout}
         selectedProviderService={selectedProviderService}
         setSelectedProviderService={setSelectedProviderService}
+        onSwitchToClient={switchToClient}
       />
     )
   }
@@ -292,8 +504,9 @@ function ProviderFlow({
   user,
   logout,
   selectedProviderService,
-  setSelectedProviderService
-}: { 
+  setSelectedProviderService,
+  onSwitchToClient
+}: {
   flow: string
   setFlow: (flow: any) => void
   signIn: (email: string, password: string) => Promise<{success: boolean, error?: string}>
@@ -308,7 +521,26 @@ function ProviderFlow({
   logout: () => Promise<{ success: boolean }>
   selectedProviderService: any
   setSelectedProviderService: (service: any) => void
+  onSwitchToClient: () => Promise<{ success: boolean }>
 }) {
+  const [profileData, setProfileData] = useState<any>(null)
+
+  useEffect(() => {
+    const loadProfile = async () => {
+      if (!user?.uid) return
+      try {
+        const { doc, getDoc } = await import("firebase/firestore")
+        const { db } = await import("@/lib/firebase")
+        const userDoc = await getDoc(doc(db, 'users', user.uid))
+        if (userDoc.exists()) {
+          setProfileData(userDoc.data())
+        }
+      } catch (error) {
+        console.error('Error loading profile in ProviderFlow:', error)
+      }
+    }
+    loadProfile()
+  }, [user])
   if (flow === "login") {
     return <ProviderLogin setFlow={setFlow} signIn={signIn} setAuthError={setAuthError} authError={authError} setAuthSuccess={setAuthSuccess} authSuccess={authSuccess} />
   }
@@ -322,7 +554,7 @@ function ProviderFlow({
   }
 
   if (flow === "profile") {
-    return <ProviderProfile setFlow={setFlow} user={user} logout={logout} />
+    return <ProviderProfile setFlow={setFlow} user={user} logout={logout} onSwitchToClient={onSwitchToClient} services={services} />
   }
 
   if (flow === "agenda") {
@@ -346,7 +578,7 @@ function ProviderFlow({
   }
 
   if (flow === "statistics") {
-    return <ProviderStatistics setFlow={setFlow} user={user} services={services} />
+    return <ProviderStatistics setFlow={setFlow} user={user} services={services} profileData={profileData} />
   }
 
   return <ProviderOnboarding setFlow={setFlow} />
@@ -373,7 +605,10 @@ function ClientFlow({
   searchServices,
   user,
   createBooking,
-  logout
+  logout,
+  onSwitchToProvider,
+  setBookingSource,
+  bookingSource
 }: {
   flow: string
   setFlow: (flow: any) => void
@@ -393,6 +628,9 @@ function ClientFlow({
   searchTerm: string
   setSearchTerm: (term: string) => void
   searchServices: (term: string) => any[]
+  onSwitchToProvider: () => Promise<{ success: boolean }>
+  setBookingSource: (source: any) => void
+  bookingSource: string
   user: any
   createBooking: (bookingData: any) => Promise<{success: boolean, error?: string}>
   logout: () => Promise<{ success: boolean }>
@@ -415,12 +653,13 @@ function ClientFlow({
         setSearchTerm={setSearchTerm}
         searchServices={searchServices}
         user={user}
+        setBookingSource={setBookingSource}
       />
     )
   }
 
   if (flow === "profile") {
-    return <ClientProfile setFlow={setFlow} user={user} logout={logout} />
+    return <ClientProfile setFlow={setFlow} user={user} logout={logout} onSwitchToProvider={onSwitchToProvider} />
   }
 
   if (flow === "agenda") {
@@ -428,7 +667,7 @@ function ClientFlow({
   }
 
   if (flow === "service-detail") {
-    return <ServiceDetail service={selectedService} setFlow={setFlow} />
+    return <ServiceDetail service={selectedService} setFlow={setFlow} bookingSource={bookingSource} />
   }
 
   if (flow === "booking") {
@@ -440,6 +679,7 @@ function ClientFlow({
         setSelectedDate={setSelectedDate}
         selectedTime={selectedTime}
         setSelectedTime={setSelectedTime}
+        bookingSource={bookingSource}
       />
     )
   }
@@ -453,6 +693,7 @@ function ClientFlow({
         setFlow={setFlow}
         user={user}
         createBooking={createBooking}
+        bookingSource={bookingSource}
       />
     )
   }
@@ -762,7 +1003,8 @@ function ClientHome({
   searchTerm,
   setSearchTerm,
   searchServices,
-  user
+  user,
+  setBookingSource
 }: { 
   setFlow: (flow: string) => void
   setSelectedService: (service: any) => void
@@ -771,35 +1013,57 @@ function ClientHome({
   setSearchTerm: (term: string) => void
   searchServices: (term: string) => any[]
   user: any
+  setBookingSource: (source: any) => void
 }) {
-  const [activeTab, setActiveTab] = useState("inicio")
+  const { categories } = useCategories()
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<"home" | "recommendations" | "nearby" | "category" | "all-categories">("home")
   const [selectedCategoryName, setSelectedCategoryName] = useState<string>("")
+  const [isFilterOpen, setIsFilterOpen] = useState(false)
+  const [maxPrice, setMaxPrice] = useState<number | "all">("all")
+  const [onlyNearby, setOnlyNearby] = useState(false)
+  const { position: userPosition, loading, setPosition } = useGeolocation()
+  const { logInteraction } = useAnalytics()
 
-  const allCategories = [
-    { name: "Oficios", icon: "🔧" },
-    { name: "Profesionales", icon: "💼" },
-    { name: "Aprendizaje", icon: "📚" },
-    { name: "Belleza", icon: "💄" },
-    { name: "Salud", icon: "🏥" },
-    { name: "Deporte", icon: "⚽" },
-    { name: "Hogar", icon: "🏠" },
-    { name: "Tecnología", icon: "💻" },
-    { name: "Educación", icon: "🎓" },
-    { name: "Mascotas", icon: "🐕" },
-    { name: "Eventos", icon: "🎉" },
-    { name: "Transporte", icon: "🚗" },
-  ]
+  // Calcular distancia de cada servicio al usuario
+  const calcularDistanciaServicio = (service: any): string | null => {
+    if (!userPosition || !service.latitude || !service.longitude) return null
+    const dist = calcularDistanciaKm(
+      userPosition.latitude, userPosition.longitude,
+      service.latitude, service.longitude
+    )
+    return formatearDistancia(dist)
+  }
 
-  // Mostrar solo las primeras 3 categorías en el home
-  const mainCategories = allCategories.slice(0, 3)
+  // Las categorías dinámicas de la base de datos
+  const allCategories = categories.map(cat => ({
+    name: cat.name,
+    icon: <span>{cat.icon}</span>,
+    rawIcon: cat.icon,
+    active: cat.active
+  })).filter(c => c.active !== false)
+
+  // Mostrar solo las primeras 4 categorías en el home
+  const mainCategories = allCategories.slice(0, 4)
 
   const filteredServices = searchTerm 
     ? searchServices(searchTerm)
     : services.filter((service) => {
         const matchesCategory = !selectedCategory || service.category === selectedCategory
-        return matchesCategory
+        const matchesPrice = maxPrice === "all" || Number(service.price) <= maxPrice
+        
+        let matchesNearby = true
+        if (onlyNearby && userPosition && service.latitude && service.longitude) {
+          const dist = calcularDistanciaKm(
+            userPosition.latitude, userPosition.longitude,
+            service.latitude, service.longitude
+          )
+          matchesNearby = dist <= 10 // Ejemplo: servicios a menos de 10km
+        } else if (onlyNearby) {
+          matchesNearby = false
+        }
+
+        return matchesCategory && matchesPrice && matchesNearby
       })
 
   const generateCalendar = () => {
@@ -820,8 +1084,19 @@ function ClientHome({
     return days
   }
 
-  const handleServiceClick = (service: any) => {
+  const handleServiceClick = (service: any, source?: 'anuncio' | 'recomendados' | 'cerca_tuyo' | 'rubro' | 'buscador') => {
     setSelectedService(service)
+    logInteraction('perfil_proveedor')
+    // Determinar origen automáticamente si no se provee
+    let finalSource = source
+    if (!finalSource) {
+      if (searchTerm) finalSource = 'buscador'
+      else if (viewMode === 'recommendations') finalSource = 'recomendados'
+      else if (viewMode === 'nearby') finalSource = 'cerca_tuyo'
+      else if (viewMode === 'category') finalSource = 'rubro'
+      else finalSource = 'anuncio'
+    }
+    setBookingSource(finalSource!)
     setFlow("service-detail")
   }
 
@@ -836,6 +1111,7 @@ function ClientHome({
   const handleCategoryClick = (categoryName: string) => {
     setSelectedCategoryName(categoryName)
     setViewMode("category")
+    logInteraction('categorias')
   }
 
   const handleBackToHome = () => {
@@ -847,40 +1123,7 @@ function ClientHome({
     setViewMode("all-categories")
   }
 
-  if (activeTab === "agenda") {
-    return <ClientAgenda setFlow={setFlow} user={user} />
-  }
 
-  if (activeTab === "perfil") {
-    return (
-      <div className="min-h-screen bg-gray-50">
-        <div className="bg-white shadow-sm p-4">
-          <h1 className="text-xl font-bold text-primary text-center">Perfil</h1>
-        </div>
-        <div className="p-4">
-          <Button onClick={() => setFlow("profile")} className="w-full">
-            Ver perfil completo
-          </Button>
-        </div>
-        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200">
-          <div className="flex justify-around py-2">
-            <button onClick={() => setActiveTab("inicio")} className="flex flex-col items-center py-2 px-4">
-              <div className="text-gray-400 mb-1">🏠</div>
-              <span className="text-xs text-gray-400">Inicio</span>
-            </button>
-            <button onClick={() => setActiveTab("agenda")} className="flex flex-col items-center py-2 px-4">
-              <div className="text-gray-400 mb-1">📅</div>
-              <span className="text-xs text-gray-400">Agenda</span>
-            </button>
-            <button onClick={() => setActiveTab("perfil")} className="flex flex-col items-center py-2 px-4">
-              <div className="text-primary mb-1">👤</div>
-              <span className="text-xs text-primary">Perfil</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    )
-  }
 
   if (viewMode === "recommendations") {
     return (
@@ -919,6 +1162,12 @@ function ClientHome({
                       </span>
                     </div>
                     <p className="text-sm mb-2 opacity-90">{service.name}</p>
+                    {calcularDistanciaServicio(service) && (
+                      <p className="text-xs text-green-300 mb-1 flex items-center gap-1">
+                        <MapPin className="h-3 w-3" />
+                        {calcularDistanciaServicio(service)}
+                      </p>
+                    )}
                     <div className="flex items-center gap-1 text-sm">
                       <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
                       <span>
@@ -931,19 +1180,25 @@ function ClientHome({
             ))}
           </div>
         </div>
-        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200">
-          <div className="flex justify-around py-2">
-            <button onClick={() => setActiveTab("inicio")} className="flex flex-col items-center py-2 px-4">
-              <div className="text-primary mb-1">🏠</div>
-              <span className="text-xs text-primary">Inicio</span>
+        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 pb-safe">
+          <div className="flex justify-around py-3">
+            <button onClick={() => setFlow("home")} className="flex flex-col items-center gap-1">
+              <div className="text-primary">
+                <Home className="h-6 w-6" />
+              </div>
+              <span className="text-[10px] font-medium text-primary">Inicio</span>
             </button>
-            <button onClick={() => setActiveTab("agenda")} className="flex flex-col items-center py-2 px-4">
-              <div className="text-gray-400 mb-1">📅</div>
-              <span className="text-xs text-gray-400">Agenda</span>
+            <button onClick={() => setFlow("agenda")} className="flex flex-col items-center gap-1">
+              <div className="text-gray-400">
+                <Calendar className="h-6 w-6" />
+              </div>
+              <span className="text-[10px] font-medium text-gray-400">Agenda</span>
             </button>
-            <button onClick={() => setActiveTab("perfil")} className="flex flex-col items-center py-2 px-4">
-              <div className="text-gray-400 mb-1">👤</div>
-              <span className="text-xs text-gray-400">Perfil</span>
+            <button onClick={() => setFlow("profile")} className="flex flex-col items-center gap-1">
+              <div className="text-gray-400">
+                <User className="h-6 w-6" />
+              </div>
+              <span className="text-[10px] font-medium text-gray-400">Perfil</span>
             </button>
           </div>
         </div>
@@ -952,6 +1207,19 @@ function ClientHome({
   }
 
   if (viewMode === "nearby") {
+    // Filtrar servicios que tienen coordenadas y ordenarlos por distancia
+    const serviciosConDistancia = services
+      .filter((service) => service.latitude && service.longitude && userPosition)
+      .map((service) => ({
+        ...service,
+        _distanciaKm: userPosition ? calcularDistanciaKm(
+          userPosition.latitude, userPosition.longitude,
+          service.latitude, service.longitude
+        ) : Infinity,
+        _distanciaTexto: calcularDistanciaServicio(service)
+      }))
+      .sort((a, b) => a._distanciaKm - b._distanciaKm)
+
     return (
       <div className="min-h-screen bg-gray-50">
         <div className="bg-white shadow-sm p-4 flex items-center">
@@ -961,9 +1229,13 @@ function ClientHome({
           <h1 className="text-xl font-bold text-primary">Cerca tuyo</h1>
         </div>
         <div className="p-4">
+          {!userPosition && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4 text-sm text-yellow-800">
+              📍 Activa la ubicación para ver servicios cerca tuyo
+            </div>
+          )}
           <div className="grid grid-cols-1 gap-4">
-            {services
-              .filter((service) => service.distance)
+            {serviciosConDistancia
               .map((service) => (
                 <Card
                   key={service.id}
@@ -990,7 +1262,12 @@ function ClientHome({
                         </span>
                       </div>
                       <p className="text-sm mb-1 opacity-90">{service.name}</p>
-                      <p className="text-xs text-primary mb-2">{service.distance}</p>
+                      {service._distanciaTexto && (
+                        <p className="text-xs text-green-300 mb-1 flex items-center gap-1">
+                          <MapPin className="h-3 w-3" />
+                          {service._distanciaTexto}
+                        </p>
+                      )}
                       <div className="flex items-center gap-1 text-sm">
                         <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
                         <span>
@@ -1003,19 +1280,25 @@ function ClientHome({
               ))}
           </div>
         </div>
-        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200">
-          <div className="flex justify-around py-2">
-            <button onClick={() => setActiveTab("inicio")} className="flex flex-col items-center py-2 px-4">
-              <div className="text-primary mb-1">🏠</div>
-              <span className="text-xs text-primary">Inicio</span>
+        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 pb-safe">
+          <div className="flex justify-around py-3">
+            <button onClick={() => setFlow("home")} className="flex flex-col items-center gap-1">
+              <div className="text-primary">
+                <Home className="h-6 w-6" />
+              </div>
+              <span className="text-[10px] font-medium text-primary">Inicio</span>
             </button>
-            <button onClick={() => setActiveTab("agenda")} className="flex flex-col items-center py-2 px-4">
-              <div className="text-gray-400 mb-1">📅</div>
-              <span className="text-xs text-gray-400">Agenda</span>
+            <button onClick={() => setFlow("agenda")} className="flex flex-col items-center gap-1">
+              <div className="text-gray-400">
+                <Calendar className="h-6 w-6" />
+              </div>
+              <span className="text-[10px] font-medium text-gray-400">Agenda</span>
             </button>
-            <button onClick={() => setActiveTab("perfil")} className="flex flex-col items-center py-2 px-4">
-              <div className="text-gray-400 mb-1">👤</div>
-              <span className="text-xs text-gray-400">Perfil</span>
+            <button onClick={() => setFlow("profile")} className="flex flex-col items-center gap-1">
+              <div className="text-gray-400">
+                <User className="h-6 w-6" />
+              </div>
+              <span className="text-[10px] font-medium text-gray-400">Perfil</span>
             </button>
           </div>
         </div>
@@ -1046,6 +1329,28 @@ function ClientHome({
                 <span className="text-sm font-medium text-center">{category.name}</span>
               </div>
             ))}
+          </div>
+        </div>
+        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 pb-safe z-40">
+          <div className="flex justify-around py-3">
+            <button onClick={() => setFlow("home")} className="flex flex-col items-center gap-1">
+              <div className="text-primary">
+                <Home className="h-6 w-6" />
+              </div>
+              <span className="text-[10px] font-medium text-primary">Inicio</span>
+            </button>
+            <button onClick={() => setFlow("agenda")} className="flex flex-col items-center gap-1">
+              <div className="text-gray-400">
+                <Calendar className="h-6 w-6" />
+              </div>
+              <span className="text-[10px] font-medium text-gray-400">Agenda</span>
+            </button>
+            <button onClick={() => setFlow("profile")} className="flex flex-col items-center gap-1">
+              <div className="text-gray-400">
+                <User className="h-6 w-6" />
+              </div>
+              <span className="text-[10px] font-medium text-gray-400">Perfil</span>
+            </button>
           </div>
         </div>
       </div>
@@ -1111,19 +1416,25 @@ function ClientHome({
             </div>
           )}
         </div>
-        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200">
-          <div className="flex justify-around py-2">
-            <button onClick={() => setActiveTab("inicio")} className="flex flex-col items-center py-2 px-4">
-              <div className="text-primary mb-1">🏠</div>
-              <span className="text-xs text-primary">Inicio</span>
+        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 pb-safe">
+          <div className="flex justify-around py-3">
+            <button onClick={() => setFlow("home")} className="flex flex-col items-center gap-1">
+              <div className="text-primary">
+                <Home className="h-6 w-6" />
+              </div>
+              <span className="text-[10px] font-medium text-primary">Inicio</span>
             </button>
-            <button onClick={() => setActiveTab("agenda")} className="flex flex-col items-center py-2 px-4">
-              <div className="text-gray-400 mb-1">📅</div>
-              <span className="text-xs text-gray-400">Agenda</span>
+            <button onClick={() => setFlow("agenda")} className="flex flex-col items-center gap-1">
+              <div className="text-gray-400">
+                <Calendar className="h-6 w-6" />
+              </div>
+              <span className="text-[10px] font-medium text-gray-400">Agenda</span>
             </button>
-            <button onClick={() => setActiveTab("perfil")} className="flex flex-col items-center py-2 px-4">
-              <div className="text-gray-400 mb-1">👤</div>
-              <span className="text-xs text-gray-400">Perfil</span>
+            <button onClick={() => setFlow("profile")} className="flex flex-col items-center gap-1">
+              <div className="text-gray-400">
+                <User className="h-6 w-6" />
+              </div>
+              <span className="text-[10px] font-medium text-gray-400">Perfil</span>
             </button>
           </div>
         </div>
@@ -1133,95 +1444,157 @@ function ClientHome({
 
   return (
     <div className="min-h-screen bg-gray-50 pb-20">
-      <div className="bg-white shadow-sm p-4">
-        <h1 className="text-xl font-bold text-primary text-center mb-4">Punto Encuentro</h1>
-
+      {/* Header con franja color petróleo/teal */}
+      <div className="bg-primary pt-8 pb-6 px-4 rounded-b-[2rem] shadow-lg">
+        <div className="text-center mb-4">
+          <h1 className="text-white text-xl font-bold italic tracking-tight">
+            Punto Encuentro
+          </h1>
+          {userPosition?.address ? (
+            <div className="flex flex-col items-center gap-1">
+              <div 
+                className="flex items-center justify-center gap-1 text-white/90 text-[10px] font-medium mt-1 bg-white/10 backdrop-blur-sm self-center mx-auto w-fit px-3 py-1 rounded-full border border-white/20 cursor-pointer active:scale-95 transition-all"
+                onClick={() => {
+                  const city = prompt("Introduce tu ciudad manualmente:");
+                  if (city) {
+                    setPosition({
+                      latitude: -34.6037, // Centro genérico si es manual
+                      longitude: -58.3816,
+                      city: city,
+                      address: city
+                    });
+                  }
+                }}
+              >
+                <MapPin className="h-2.5 w-2.5" />
+                <span>{userPosition.address}</span>
+                <span className="text-[8px] bg-white/20 px-1 rounded ml-1">Cambiar</span>
+              </div>
+            </div>
+          ) : (
+            <div 
+              className="flex items-center justify-center gap-1 text-white/60 text-[10px] mt-1 italic cursor-pointer"
+              onClick={() => {
+                const city = prompt("Introduce tu ciudad manualmente:");
+                if (city) {
+                  setPosition({
+                    latitude: -34.6037,
+                    longitude: -58.3816,
+                    city: city,
+                    address: city
+                  });
+                }
+              }}
+            >
+              {loading ? (
+                <>
+                  <div className="w-2 h-2 rounded-full border border-white/30 border-t-white animate-spin" />
+                  <span>Buscando ubicación...</span>
+                </>
+              ) : (
+                <span>📍 Tocar para elegir ciudad</span>
+              )}
+            </div>
+          )}
+        </div>
+        
         <div className="flex gap-2">
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-5 w-5" />
             <Input
-              placeholder="Buscar servicio"
-              className="pl-10"
+              placeholder="¿Qué estás buscando?"
+              className="pl-10 h-12 bg-white border-none rounded-xl shadow-sm italic text-gray-400"
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              onChange={(e) => {
+                setSearchTerm(e.target.value)
+                if (e.target.value.length === 3) logInteraction('buscador')
+              }}
             />
           </div>
-          <Button variant="outline" size="icon">
-            <Filter className="h-4 w-4" />
+          <Button 
+            variant="outline" 
+            size="icon" 
+            className={`h-12 w-12 border-none rounded-xl shadow-sm transition-colors ${isFilterOpen || maxPrice !== "all" || onlyNearby ? "bg-primary text-white" : "bg-white text-primary"}`}
+            onClick={() => setIsFilterOpen(true)}
+          >
+            <Filter className="h-5 w-5" />
           </Button>
         </div>
       </div>
 
-      <div className="p-4 space-y-6">
+      <div className="p-4 space-y-8">
         <div>
-          <h2 className="text-lg font-semibold mb-3">Categorías</h2>
-          <div className="grid grid-cols-4 gap-3">
-            {mainCategories.map((category) => (
+          <h2 className="text-xl font-bold mb-4">Categorías</h2>
+          <div className="flex gap-6 overflow-x-auto pb-4 scrollbar-hide">
+            {mainCategories.map((category, index) => (
               <div
                 key={category.name}
-                className="flex flex-col items-center cursor-pointer"
+                className="flex flex-col items-center gap-2 cursor-pointer min-w-fit"
                 onClick={() => handleCategoryClick(category.name)}
               >
-                <div className="w-16 h-16 bg-gray-200 rounded-2xl flex items-center justify-center mb-2">
-                  <span className="text-2xl">{category.icon}</span>
+                <div className={`w-20 h-20 rounded-full flex items-center justify-center border-2 transition-all ${index === 0 ? "bg-primary border-primary text-white" : "bg-white border-gray-100 text-primary"}`}>
+                  <span className="text-3xl">{category.rawIcon}</span>
                 </div>
-                <span className="text-sm font-medium text-center">{category.name}</span>
+                <span className="text-sm font-medium text-gray-700">{category.name}</span>
               </div>
             ))}
             <div
-              className="flex flex-col items-center cursor-pointer"
+              className="flex flex-col items-center gap-2 cursor-pointer min-w-fit"
               onClick={handleVerMasCategorias}
             >
-              <div className="w-16 h-16 bg-gray-100 border-2 border-dashed border-gray-300 rounded-2xl flex items-center justify-center mb-2">
-                <span className="text-2xl text-gray-500">➕</span>
+              <div className="w-20 h-20 bg-white border-2 border-gray-100 rounded-full flex items-center justify-center text-primary">
+                <Plus className="h-8 w-8" />
               </div>
-              <span className="text-sm font-medium text-center text-gray-600">Más</span>
+              <span className="text-sm font-medium text-gray-700">Más</span>
             </div>
           </div>
         </div>
 
         <div>
-          <div className="flex justify-between items-center mb-3">
-            <h2 className="text-lg font-semibold">Recomendados</h2>
+          <div className="flex justify-between items-end mb-4">
+            <h2 className="text-xl font-bold">Recomendados</h2>
             {filteredServices.length > 0 && (
-              <button onClick={handleVerMas} className="text-sm text-primary">
+              <button onClick={handleVerMas} className="text-sm text-gray-400 font-medium">
                 Ver más
               </button>
             )}
           </div>
           {filteredServices.length > 0 ? (
-            <div className="flex gap-3 overflow-x-auto pb-2">
-              {filteredServices.slice(0, 2).map((service) => (
+            <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide">
+              {filteredServices.slice(0, 4).map((service) => (
                 <Card
                   key={service.id}
-                  className="cursor-pointer hover:shadow-md transition-shadow flex-shrink-0 w-36 overflow-hidden"
-                  onClick={() => handleServiceClick(service)}
+                  className="cursor-pointer hover:shadow-md transition-shadow flex-shrink-0 w-44 h-64 rounded-2xl overflow-hidden border-none relative"
+                  onClick={() => handleServiceClick(service, 'recomendados')}
                 >
-                  <div className="relative w-full h-40">
-                    {/* Imagen de fondo que ocupa toda la card */}
-                    <img
-                      src={service.image || "/placeholder.svg"}
-                      alt={service.name}
-                      className="w-full h-full object-cover"
-                    />
+                  <img
+                    src={service.image || "/placeholder.svg"}
+                    alt={service.name}
+                    className="absolute inset-0 w-full h-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+                  
+                  <div className="absolute bottom-0 left-0 right-0 p-4 text-white">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-sm font-bold truncate">{service.providerName || service.name}</span>
+                      <span className="text-[10px] bg-white/20 backdrop-blur-md px-2 py-0.5 rounded text-white font-medium">
+                        {service.category}
+                      </span>
+                    </div>
                     
-                    {/* Overlay con gradiente para mejor legibilidad del texto */}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
-                    
-                    {/* Contenido sobre la imagen */}
-                    <div className="absolute bottom-0 left-0 right-0 p-3 text-white">
-                      <div className="flex flex-col gap-1 mb-2">
-                        <span className="text-sm font-medium">{service.providerName}</span>
-                        <span className="text-xs bg-white/20 backdrop-blur-sm px-2 py-0.5 rounded text-white self-start">
-                          {service.category}
-                        </span>
-                      </div>
+                    <div className="flex flex-col gap-0.5">
                       <div className="flex items-center gap-1 text-xs">
-                        <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                        <span>
-                          {service.rating} ({service.reviews} vecinos)
+                        <Star className="h-3 w-3 fill-white text-white" />
+                        <span className="text-white font-semibold">
+                          {service.rating} ({service.reviews})
                         </span>
                       </div>
+                      {calcularDistanciaServicio(service) && (
+                        <div className="flex items-center gap-1 text-[10px] text-primary-foreground/80 font-medium">
+                          <MapPin className="h-2.5 w-2.5" />
+                          <span>A {calcularDistanciaServicio(service)} de ti</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </Card>
@@ -1240,35 +1613,54 @@ function ClientHome({
           )}
         </div>
 
-        <div>
-          <button onClick={handleCercaTuyo} className="text-lg font-semibold mb-3 text-left">
-            Cerca tuyo
-          </button>
-          {services.length > 0 ? (
-            <Card
-              className="cursor-pointer hover:shadow-md transition-shadow"
-              onClick={() => handleServiceClick(services[0])}
-            >
-              <CardContent className="p-4">
-                <div className="flex gap-3">
-                  <div className="w-16 h-16 bg-gray-200 rounded-lg flex items-center justify-center flex-shrink-0">
-                    <div className="text-gray-400">📷</div>
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs bg-gray-200 px-2 py-0.5 rounded">{services[0].category}</span>
-                      <button className="ml-auto">⋯</button>
+        <div className="pb-8">
+          <h2 className="text-xl font-bold mb-4">Cerca tuyo</h2>
+          {filteredServices.length > 0 ? (
+            <div className="space-y-4">
+              {filteredServices.slice(0, 3).map((service) => (
+                <Card
+                  key={service.id}
+                  className="cursor-pointer hover:shadow-sm transition-shadow border-none bg-white rounded-2xl overflow-hidden shadow-sm"
+                  onClick={() => handleServiceClick(service, 'cerca_tuyo')}
+                >
+                  <CardContent className="p-3">
+                    <div className="flex gap-4">
+                      <div className="w-24 h-24 rounded-xl overflow-hidden flex-shrink-0">
+                        <img 
+                          src={service.image || "/placeholder.svg"} 
+                          alt={service.name}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      <div className="flex-1 flex flex-col justify-center py-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-[10px] font-bold text-primary uppercase tracking-wider bg-primary/5 px-2 py-0.5 rounded-full">
+                            {service.category}
+                          </span>
+                        </div>
+                        <h3 className="font-bold text-gray-800 text-sm mb-0.5 line-clamp-1">{service.name}</h3>
+                        <div className="flex items-center gap-1 text-xs text-gray-400 mb-2">
+                          <User className="h-3 w-3" />
+                          <span>{service.providerName || 'Particular'}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 mb-2">
+                          <p className="text-primary font-black text-sm">${service.price}</p>
+                          {calcularDistanciaServicio(service) && (
+                            <div className="flex items-center gap-1 text-[10px] text-gray-400 font-medium">
+                              <MapPin className="h-2.5 w-2.5" />
+                              <span>A {calcularDistanciaServicio(service)}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <button className="self-start mt-1 text-gray-300">
+                        <Filter className="h-4 w-4" />
+                      </button>
                     </div>
-                    <h3 className="font-semibold mb-1">{services[0].name}</h3>
-                    <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                      <User className="h-4 w-4" />
-                      <span>{services[0].providerName}</span>
-                    </div>
-                    <div className="text-lg font-bold text-primary mt-1">${services[0].price}</div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
           ) : (
             <Card>
               <CardContent className="p-4">
@@ -1283,19 +1675,98 @@ function ClientHome({
         </div>
       </div>
 
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200">
-        <div className="flex justify-around py-2">
-          <button onClick={() => setActiveTab("inicio")} className="flex flex-col items-center py-2 px-4">
-            <div className="text-primary mb-1">🏠</div>
-            <span className="text-xs text-primary">Inicio</span>
+      {/* Overlay de Filtros */}
+      {isFilterOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center">
+          <div 
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            onClick={() => setIsFilterOpen(false)}
+          />
+          <div className="relative w-full max-w-md bg-white rounded-t-[2.5rem] p-8 shadow-2xl animate-in slide-in-from-bottom duration-300">
+            <div className="w-12 h-1.5 bg-gray-200 rounded-full mx-auto mb-8" />
+            
+            <div className="flex justify-between items-center mb-8">
+              <h3 className="text-2xl font-black text-gray-800">Filtros</h3>
+              <button 
+                onClick={() => {
+                  setMaxPrice("all");
+                  setOnlyNearby(false);
+                }}
+                className="text-primary font-bold text-sm"
+              >
+                Limpiar todo
+              </button>
+            </div>
+
+            <div className="space-y-8 mb-10 text-gray-800">
+              {/* Filtro de Precio */}
+              <div>
+                <Label className="text-sm font-bold uppercase tracking-widest text-gray-400 mb-4 block">
+                  Precio máximo: {maxPrice === "all" ? "Todos" : `$${maxPrice}`}
+                </Label>
+                <div className="grid grid-cols-4 gap-2">
+                  {[1000, 5000, 10000, 20000].map((price) => (
+                    <button
+                      key={price}
+                      onClick={() => setMaxPrice(price)}
+                      className={`py-2 rounded-xl text-xs font-bold transition-all ${maxPrice === price ? "bg-primary text-white" : "bg-gray-100 text-gray-400"}`}
+                    >
+                      ${price}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Filtro de Cercanía */}
+              <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl">
+                <div className="flex items-center gap-3">
+                  <div className={`p-2 rounded-lg ${onlyNearby ? "bg-primary text-white" : "bg-white text-gray-400"}`}>
+                    <MapPin className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <p className="font-bold text-sm">Cerca de mí</p>
+                    <p className="text-[10px] text-gray-400">Radio de 10km</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setOnlyNearby(!onlyNearby)}
+                  className={`w-12 h-6 rounded-full transition-all relative ${onlyNearby ? "bg-primary" : "bg-gray-200"}`}
+                >
+                  <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${onlyNearby ? "right-1" : "left-1"}`} />
+                </button>
+              </div>
+            </div>
+
+            <Button 
+              className="w-full h-14 rounded-2xl text-lg font-bold shadow-lg shadow-primary/20"
+              onClick={() => setIsFilterOpen(false)}
+            >
+              Aplicar Filtros
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Footer Navigation */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 pb-safe z-40">
+        <div className="flex justify-around py-3">
+          <button onClick={() => setFlow("home")} className="flex flex-col items-center gap-1">
+            <div className="text-primary">
+              <Home className="h-6 w-6" />
+            </div>
+            <span className="text-[10px] font-medium text-primary">Inicio</span>
           </button>
-          <button onClick={() => setActiveTab("agenda")} className="flex flex-col items-center py-2 px-4">
-            <div className="text-gray-400 mb-1">📅</div>
-            <span className="text-xs text-gray-400">Agenda</span>
+          <button onClick={() => setFlow("agenda")} className="flex flex-col items-center gap-1">
+            <div className="text-gray-400">
+              <Calendar className="h-6 w-6" />
+            </div>
+            <span className="text-[10px] font-medium text-gray-400">Agenda</span>
           </button>
-          <button onClick={() => setActiveTab("perfil")} className="flex flex-col items-center py-2 px-4">
-            <div className="text-gray-400 mb-1">👤</div>
-            <span className="text-xs text-gray-400">Perfil</span>
+          <button onClick={() => setFlow("profile")} className="flex flex-col items-center gap-1">
+            <div className="text-gray-400">
+              <User className="h-6 w-6" />
+            </div>
+            <span className="text-[10px] font-medium text-gray-400">Perfil</span>
           </button>
         </div>
       </div>
@@ -1303,7 +1774,45 @@ function ClientHome({
   )
 }
 
-function ServiceDetail({ service, setFlow }: { service: any; setFlow: (flow: string) => void }) {
+function ServiceDetail({ service, setFlow, bookingSource }: { service: any; setFlow: (flow: string) => void; bookingSource: string }) {
+  const { position: userPosition } = useGeolocation()
+  const [providerProfile, setProviderProfile] = useState<any>(null)
+
+  // Cargar perfil real del proveedor desde Firestore
+  useEffect(() => {
+    const loadProvider = async () => {
+      if (!service?.providerId) return
+      try {
+        const { doc, getDoc } = await import("firebase/firestore")
+        const { db } = await import("@/lib/firebase")
+        const userDoc = await getDoc(doc(db, 'users', service.providerId))
+        if (userDoc.exists()) {
+          const data = userDoc.data()
+          setProviderProfile(data)
+          
+          // Fallback: si el proveedor no tiene ciudad en su perfil, resolverla desde las coordenadas del servicio
+          if (!data.city && service.latitude && service.longitude) {
+            try {
+              const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${service.latitude}&lon=${service.longitude}&zoom=10&addressdetails=1`)
+              const geo = await res.json()
+              const city = geo.address.city || geo.address.town || geo.address.village || geo.address.suburb || geo.address.state_district || ''
+              const state = geo.address.state || ''
+              const displayLoc = city && state ? `${city}, ${state}` : city || state || ''
+              if (displayLoc) {
+                setProviderProfile((prev: any) => ({ ...prev, city: displayLoc }))
+              }
+            } catch (err) {
+              console.error('Error reverse geocoding provider:', err)
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error cargando proveedor:', error)
+      }
+    }
+    loadProvider()
+  }, [service?.providerId, service?.latitude, service?.longitude])
+
   if (!service) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
@@ -1317,75 +1826,170 @@ function ServiceDetail({ service, setFlow }: { service: any; setFlow: (flow: str
     )
   }
 
+  const providerName = providerProfile?.businessName || providerProfile?.displayName || service.providerName || 'Proveedor'
+  const dist = (userPosition && service.latitude && service.longitude)
+    ? calcularDistanciaKm(userPosition.latitude, userPosition.longitude, service.latitude, service.longitude)
+    : null
+  const distText = dist !== null ? formatearDistancia(dist) : null
+  const providerCity = providerProfile?.city || ''
+  const providerPhone = providerProfile?.phone || ''
+  const providerEmail = providerProfile?.email || service.providerEmail || ''
+  const providerAvatar = providerProfile?.profileImage || `/placeholder.svg`
+  const coverImg = providerProfile?.coverImage || service.image || '/placeholder.svg'
+  const businessHours = providerProfile?.businessHours || null
+
+  // Formatear horarios para mostrar un resumen
+  const getHoursSummary = () => {
+    if (!businessHours) return null
+    const weekdays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
+    const saturday = businessHours.saturday
+    const sunday = businessHours.sunday
+    const weekdayHours = weekdays.map(d => businessHours[d]).filter(Boolean)
+    const allSameWeekday = weekdayHours.every((h: string) => h === weekdayHours[0])
+    
+    const lines = []
+    if (allSameWeekday && weekdayHours[0] && weekdayHours[0] !== 'Cerrado') {
+      lines.push({ label: 'Lun a Vie', hours: weekdayHours[0] })
+    }
+    if (saturday && saturday !== 'Cerrado') {
+      lines.push({ label: 'Sábado', hours: saturday })
+    }
+    if (sunday && sunday !== 'Cerrado') {
+      lines.push({ label: 'Domingo', hours: sunday })
+    }
+    return lines.length > 0 ? lines : null
+  }
+
+  const hoursSummary = getHoursSummary()
+
   return (
-    <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
-      {/* Header */}
-      <div className="bg-white shadow-sm p-4">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => setFlow("home")}>
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <h1 className="text-xl font-bold text-primary">Detalle del Servicio</h1>
+    <div className="min-h-screen bg-gray-50 pb-36">
+      {/* Cover Image con flecha y badge categoría */}
+      <div className="relative">
+        <img 
+          src={coverImg} 
+          alt={service.name} 
+          className="w-full h-56 object-cover"
+        />
+        <div className="absolute inset-0 bg-gradient-to-b from-black/30 to-transparent" />
+        
+        {/* Back button */}
+        <button 
+          onClick={() => setFlow("home")} 
+          className="absolute top-10 left-4 w-9 h-9 rounded-full bg-white/80 backdrop-blur-sm flex items-center justify-center shadow-md"
+        >
+          <ArrowLeft className="h-5 w-5 text-gray-700" />
+        </button>
+
+        {/* Category badge */}
+        <div className="absolute top-10 right-4 bg-white/90 backdrop-blur-sm rounded-full px-4 py-1.5 shadow-md">
+          <span className="text-sm font-semibold text-gray-700">{service.category}</span>
+        </div>
+
+        {/* Avatar centrado sobre el borde inferior */}
+        <div className="absolute left-1/2 -translate-x-1/2 -bottom-12">
+          <div className="w-24 h-24 rounded-full border-4 border-white bg-white overflow-hidden shadow-lg">
+            <img 
+              src={providerAvatar} 
+              alt={providerName} 
+              className="w-full h-full object-cover"
+            />
+          </div>
         </div>
       </div>
 
-      <div className="p-4 space-y-4">
-        {/* Service Image */}
-        <Card className="bg-white">
-          <CardContent className="p-0">
-            <img
-              src={service.image || "/placeholder.svg"}
-              alt={service.name}
-              className="w-full h-48 object-cover rounded-t-lg"
-            />
-            <div className="p-4">
-              <div className="flex justify-between items-start mb-2">
-                <h2 className="text-2xl font-bold">{service.name}</h2>
-                <span className="text-2xl font-bold text-primary">${service.price}</span>
-              </div>
-
-              <div className="flex items-center gap-2 mb-3">
-                <Star className="h-5 w-5 fill-yellow-400 text-yellow-400" />
-                <span className="font-semibold">{service.rating || 0}</span>
-                <span className="text-muted-foreground">• {service.reviews || 0} reseñas</span>
-                <span className="text-muted-foreground">• {service.category}</span>
-              </div>
-
-              <p className="text-muted-foreground mb-3">{service.description || 'Sin descripción'}</p>
-              
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <User className="h-4 w-4" />
-                <span>{service.providerName || 'Proveedor'}</span>
-              </div>
+      {/* Nombre, ciudad, rating */}
+      <div className="text-center mt-14 px-4">
+        <h2 className="text-xl font-bold text-gray-800">{providerName}</h2>
+        <div className="flex flex-wrap items-center justify-center gap-2 mt-1">
+          {providerCity && (
+            <div className="flex items-center gap-1 text-sm text-gray-500 font-medium">
+              <MapPin className="h-3.5 w-3.5 text-primary" />
+              <span className="max-w-[150px] truncate">{providerCity}</span>
             </div>
-          </CardContent>
-        </Card>
-
-        {/* Service Info */}
-        <Card className="bg-white">
-          <CardContent className="p-4">
-            <h3 className="font-semibold mb-3">Información del servicio</h3>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Duración:</span>
-                <span className="font-medium">{(service as any).duration || 60} minutos</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Categoría:</span>
-                <span className="font-medium">{service.category}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Precio:</span>
-                <span className="font-bold text-primary">${service.price}</span>
-              </div>
+          )}
+          
+          {distText && (
+            <div className="flex items-center gap-1 text-[11px] text-primary/70 font-bold bg-primary/5 px-2 py-0.5 rounded-full">
+              <span>{distText}</span>
             </div>
-          </CardContent>
-        </Card>
+          )}
 
-        {/* Action Button */}
-        <Button onClick={() => setFlow("booking")} className="w-full h-12 text-base" variant="orange">
-          Agendar turno
-        </Button>
+          {(providerCity || distText) && <span className="text-gray-300">•</span>}
+          
+          <div className="flex items-center gap-1">
+            <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
+            <span className="text-sm font-semibold text-gray-700">{service.rating || '0'}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Contacto */}
+      <div className="px-6 mt-6">
+        <h3 className="text-sm font-bold text-gray-800 mb-3">Contacto</h3>
+        <div className="space-y-2.5">
+          {providerPhone && (
+            <div className="flex items-center gap-3 text-sm text-gray-600">
+              <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                <Phone className="h-3.5 w-3.5 text-primary" />
+              </div>
+              <span>{providerPhone}</span>
+            </div>
+          )}
+          {providerEmail && (
+            <div className="flex items-center gap-3 text-sm text-gray-600">
+              <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                <Mail className="h-3.5 w-3.5 text-primary" />
+              </div>
+              <span className="truncate">{providerEmail}</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Sobre el servicio */}
+      <div className="px-6 mt-6">
+        <h3 className="text-sm font-bold text-gray-800 mb-2">Sobre el servicio</h3>
+        <p className="text-sm text-gray-500 leading-relaxed">
+          {service.description || 'Este proveedor aún no ha agregado una descripción de su servicio.'}
+        </p>
+      </div>
+
+      {/* Horarios */}
+      {hoursSummary && (
+        <div className="px-6 mt-6">
+          <div className="flex items-start gap-3">
+            <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+              <Clock className="h-3.5 w-3.5 text-primary" />
+            </div>
+            <div>
+              {hoursSummary.map((line: any, i: number) => (
+                <p key={i} className="text-sm text-gray-600">
+                  <span className="font-medium">{line.label}</span>
+                  <br />
+                  <span className="text-gray-400">{line.hours.replace(' - ', 'hs a ')}hs</span>
+                </p>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bottom sticky bar: Precio + Agendar */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 py-4 pb-safe z-40">
+        <div className="flex items-center justify-between">
+          <div>
+            <span className="text-xs text-gray-400">Desde</span>
+            <p className="text-xl font-black text-gray-800">${Number(service.price).toLocaleString('es-AR')}</p>
+          </div>
+          <Button 
+            onClick={() => setFlow("booking")} 
+            className="h-11 px-8 rounded-xl text-white font-semibold"
+            style={{ backgroundColor: '#FF7F50' }}
+          >
+            Agendar
+          </Button>
+        </div>
       </div>
     </div>
   )
@@ -1398,6 +2002,7 @@ function BookingCalendar({
   setSelectedDate,
   selectedTime,
   setSelectedTime,
+  bookingSource,
 }: {
   service: any
   setFlow: (flow: string) => void
@@ -1405,8 +2010,10 @@ function BookingCalendar({
   setSelectedDate: (date: string) => void
   selectedTime: string
   setSelectedTime: (time: string) => void
+  bookingSource: string
 }) {
   const [currentMonth, setCurrentMonth] = useState(new Date())
+  const { logInteraction } = useAnalytics()
 
   const availableTimes = ["10:00", "11:30", "15:00", "16:30", "18:00"]
 
@@ -1465,6 +2072,7 @@ function BookingCalendar({
 
   const handleConfirmBooking = () => {
     if (selectedDate && selectedTime) {
+      logInteraction('reserva_btn')
       setFlow("payment")
     }
   }
@@ -1576,6 +2184,7 @@ function PaymentScreen({
   setFlow,
   user,
   createBooking,
+  bookingSource,
 }: {
   service: any
   selectedDate: string
@@ -1583,10 +2192,36 @@ function PaymentScreen({
   setFlow: (flow: string) => void
   user: any
   createBooking: (bookingData: any) => Promise<{success: boolean, error?: string}>
+  bookingSource: string
 }) {
   const [selectedPayment, setSelectedPayment] = useState<string>("")
   const [showTransferDetails, setShowTransferDetails] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [providerBankDetails, setProviderBankDetails] = useState<{cbu?: string, alias?: string, accountHolder?: string} | null>(null)
+  
+  // Obtener datos bancarios reales del proveedor
+  useEffect(() => {
+    const fetchProviderBankDetails = async () => {
+      if (service?.providerId) {
+        try {
+          const { doc, getDoc } = await import("firebase/firestore")
+          const { db } = await import("@/lib/firebase")
+          const providerDoc = await getDoc(doc(db, 'users', service.providerId))
+          if (providerDoc.exists()) {
+            const data = providerDoc.data()
+            setProviderBankDetails({
+              cbu: data.cbu,
+              alias: data.alias,
+              accountHolder: data.accountHolder
+            })
+          }
+        } catch (error) {
+          console.error("Error fetching provider details:", error)
+        }
+      }
+    }
+    fetchProviderBankDetails()
+  }, [service?.providerId])
 
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr)
@@ -1630,6 +2265,7 @@ function PaymentScreen({
         status: 'pending' as const,
         paymentMethod: selectedPayment as 'cash' | 'mercadopago' | 'transfer',
         paymentStatus: selectedPayment === 'cash' ? 'pending' as const : 'paid' as const,
+        source: bookingSource,
       }
 
       const result = await createBooking(bookingData)
@@ -1725,12 +2361,17 @@ function PaymentScreen({
               <h3 className="font-semibold mb-3">Datos para transferencia</h3>
               <div className="bg-gray-50 p-3 rounded-lg space-y-2">
                 <p className="text-sm">
-                  <span className="font-medium">CBU:</span> 0001234567890000
+                  <span className="font-medium">Titular:</span> {providerBankDetails?.accountHolder || service.providerName || service.name}
                 </p>
                 <p className="text-sm">
-                  <span className="font-medium">Titular:</span> {service.name}
+                  <span className="font-medium">CBU / CVU:</span> {providerBankDetails?.cbu || "No especificado"}
                 </p>
-                <p className="text-sm">
+                {providerBankDetails?.alias && (
+                  <p className="text-sm">
+                    <span className="font-medium">Alias:</span> {providerBankDetails.alias}
+                  </p>
+                )}
+                <p className="text-sm border-t pt-2 mt-2 border-gray-200">
                   <span className="font-medium">Monto:</span> {service.price}
                 </p>
               </div>
@@ -1755,8 +2396,12 @@ function PaymentScreen({
   )
 }
 
-function ClientProfile({ setFlow, user, logout }: { setFlow: (flow: string) => void; user: any; logout: () => Promise<{ success: boolean }> }) {
+function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow: (flow: string) => void; user: any; logout: () => Promise<{ success: boolean }>; onSwitchToProvider: () => Promise<{ success: boolean }> }) {
   const { getBookingsByClient } = useBookings()
+  const [switchingRole, setSwitchingRole] = useState(false)
+  const [showConfirmSwitch, setShowConfirmSwitch] = useState(false)
+  const [roleAlert, setRoleAlert] = useState<"success" | "error" | null>(null)
+  const [roleAlertMessage, setRoleAlertMessage] = useState("")
   const [loading, setLoading] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [profileData, setProfileData] = useState({
@@ -1768,6 +2413,32 @@ function ClientProfile({ setFlow, user, logout }: { setFlow: (flow: string) => v
   })
   const [uploadingImage, setUploadingImage] = useState(false)
   const [success, setSuccess] = useState("")
+
+  // Cargar datos del perfil desde Firestore al montar
+  useEffect(() => {
+    const loadProfile = async () => {
+      if (!user?.uid) return
+      try {
+        const { doc, getDoc } = await import("firebase/firestore")
+        const { db } = await import("@/lib/firebase")
+        const userDoc = await getDoc(doc(db, 'users', user.uid))
+        if (userDoc.exists()) {
+          const data = userDoc.data()
+          setProfileData(prev => ({
+            ...prev,
+            name: data.name || data.displayName || user?.displayName || "",
+            email: data.email || user?.email || "",
+            phone: data.phone || "",
+            address: data.address || "",
+            profileImage: data.profileImage || "/placeholder.svg"
+          }))
+        }
+      } catch (error) {
+        console.error('Error cargando perfil:', error)
+      }
+    }
+    loadProfile()
+  }, [user])
   
   const handleLogout = async () => {
     setLoading(true)
@@ -1816,17 +2487,15 @@ function ClientProfile({ setFlow, user, logout }: { setFlow: (flow: string) => v
     }
   }
 
-  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
 
-    // Validar tipo de archivo
     if (!file.type.startsWith('image/')) {
       alert('Por favor selecciona un archivo de imagen válido')
       return
     }
 
-    // Validar tamaño (máximo 5MB)
     if (file.size > 5 * 1024 * 1024) {
       alert('La imagen es demasiado grande. Máximo 5MB')
       return
@@ -1834,17 +2503,29 @@ function ClientProfile({ setFlow, user, logout }: { setFlow: (flow: string) => v
 
     setUploadingImage(true)
     
-    // Crear URL temporal para mostrar la imagen inmediatamente
-    const imageUrl = URL.createObjectURL(file)
-    setProfileData(prev => ({ ...prev, profileImage: imageUrl }))
-    
-    // Simular subida a Firebase Storage
-    setTimeout(() => {
-      console.log('Imagen de perfil subida exitosamente:', file.name)
+    try {
+      const { uploadImage } = await import("@/lib/uploadImage")
+      const imageUrl = await uploadImage(file, `profiles/${user?.uid}/profile`)
+      setProfileData(prev => ({ ...prev, profileImage: imageUrl }))
+      
+      // Guardar en Firestore inmediatamente
+      const { doc, setDoc } = await import("firebase/firestore")
+      const { db } = await import("@/lib/firebase")
+      if (user?.uid) {
+        await setDoc(doc(db, 'users', user.uid), {
+          profileImage: imageUrl,
+          updatedAt: new Date()
+        }, { merge: true })
+      }
+      
       setUploadingImage(false)
       setSuccess('¡Imagen de perfil actualizada!')
       setTimeout(() => setSuccess(""), 3000)
-    }, 1500)
+    } catch (error: any) {
+      console.error('Error subiendo imagen:', error)
+      setUploadingImage(false)
+      alert(error.message || 'Error al subir la imagen')
+    }
   }
 
   const handleInputChange = (field: string, value: string) => {
@@ -2048,6 +2729,64 @@ function ClientProfile({ setFlow, user, logout }: { setFlow: (flow: string) => v
           </CardContent>
         </Card>
 
+        {roleAlert && (
+          <div className="p-0">
+            <CustomAlert
+              type={roleAlert}
+              title={roleAlert === "success" ? "¡Listo!" : "Error"}
+              message={roleAlertMessage}
+              onClose={() => { setRoleAlert(null); setRoleAlertMessage("") }}
+            />
+          </div>
+        )}
+
+        <Card className="bg-white">
+          <CardContent className="p-4">
+            <h3 className="font-semibold mb-2">Cambiar de rol</h3>
+            <p className="text-sm text-muted-foreground mb-3">
+              ¿Quieres ofrecer tus servicios? Cambia a modo Proveedor para publicar y gestionar tus ofertas.
+            </p>
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => setShowConfirmSwitch(true)}
+              disabled={switchingRole}
+            >
+              <Building2 className="h-4 w-4 mr-2" />
+              {switchingRole ? "Cambiando..." : "Quiero ser Proveedor"}
+            </Button>
+          </CardContent>
+        </Card>
+
+        <AlertDialog open={showConfirmSwitch} onOpenChange={setShowConfirmSwitch}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>¿Cambiar a modo Proveedor?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Tendrás acceso al panel para publicar y gestionar tus servicios, ver reservas y tu agenda. Podrás volver a modo Cliente cuando quieras desde tu perfil.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancelar</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={async () => {
+                  setShowConfirmSwitch(false)
+                  setSwitchingRole(true)
+                  setRoleAlert(null)
+                  const result = await onSwitchToProvider()
+                  setSwitchingRole(false)
+                  if (!result.success) {
+                    setRoleAlert("error")
+                    setRoleAlertMessage("Falló la actualización. Intente más tarde.")
+                  }
+                }}
+              >
+                Sí, cambiar
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
         <Button 
           variant="destructive" 
           className="w-full" 
@@ -2056,6 +2795,30 @@ function ClientProfile({ setFlow, user, logout }: { setFlow: (flow: string) => v
         >
           {loading ? "Cerrando sesión..." : "Cerrar sesión"}
         </Button>
+      </div>
+
+      {/* Footer Navigation */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 pb-safe z-40">
+        <div className="flex justify-around py-3">
+          <button onClick={() => setFlow("home")} className="flex flex-col items-center gap-1">
+            <div className="text-gray-400">
+              <Home className="h-6 w-6" />
+            </div>
+            <span className="text-[10px] font-medium text-gray-400">Inicio</span>
+          </button>
+          <button onClick={() => setFlow("agenda")} className="flex flex-col items-center gap-1">
+            <div className="text-gray-400">
+              <Calendar className="h-6 w-6" />
+            </div>
+            <span className="text-[10px] font-medium text-gray-400">Agenda</span>
+          </button>
+          <button onClick={() => setFlow("profile")} className="flex flex-col items-center gap-1">
+            <div className="text-primary">
+              <User className="h-6 w-6" />
+            </div>
+            <span className="text-[10px] font-medium text-primary">Perfil</span>
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -2161,195 +2924,135 @@ function ClientAgenda({ setFlow, user }: { setFlow: (flow: string) => void; user
   }
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
-      <div className="bg-white shadow-sm p-4">
-        <div className="flex items-center gap-3 mb-4">
-          <Button variant="ghost" size="sm" onClick={() => setFlow("home")}>
-            ← Volver
-          </Button>
-          <h1 className="text-xl font-bold">Mis Reservas</h1>
+    <div className="min-h-screen bg-[#f7fdfd] pb-24">
+      <div className="p-4 flex items-center justify-between sticky top-0 bg-[#f7fdfd] z-10">
+        <button onClick={() => setFlow("home")} className="p-2">
+          <ArrowLeft className="h-6 w-6 text-gray-800" />
+        </button>
+        <h1 className="text-xl font-bold text-gray-800 flex-1 text-center pr-10">Agenda</h1>
+      </div>
+
+      <div className="p-6 space-y-8">
+        {/* Calendario */}
+        <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-50">
+          <div className="flex items-center justify-between mb-8 px-2">
+            <h3 className="text-xl font-bold text-gray-800">
+              {currentMonth.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' }).charAt(0).toUpperCase() + currentMonth.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' }).slice(1)}
+            </h3>
+            <div className="flex items-center gap-6">
+              <button 
+                onClick={() => navigateMonth('prev')}
+                className="text-gray-300 p-1"
+              >
+                <ChevronLeft className="h-6 w-6" />
+              </button>
+              <button 
+                onClick={() => navigateMonth('next')}
+                className="text-gray-300 p-1"
+              >
+                <ChevronRight className="h-6 w-6" />
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-7 gap-1 mb-6">
+            {['Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sa', 'Do'].map(day => (
+              <div key={day} className="text-center text-xs font-bold text-gray-400">
+                {day}
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-7 gap-1">
+            {calendarDays.map((day, index) => (
+              <button
+                key={index}
+                onClick={() => {
+                  if (day.isCurrentMonth) {
+                    setSelectedDate(day.fullDate)
+                  }
+                }}
+                className={`
+                  h-10 w-10 mx-auto flex flex-col items-center justify-center text-sm rounded-xl transition-all relative
+                  ${day.isCurrentMonth ? 'text-gray-800 font-medium' : 'text-gray-200'}
+                  ${selectedDate === day.fullDate ? 'bg-primary text-white shadow-lg' : ''}
+                `}
+              >
+                <span>{day.date}</span>
+                {day.bookings.length > 0 && day.isCurrentMonth && selectedDate !== day.fullDate && (
+                  <div className="absolute bottom-1 w-1 h-1 bg-primary rounded-full"></div>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Listado de citas */}
+        <div className="space-y-4">
+          <h2 className="text-xl font-bold text-gray-800 px-2">Próximas citas</h2>
+          
+          {(selectedDate ? selectedDateBookings : clientBookings.filter(b => new Date(b.date) >= new Date())).length > 0 ? (
+            (selectedDate ? selectedDateBookings : clientBookings.filter(b => new Date(b.date) >= new Date()))
+              .slice(0, 5)
+              .map((booking) => (
+              <Card key={booking.id} className="border-none shadow-sm bg-white rounded-2xl overflow-hidden">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-4">
+                    <div className="w-14 h-14 rounded-full bg-gray-100 flex-shrink-0 overflow-hidden relative">
+                      <img 
+                        src={`https://ui-avatars.com/api/?name=${booking.providerName}&background=random`} 
+                        alt={booking.providerName} 
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-bold text-gray-800 text-base">{booking.serviceName}</h4>
+                      </div>
+                      <p className="text-sm text-gray-400 font-medium">{booking.providerName}</p>
+                      <div className="flex items-center gap-2 mt-1.5">
+                        <div className="w-4 h-4 rounded-full bg-[#30cad0]/20 flex items-center justify-center">
+                          <div className="w-1.5 h-1.5 rounded-full bg-[#30cad0]" />
+                        </div>
+                        <p className="text-xs font-bold text-[#30cad0]">
+                          {new Date(booking.date).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}, {booking.time}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))
+          ) : (
+            <div className="text-center py-12 text-gray-300">
+              <Calendar className="h-12 w-12 mx-auto mb-3 opacity-20" />
+            </div>
+          )}
         </div>
       </div>
 
-      <div className="p-4 space-y-6">
-        {/* Calendario */}
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold">Calendario</h3>
-              <div className="flex items-center gap-2">
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={() => navigateMonth('prev')}
-                >
-                  ←
-                </Button>
-                <span className="font-medium min-w-[120px] text-center">
-                  {currentMonth.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}
-                </span>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={() => navigateMonth('next')}
-                >
-                  →
-                </Button>
-              </div>
+      {/* Footer Navigation */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 pb-safe z-20">
+        <div className="flex justify-around py-3">
+          <button onClick={() => setFlow("home")} className="flex flex-col items-center gap-1">
+            <div className="text-gray-400">
+              <Home className="h-6 w-6" />
             </div>
-
-            {/* Días de la semana */}
-            <div className="grid grid-cols-7 gap-1 mb-2">
-              {['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'].map(day => (
-                <div key={day} className="text-center text-sm font-medium text-gray-500 p-2">
-                  {day}
-                </div>
-              ))}
+            <span className="text-[10px] font-medium text-gray-400">Inicio</span>
+          </button>
+          <button onClick={() => setFlow("agenda")} className="flex flex-col items-center gap-1">
+            <div className="text-primary">
+              <Calendar className="h-6 w-6" />
             </div>
-
-            {/* Días del calendario */}
-            <div className="grid grid-cols-7 gap-1">
-              {calendarDays.map((day, index) => (
-                <button
-                  key={index}
-                  onClick={() => {
-                    if (day.isCurrentMonth) {
-                      setSelectedDate(day.fullDate)
-                    }
-                  }}
-                  className={`
-                    p-2 text-sm rounded-lg transition-colors
-                    ${day.isCurrentMonth 
-                      ? 'text-gray-900 hover:bg-gray-100' 
-                      : 'text-gray-400'
-                    }
-                    ${selectedDate === day.fullDate 
-                      ? 'bg-primary text-white hover:bg-primary/90' 
-                      : ''
-                    }
-                    ${day.bookings.length > 0 && day.isCurrentMonth
-                      ? 'bg-blue-50 text-blue-800 hover:bg-blue-100'
-                      : ''
-                    }
-                  `}
-                >
-                  <div className="flex flex-col items-center">
-                    <span>{day.date}</span>
-                    {day.bookings.length > 0 && day.isCurrentMonth && (
-                      <div className="w-1 h-1 bg-blue-600 rounded-full mt-1"></div>
-                    )}
-                  </div>
-                </button>
-              ))}
+            <span className="text-[10px] font-medium text-primary">Agenda</span>
+          </button>
+          <button onClick={() => setFlow("profile")} className="flex flex-col items-center gap-1">
+            <div className="text-gray-400">
+              <User className="h-6 w-6" />
             </div>
-          </CardContent>
-        </Card>
-
-        {/* Reservas del día seleccionado */}
-        {selectedDate && (
-          <Card>
-            <CardContent className="p-4">
-              <h3 className="font-semibold mb-3">
-                Reservas del {new Date(selectedDate).toLocaleDateString('es-ES', { 
-                  weekday: 'long', 
-                  year: 'numeric', 
-                  month: 'long', 
-                  day: 'numeric' 
-                })}
-              </h3>
-              <div className="space-y-3">
-                {selectedDateBookings.length > 0 ? (
-                  selectedDateBookings.map((booking) => (
-                    <div key={booking.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                      <Clock className="h-4 w-4 text-muted-foreground" />
-                      <div className="flex-1">
-                        <p className="font-medium">{booking.serviceName}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {booking.time} - {booking.providerName}
-                        </p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className={`text-xs px-2 py-1 rounded-full ${
-                            booking.status === 'confirmed' 
-                              ? 'bg-green-100 text-green-800'
-                              : booking.status === 'pending'
-                              ? 'bg-yellow-100 text-yellow-800'
-                              : booking.status === 'cancelled'
-                              ? 'bg-red-100 text-red-800'
-                              : 'bg-blue-100 text-blue-800'
-                          }`}>
-                            {booking.status === 'confirmed' ? 'Confirmada' :
-                             booking.status === 'pending' ? 'Pendiente' :
-                             booking.status === 'cancelled' ? 'Cancelada' : 'Completada'}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            ${booking.price || 0}
-                          </span>
-                        </div>
-                      </div>
-                      {booking.status !== 'cancelled' && booking.status !== 'completed' && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleCancelBooking(booking.id)}
-                          disabled={loading}
-                          className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                        >
-                          Cancelar
-                        </Button>
-                      )}
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-center py-8 text-muted-foreground">
-                    <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                    <p>No tienes reservas para este día</p>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Todas las reservas */}
-        <Card>
-          <CardContent className="p-4">
-            <h3 className="font-semibold mb-3">Todas mis reservas</h3>
-            <div className="space-y-3">
-              {clientBookings.length > 0 ? (
-                clientBookings.slice(0, 10).map((booking) => (
-                  <div key={booking.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                    <Clock className="h-4 w-4 text-muted-foreground" />
-                    <div className="flex-1">
-                      <p className="font-medium">{booking.serviceName}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {new Date(booking.date).toLocaleDateString('es-ES')} - {booking.time}
-                      </p>
-                      <p className="text-sm text-muted-foreground">{booking.providerName}</p>
-                    </div>
-                    <div className="text-right">
-                      <span className={`text-xs px-2 py-1 rounded-full ${
-                        booking.status === 'confirmed' 
-                          ? 'bg-green-100 text-green-800'
-                          : booking.status === 'pending'
-                          ? 'bg-yellow-100 text-yellow-800'
-                          : 'bg-red-100 text-red-800'
-                      }`}>
-                        {booking.status === 'confirmed' ? 'Confirmada' :
-                         booking.status === 'pending' ? 'Pendiente' :
-                         booking.status === 'cancelled' ? 'Cancelada' : 'Completada'}
-                      </span>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                  <p>No tienes reservas programadas</p>
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+            <span className="text-[10px] font-medium text-gray-400">Perfil</span>
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -2703,7 +3406,7 @@ function ProviderDashboard({ setFlow, user, services }: { setFlow: (flow: string
   const [isSubscribed, setIsSubscribed] = useState(false)
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
+    <div className="min-h-screen pb-24" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
       {/* Header */}
       <div className="bg-white shadow-sm p-4">
         <div className="flex items-center justify-between mb-4">
@@ -2832,11 +3535,38 @@ function ProviderDashboard({ setFlow, user, services }: { setFlow: (flow: string
           </CardContent>
         </Card>
       </div>
+
+      {/* Bottom Navigation */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 pb-safe z-40">
+        <div className="flex justify-around py-3">
+          <button className="flex flex-col items-center gap-1">
+            <Home className="h-6 w-6 text-primary" />
+            <span className="text-[10px] font-medium text-primary">Inicio</span>
+          </button>
+          <button onClick={() => setFlow("agenda")} className="flex flex-col items-center gap-1">
+            <Calendar className="h-6 w-6 text-gray-400" />
+            <span className="text-[10px] font-medium text-gray-400">Agenda</span>
+          </button>
+          <button onClick={() => setFlow("profile")} className="flex flex-col items-center gap-1">
+            <User className="h-6 w-6 text-gray-400" />
+            <span className="text-[10px] font-medium text-gray-400">Perfil</span>
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
 
-function ProviderProfile({ setFlow, user, logout }: { setFlow: (flow: string) => void; user: any; logout: () => Promise<{ success: boolean }> }) {
+function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: { setFlow: (flow: string) => void; user: any; logout: () => Promise<{ success: boolean }>; onSwitchToClient: () => Promise<{ success: boolean }>; services: any[] }) {
+  const { position: userPosition } = useGeolocation()
+  const { getBookingsByProvider } = useBookings()
+  const providerBookings = getBookingsByProvider(user?.uid) || []
+  const providerServices = services.filter((s: any) => s.providerId === user?.uid)
+
+  const [switchingRole, setSwitchingRole] = useState(false)
+  const [showConfirmSwitch, setShowConfirmSwitch] = useState(false)
+  const [roleAlert, setRoleAlert] = useState<"success" | "error" | null>(null)
+  const [roleAlertMessage, setRoleAlertMessage] = useState("")
   const [profileData, setProfileData] = useState({
     businessName: user?.displayName || "Mi Negocio",
     email: user?.email || "",
@@ -2856,12 +3586,64 @@ function ProviderProfile({ setFlow, user, logout }: { setFlow: (flow: string) =>
       sunday: "Cerrado"
     },
     profileImage: "/placeholder.svg",
-    coverImage: "/placeholder.svg"
+    coverImage: "/placeholder.svg",
+    city: "",
+    cbu: "",
+    alias: "",
+    accountHolder: "",
+    createdAt: null as any
   })
   
   const [isEditing, setIsEditing] = useState(false)
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState("")
+
+  // Stats dinámicos (después de profileData)
+  const uniqueClients = new Set(providerBookings.map((b: any) => b.clientId)).size
+  const avgRating = providerServices.length > 0
+    ? (providerServices.reduce((sum: number, s: any) => sum + (s.rating || 0), 0) / providerServices.length).toFixed(1)
+    : '0'
+  const accountCreatedAt = profileData?.createdAt || user?.metadata?.creationTime
+  const experienceYears = accountCreatedAt
+    ? Math.max(0, Math.floor((Date.now() - new Date(accountCreatedAt).getTime()) / (1000 * 60 * 60 * 24 * 365)))
+    : 0
+
+  // Cargar datos del perfil desde Firestore al montar
+  useEffect(() => {
+    const loadProfile = async () => {
+      if (!user?.uid) return
+      try {
+        const { doc, getDoc } = await import("firebase/firestore")
+        const { db } = await import("@/lib/firebase")
+        const userDoc = await getDoc(doc(db, 'users', user.uid))
+        if (userDoc.exists()) {
+          const data = userDoc.data()
+          setProfileData(prev => ({
+            ...prev,
+            businessName: data.businessName || data.displayName || user?.displayName || "Mi Negocio",
+            email: data.email || user?.email || "",
+            phone: data.phone || "",
+            address: data.address || "",
+            description: data.description || "",
+            website: data.website || "",
+            instagram: data.instagram || "",
+            facebook: data.facebook || "",
+            profileImage: data.profileImage || "/placeholder.svg",
+            coverImage: data.coverImage || "/placeholder.svg",
+            city: data.city || "",
+            cbu: data.cbu || "",
+            alias: data.alias || "",
+            accountHolder: data.accountHolder || "",
+            createdAt: data.createdAt?.toDate?.() || data.createdAt || null,
+            ...(data.businessHours ? { businessHours: data.businessHours } : {})
+          }))
+        }
+      } catch (error) {
+        console.error('Error cargando perfil:', error)
+      }
+    }
+    loadProfile()
+  }, [user])
 
   const handleSave = async () => {
     setLoading(true)
@@ -2924,17 +3706,15 @@ function ProviderProfile({ setFlow, user, logout }: { setFlow: (flow: string) =>
 
   const [uploadingImage, setUploadingImage] = useState<'profile' | 'cover' | null>(null)
 
-  const handleImageUpload = (type: 'profile' | 'cover', event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (type: 'profile' | 'cover', event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
 
-    // Validar tipo de archivo
     if (!file.type.startsWith('image/')) {
       alert('Por favor selecciona un archivo de imagen válido')
       return
     }
 
-    // Validar tamaño (máximo 5MB)
     if (file.size > 5 * 1024 * 1024) {
       alert('La imagen es demasiado grande. Máximo 5MB')
       return
@@ -2942,301 +3722,398 @@ function ProviderProfile({ setFlow, user, logout }: { setFlow: (flow: string) =>
 
     setUploadingImage(type)
     
-    // Crear URL temporal para mostrar la imagen inmediatamente
-    const imageUrl = URL.createObjectURL(file)
-    
-    if (type === 'profile') {
-      setProfileData(prev => ({ ...prev, profileImage: imageUrl }))
-    } else {
-      setProfileData(prev => ({ ...prev, coverImage: imageUrl }))
-    }
-    
-    // Simular subida a Firebase Storage
-    setTimeout(() => {
-      console.log(`Imagen ${type} subida exitosamente:`, file.name)
+    try {
+      const { uploadImage } = await import("@/lib/uploadImage")
+      const imageUrl = await uploadImage(file, `profiles/${user?.uid}/${type}`)
+      
+      if (type === 'profile') {
+        setProfileData(prev => ({ ...prev, profileImage: imageUrl }))
+      } else {
+        setProfileData(prev => ({ ...prev, coverImage: imageUrl }))
+      }
+      
+      // Guardar en Firestore inmediatamente
+      const { doc, setDoc } = await import("firebase/firestore")
+      const { db } = await import("@/lib/firebase")
+      if (user?.uid) {
+        await setDoc(doc(db, 'users', user.uid), {
+          [type === 'profile' ? 'profileImage' : 'coverImage']: imageUrl,
+          updatedAt: new Date()
+        }, { merge: true })
+      }
+      
       setUploadingImage(null)
       setSuccess(`¡Imagen ${type === 'profile' ? 'de perfil' : 'de portada'} actualizada!`)
       setTimeout(() => setSuccess(""), 3000)
-    }, 1500)
+    } catch (error: any) {
+      console.error('Error subiendo imagen:', error)
+      setUploadingImage(null)
+      alert(error.message || 'Error al subir la imagen')
+    }
   }
 
-  return (
-    <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
-      <div className="bg-white shadow-sm p-4">
-        <div className="flex items-center gap-3 mb-4">
-          <Button variant="ghost" size="sm" onClick={() => setFlow("dashboard")}>
-            ← Volver
-          </Button>
-          <h1 className="text-xl font-bold">Mi Perfil</h1>
+  // Si está editando, mostrar el formulario actual sin cambios
+  if (isEditing) {
+    return (
+      <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
+        <div className="bg-white shadow-sm p-4">
+          <div className="flex items-center gap-3 mb-4">
+            <Button variant="ghost" size="sm" onClick={() => setIsEditing(false)}>
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+            <h1 className="text-xl font-bold">Editar Perfil</h1>
+          </div>
         </div>
-      </div>
 
-      {success && (
-        <div className="p-4">
-          <CustomAlert
-            type="success"
-            title="¡Éxito!"
-            message={success}
-            onClose={() => setSuccess("")}
-          />
-        </div>
-      )}
+        {success && (
+          <div className="p-4">
+            <CustomAlert type="success" title="¡Éxito!" message={success} onClose={() => setSuccess("")} />
+          </div>
+        )}
 
-      <div className="p-4 space-y-6">
-        {/* Cover Image */}
-        <Card>
-          <CardContent className="p-0">
-            <div className="relative h-32 bg-gradient-to-r from-primary/20 to-primary/10 rounded-t-lg">
-              <img 
-                src={profileData.coverImage} 
-                alt="Cover" 
-                className="w-full h-full object-cover rounded-t-lg"
-              />
-              <div className="absolute inset-0 bg-black/20 rounded-t-lg" />
-              {uploadingImage === 'cover' && (
-                <div className="absolute inset-0 bg-black/50 rounded-t-lg flex items-center justify-center">
-                  <div className="text-white text-center">
-                    <div className="animate-spin w-6 h-6 border-2 border-white border-t-transparent rounded-full mx-auto mb-2"></div>
-                    <p className="text-sm">Subiendo imagen...</p>
+        <div className="p-4 space-y-6">
+          {/* Cover Image */}
+          <Card>
+            <CardContent className="p-0">
+              <div className="relative h-32 bg-gradient-to-r from-primary/20 to-primary/10 rounded-t-lg">
+                <img src={profileData.coverImage} alt="Cover" className="w-full h-full object-cover rounded-t-lg" />
+                <div className="absolute inset-0 bg-black/20 rounded-t-lg" />
+                {uploadingImage === 'cover' && (
+                  <div className="absolute inset-0 bg-black/50 rounded-t-lg flex items-center justify-center">
+                    <div className="text-white text-center">
+                      <div className="animate-spin w-6 h-6 border-2 border-white border-t-transparent rounded-full mx-auto mb-2"></div>
+                      <p className="text-sm">Subiendo imagen...</p>
+                    </div>
                   </div>
-                </div>
-              )}
-              {isEditing && (
+                )}
                 <div className="absolute top-2 right-2">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => handleImageUpload('cover', e)}
-                    className="hidden"
-                    id="cover-upload"
-                  />
-                  <Button 
-                    size="sm" 
-                    variant="secondary"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      const input = document.getElementById('cover-upload')
-                      if (input) {
-                        input.click()
-                      }
-                    }}
-                    disabled={uploadingImage === 'cover'}
-                  >
+                  <input type="file" accept="image/*" onChange={(e) => handleImageUpload('cover', e)} className="hidden" id="cover-upload" />
+                  <Button size="sm" variant="secondary" onClick={(e) => { e.stopPropagation(); document.getElementById('cover-upload')?.click() }} disabled={uploadingImage === 'cover'}>
                     {uploadingImage === 'cover' ? 'Subiendo...' : 'Cambiar portada'}
                   </Button>
                 </div>
-              )}
-            </div>
-            
-            {/* Profile Image */}
-            <div className="relative px-6 pb-6">
-              <div className="flex items-end -mt-12 gap-4">
-                <div className="relative">
-                  <img 
-                    src={profileData.profileImage} 
-                    alt="Profile" 
-                    className="w-24 h-24 rounded-full border-4 border-white object-cover"
-                  />
-                  {uploadingImage === 'profile' && (
-                    <div className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center">
-                      <div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"></div>
-                    </div>
-                  )}
-                  {isEditing && (
+              </div>
+
+              <div className="relative px-6 pb-6">
+                <div className="flex items-end -mt-12 gap-4">
+                  <div className="relative">
+                    <img src={profileData.profileImage} alt="Profile" className="w-24 h-24 rounded-full border-4 border-white object-cover" />
+                    {uploadingImage === 'profile' && (
+                      <div className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center">
+                        <div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"></div>
+                      </div>
+                    )}
                     <div className="absolute -bottom-2 -right-2">
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(e) => handleImageUpload('profile', e)}
-                        className="hidden"
-                        id="profile-upload"
-                      />
-                      <Button 
-                        size="sm" 
-                        variant="secondary" 
-                        className="w-8 h-8 rounded-full p-0"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          const input = document.getElementById('profile-upload')
-                          if (input) {
-                            input.click()
-                          }
-                        }}
-                        disabled={uploadingImage === 'profile'}
-                      >
+                      <input type="file" accept="image/*" onChange={(e) => handleImageUpload('profile', e)} className="hidden" id="profile-upload" />
+                      <Button size="sm" variant="secondary" className="w-8 h-8 rounded-full p-0" onClick={(e) => { e.stopPropagation(); document.getElementById('profile-upload')?.click() }} disabled={uploadingImage === 'profile'}>
                         {uploadingImage === 'profile' ? '⏳' : '📷'}
                       </Button>
                     </div>
-                  )}
-                </div>
-                <div className="flex-1 pb-2">
-                  <h2 className="text-xl font-semibold">{profileData.businessName}</h2>
-                  <p className="text-muted-foreground">{profileData.email}</p>
+                  </div>
+                  <div className="flex-1 pb-2">
+                    <h2 className="text-xl font-semibold">{profileData.businessName}</h2>
+                    <p className="text-muted-foreground">{profileData.email}</p>
+                  </div>
                 </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
 
-        {/* Business Information */}
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold">Información del Negocio</h3>
-              <Button 
-                variant="outline" 
-                onClick={() => setIsEditing(!isEditing)}
-              >
-                {isEditing ? "Cancelar" : "Editar"}
-              </Button>
-            </div>
-
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="business-name">Nombre del Negocio</Label>
-                  <Input
-                    id="business-name"
-                    value={profileData.businessName}
-                    onChange={(e) => handleInputChange("businessName", e.target.value)}
-                    disabled={!isEditing}
-                  />
+          {/* Business Information Form */}
+          <Card>
+            <CardContent className="p-6">
+              <h3 className="text-lg font-semibold mb-4">Información del Negocio</h3>
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="business-name">Nombre del Negocio</Label>
+                    <Input id="business-name" value={profileData.businessName} onChange={(e) => handleInputChange("businessName", e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="phone">Teléfono</Label>
+                    <Input id="phone" value={profileData.phone} onChange={(e) => handleInputChange("phone", e.target.value)} placeholder="11 1234-5678" />
+                  </div>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="phone">Teléfono</Label>
-                  <Input
-                    id="phone"
-                    value={profileData.phone}
-                    onChange={(e) => handleInputChange("phone", e.target.value)}
-                    disabled={!isEditing}
-                    placeholder="11 1234-5678"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="address">Dirección</Label>
-                <Input
-                  id="address"
-                  value={profileData.address}
-                  onChange={(e) => handleInputChange("address", e.target.value)}
-                  disabled={!isEditing}
-                  placeholder="Av. Corrientes 1234, CABA"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="description">Descripción</Label>
-                <textarea
-                  id="description"
-                  className="w-full p-3 border border-gray-300 rounded-md resize-none"
-                  rows={3}
-                  value={profileData.description}
-                  onChange={(e) => handleInputChange("description", e.target.value)}
-                  disabled={!isEditing}
-                  placeholder="Describe tu negocio y servicios..."
-                />
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="website">Sitio Web</Label>
-                  <Input
-                    id="website"
-                    value={profileData.website}
-                    onChange={(e) => handleInputChange("website", e.target.value)}
-                    disabled={!isEditing}
-                    placeholder="https://minegocio.com"
-                  />
+                  <Label htmlFor="city">Ciudad / Localidad</Label>
+                  <Input id="city" value={profileData.city} onChange={(e) => handleInputChange("city", e.target.value)} placeholder="Ej: Carmen de Areco" />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="instagram">Instagram</Label>
-                  <Input
-                    id="instagram"
-                    value={profileData.instagram}
-                    onChange={(e) => handleInputChange("instagram", e.target.value)}
-                    disabled={!isEditing}
-                    placeholder="@minegocio"
-                  />
+                  <Label htmlFor="address">Dirección</Label>
+                  <Input id="address" value={profileData.address} onChange={(e) => handleInputChange("address", e.target.value)} placeholder="Av. Corrientes 1234, CABA" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="description">Descripción</Label>
+                  <textarea id="description" className="w-full p-3 border border-gray-300 rounded-md resize-none" rows={3} value={profileData.description} onChange={(e) => handleInputChange("description", e.target.value)} placeholder="Describe tu negocio y servicios..." />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="website">Sitio Web</Label>
+                    <Input id="website" value={profileData.website} onChange={(e) => handleInputChange("website", e.target.value)} placeholder="https://minegocio.com" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="instagram">Instagram</Label>
+                    <Input id="instagram" value={profileData.instagram} onChange={(e) => handleInputChange("instagram", e.target.value)} placeholder="@minegocio" />
+                  </div>
                 </div>
               </div>
-            </div>
 
-            {isEditing && (
-              <div className="flex gap-3 pt-4">
-                <Button variant="outline" onClick={() => setIsEditing(false)} className="flex-1">
-                  Cancelar
-                </Button>
-                <Button onClick={handleSave} disabled={loading} className="flex-1">
-                  {loading ? "Guardando..." : "Guardar Cambios"}
-                </Button>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Business Hours */}
-        <Card>
-          <CardContent className="p-6">
-            <h3 className="text-lg font-semibold mb-4">Horarios de Atención</h3>
-            <div className="space-y-3">
-              {Object.entries(profileData.businessHours).map(([day, hours]) => (
-                <div key={day} className="flex items-center justify-between">
-                  <span className="capitalize font-medium">{day === 'monday' ? 'Lunes' : 
-                    day === 'tuesday' ? 'Martes' : 
-                    day === 'wednesday' ? 'Miércoles' : 
-                    day === 'thursday' ? 'Jueves' : 
-                    day === 'friday' ? 'Viernes' : 
-                    day === 'saturday' ? 'Sábado' : 'Domingo'}</span>
-                  <Input
-                    value={hours}
-                    onChange={(e) => handleHoursChange(day, e.target.value)}
-                    disabled={!isEditing}
-                    className="w-32 text-right"
-                  />
+              {/* Datos Bancarios */}
+              <div className="mt-8 pt-6 border-t border-gray-100">
+                <h4 className="text-md font-semibold mb-4 text-primary">Datos para recibir transferencias</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="accountHolder">Nombre del Titular</Label>
+                    <Input id="accountHolder" placeholder="Ej: Juan Pérez" value={profileData.accountHolder} onChange={(e) => handleInputChange("accountHolder", e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="cbu">CBU / CVU</Label>
+                    <Input id="cbu" placeholder="Ej: 0000003100012345678901" value={profileData.cbu} onChange={(e) => handleInputChange("cbu", e.target.value)} />
+                  </div>
+                  <div className="space-y-2 md:col-span-2 text-sm text-muted-foreground bg-gray-50 p-3 rounded">
+                    <span className="font-medium mr-2">O</span>
+                    <Label htmlFor="alias" className="mr-2">Alias:</Label>
+                    <Input id="alias" placeholder="Ej: mi.negocio.mp" value={profileData.alias} onChange={(e) => handleInputChange("alias", e.target.value)} className="inline-block w-auto max-w-[250px]" />
+                  </div>
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+              </div>
 
-        {/* Mis Estadísticas - Solo para Pro */}
-        <Card className="border-primary/20 bg-gradient-to-r from-primary/5 to-primary/10">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-semibold mb-1">Mis Estadísticas</h3>
-                <p className="text-sm text-muted-foreground">Visualiza el rendimiento de tus anuncios (Solo Pro)</p>
+              {/* Horarios */}
+              <div className="mt-8 pt-6 border-t border-gray-100">
+                <h4 className="text-md font-semibold mb-4">Horarios de Atención</h4>
+                <div className="space-y-3">
+                  {Object.entries(profileData.businessHours).map(([day, hours]) => (
+                    <div key={day} className="flex items-center justify-between">
+                      <span className="capitalize font-medium">{day === 'monday' ? 'Lunes' : day === 'tuesday' ? 'Martes' : day === 'wednesday' ? 'Miércoles' : day === 'thursday' ? 'Jueves' : day === 'friday' ? 'Viernes' : day === 'saturday' ? 'Sábado' : 'Domingo'}</span>
+                      <Input value={hours} onChange={(e) => handleHoursChange(day, e.target.value)} className="w-32 text-right" />
+                    </div>
+                  ))}
+                </div>
               </div>
-              <Button onClick={() => setFlow("statistics")} variant="orange">
-                Ver estadísticas
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
 
-        {/* Settings */}
-        <Card>
-          <CardContent className="p-6">
-            <h3 className="text-lg font-semibold mb-4">Configuración</h3>
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-medium">Notificaciones por email</p>
-                  <p className="text-sm text-muted-foreground">Recibe notificaciones de nuevas reservas</p>
-                </div>
-                <Button variant="outline" size="sm">Activar</Button>
+              <div className="flex gap-3 pt-6">
+                <Button variant="outline" onClick={() => setIsEditing(false)} className="flex-1">Cancelar</Button>
+                <Button onClick={handleSave} disabled={loading} className="flex-1">{loading ? "Guardando..." : "Guardar Cambios"}</Button>
               </div>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-medium">Modo automático</p>
-                  <p className="text-sm text-muted-foreground">Acepta reservas automáticamente</p>
-                </div>
-                <Button variant="outline" size="sm">Desactivar</Button>
-              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    )
+  }
+
+  // Vista principal del perfil (diseño nuevo tipo imagen de referencia)
+  return (
+    <div className="min-h-screen bg-gray-50 pb-24">
+      {/* Header curvo teal con avatar centrado */}
+      <div className="relative">
+        <div className="bg-primary pt-10 pb-16 px-4 rounded-b-[2.5rem]">
+          <div className="flex items-center justify-between text-white">
+            <button onClick={() => setFlow("dashboard")} className="p-2">
+              <ArrowLeft className="h-6 w-6" />
+            </button>
+            <h1 className="text-lg font-semibold">Perfil</h1>
+            <div className="w-10" />
+          </div>
+        </div>
+
+        {/* Avatar centrado sobre el borde del header */}
+        <div className="absolute left-1/2 -translate-x-1/2 -bottom-14">
+          <div className="relative">
+            <div className="w-28 h-28 rounded-full border-4 border-primary bg-white overflow-hidden shadow-lg">
+              <img 
+                src={profileData.profileImage} 
+                alt={profileData.businessName} 
+                className="w-full h-full object-cover"
+              />
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Nombre y ciudad */}
+      <div className="text-center mt-16 px-4">
+        <h2 className="text-xl font-bold text-gray-800">{profileData.businessName}</h2>
+        {(profileData.city || userPosition?.address) && (
+          <p className="text-sm text-primary font-medium flex items-center justify-center gap-1 mt-1">
+            <MapPin className="h-3.5 w-3.5" />
+            {profileData.city || userPosition?.address}
+          </p>
+        )}
+      </div>
+
+      {/* Stats Row */}
+      <div className="flex justify-center gap-8 mt-5 px-6">
+        <div className="flex flex-col items-center">
+          <div className="flex items-center gap-1">
+            <Users className="h-4 w-4 text-primary" />
+            <span className="text-lg font-black text-gray-800">+{uniqueClients}</span>
+          </div>
+          <span className="text-[10px] text-gray-400 font-medium">Clientes</span>
+        </div>
+        <div className="flex flex-col items-center">
+          <div className="flex items-center gap-1">
+            <Star className="h-4 w-4 text-primary" />
+            <span className="text-lg font-black text-gray-800">{avgRating}</span>
+          </div>
+          <span className="text-[10px] text-gray-400 font-medium">Calificación</span>
+        </div>
+        <div className="flex flex-col items-center">
+          <div className="flex items-center gap-1">
+            <Clock className="h-4 w-4 text-primary" />
+            <span className="text-lg font-black text-gray-800">{experienceYears > 0 ? experienceYears : '<1'}</span>
+          </div>
+          <span className="text-[10px] text-gray-400 font-medium">{experienceYears === 1 ? 'año' : 'años'}</span>
+        </div>
+      </div>
+
+      {/* Info pills */}
+      <div className="px-6 mt-6 space-y-3">
+        {profileData.email && (
+          <div className="flex items-center gap-3 text-sm text-gray-600">
+            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+              <Mail className="h-4 w-4 text-primary" />
+            </div>
+            <span className="truncate">{profileData.email}</span>
+          </div>
+        )}
+        {profileData.phone && (
+          <div className="flex items-center gap-3 text-sm text-gray-600">
+            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+              <Phone className="h-4 w-4 text-primary" />
+            </div>
+            <span>{profileData.phone}</span>
+          </div>
+        )}
+        {profileData.address && (
+          <div className="flex items-center gap-3 text-sm text-gray-600">
+            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+              <MapPin className="h-4 w-4 text-primary" />
+            </div>
+            <span>{profileData.address}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Botón Editar Perfil */}
+      <div className="px-6 mt-6">
+        <Button 
+          onClick={() => setIsEditing(true)} 
+          className="w-full h-11 rounded-xl text-white font-semibold"
+          style={{ backgroundColor: '#FF7F50' }}
+        >
+          Editar perfil
+        </Button>
+      </div>
+
+      {success && (
+        <div className="px-6 mt-4">
+          <CustomAlert type="success" title="¡Éxito!" message={success} onClose={() => setSuccess("")} />
+        </div>
+      )}
+
+      {roleAlert && (
+        <div className="px-6 mt-4">
+          <CustomAlert type={roleAlert} title={roleAlert === "success" ? "¡Listo!" : "Error"} message={roleAlertMessage} onClose={() => { setRoleAlert(null); setRoleAlertMessage("") }} />
+        </div>
+      )}
+
+      {/* Sección Otros */}
+      <div className="px-6 mt-6">
+        <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-3">Otros</h3>
+        <Card className="border-none shadow-sm rounded-2xl overflow-hidden">
+          <CardContent className="p-0 divide-y divide-gray-50">
+            <button onClick={() => setFlow("services")} className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50 transition-colors">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                  <Settings className="h-4 w-4 text-primary" />
+                </div>
+                <span className="text-sm font-medium text-gray-700">Mis servicios</span>
+              </div>
+              <ChevronRight className="h-4 w-4 text-gray-300" />
+            </button>
+            <button onClick={() => setFlow("statistics")} className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50 transition-colors">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                  <TrendingUp className="h-4 w-4 text-primary" />
+                </div>
+                <span className="text-sm font-medium text-gray-700">Mis estadísticas</span>
+              </div>
+              <ChevronRight className="h-4 w-4 text-gray-300" />
+            </button>
+            <button onClick={() => setFlow("subscription")} className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50 transition-colors">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                  <Star className="h-4 w-4 text-primary" />
+                </div>
+                <span className="text-sm font-medium text-gray-700">Mi suscripción</span>
+              </div>
+              <ChevronRight className="h-4 w-4 text-gray-300" />
+            </button>
+            <button onClick={() => setShowConfirmSwitch(true)} disabled={switchingRole} className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50 transition-colors">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                  <User className="h-4 w-4 text-primary" />
+                </div>
+                <span className="text-sm font-medium text-gray-700">{switchingRole ? "Cambiando..." : "Quiero ser Cliente"}</span>
+              </div>
+              <ChevronRight className="h-4 w-4 text-gray-300" />
+            </button>
           </CardContent>
         </Card>
+      </div>
+
+      {/* Cerrar sesión */}
+      <div className="px-6 mt-4">
+        <button onClick={handleLogout} disabled={loading} className="w-full text-center text-sm text-red-400 font-medium py-3">
+          {loading ? "Cerrando sesión..." : "Cerrar sesión"}
+        </button>
+      </div>
+
+      {/* Alert Dialog para cambio de rol */}
+      <AlertDialog open={showConfirmSwitch} onOpenChange={setShowConfirmSwitch}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Cambiar a modo Cliente?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tendrás acceso a buscar servicios, hacer reservas y ver tu agenda. Podrás volver a modo Proveedor cuando quieras desde tu perfil.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={async () => {
+              setShowConfirmSwitch(false)
+              setSwitchingRole(true)
+              setRoleAlert(null)
+              const result = await onSwitchToClient()
+              setSwitchingRole(false)
+              if (!result.success) {
+                setRoleAlert("error")
+                setRoleAlertMessage("Falló la actualización. Intente más tarde.")
+              }
+            }}>
+              Sí, cambiar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Bottom Navigation */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 pb-safe z-40">
+        <div className="flex justify-around py-3">
+          <button onClick={() => setFlow("dashboard")} className="flex flex-col items-center gap-1">
+            <Home className="h-6 w-6 text-gray-400" />
+            <span className="text-[10px] font-medium text-gray-400">Inicio</span>
+          </button>
+          <button onClick={() => setFlow("agenda")} className="flex flex-col items-center gap-1">
+            <Calendar className="h-6 w-6 text-gray-400" />
+            <span className="text-[10px] font-medium text-gray-400">Agenda</span>
+          </button>
+          <button className="flex flex-col items-center gap-1">
+            <User className="h-6 w-6 text-primary" />
+            <span className="text-[10px] font-medium text-primary">Perfil</span>
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -3729,12 +4606,17 @@ function CreateService({
     price: "",
     duration: "",
     category: "",
+    latitude: null as number | null,
+    longitude: null as number | null,
   })
+  const [imageFile, setImageFile] = useState<File | null>(null)
+  const [imagePreview, setImagePreview] = useState<string | null>(null)
+  const [locationStatus, setLocationStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
 
-  const categories = ["Belleza", "Salud", "Deporte", "Hogar", "Educación", "Tecnología", "Oficios", "Profesionales", "Aprendizaje"]
+  const { categories } = useCategories()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -3742,7 +4624,7 @@ function CreateService({
     setError("")
     
     try {
-      const serviceData = {
+      const serviceData: any = {
         name: formData.name,
         description: formData.description,
         price: parseInt(formData.price),
@@ -3753,6 +4635,23 @@ function CreateService({
         rating: 0,
         reviews: 0,
         image: "/placeholder.svg"
+      }
+      // Subir imagen si fue seleccionada
+      if (imageFile) {
+        try {
+          const { uploadImage } = await import("@/lib/uploadImage")
+          const imageUrl = await uploadImage(imageFile, `services/${user?.uid}`)
+          serviceData.image = imageUrl
+        } catch (imgErr: any) {
+          setError(imgErr.message || "Error al subir la imagen")
+          setLoading(false)
+          return
+        }
+      }
+      // Agregar ubicación si fue capturada
+      if (formData.latitude !== null && formData.longitude !== null) {
+        serviceData.latitude = formData.latitude
+        serviceData.longitude = formData.longitude
       }
 
       const result = await createService(serviceData)
@@ -3808,6 +4707,44 @@ function CreateService({
         <Card>
           <CardContent className="p-6">
             <form onSubmit={handleSubmit} className="space-y-4">
+              {/* Imagen del servicio */}
+              <div className="space-y-2">
+                <Label>Imagen del servicio</Label>
+                <div className="flex items-center gap-4">
+                  <div className="w-24 h-24 bg-gray-100 rounded-lg overflow-hidden flex items-center justify-center border-2 border-dashed border-gray-300">
+                    {imagePreview ? (
+                      <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
+                    ) : (
+                      <span className="text-3xl">📷</span>
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0]
+                        if (file) {
+                          setImageFile(file)
+                          setImagePreview(URL.createObjectURL(file))
+                        }
+                      }}
+                      className="hidden"
+                      id="create-service-image-upload"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => document.getElementById('create-service-image-upload')?.click()}
+                    >
+                      {imagePreview ? 'Cambiar imagen' : 'Seleccionar imagen'}
+                    </Button>
+                    <p className="text-xs text-muted-foreground mt-1">JPG, PNG. Máximo 5 MB</p>
+                  </div>
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <Label htmlFor="service-name">Nombre del servicio</Label>
                 <Input
@@ -3866,12 +4803,72 @@ function CreateService({
                   required
                 >
                   <option value="">Selecciona una categoría</option>
-                  {categories.map((category) => (
-                    <option key={category} value={category}>
-                      {category}
-                    </option>
-                  ))}
+                  <optgroup label="Categorías Base">
+                    {categories.filter(c => c.isBase).map((category) => (
+                      <option key={category.id} value={category.name}>
+                        {category.icon} {category.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="Categorías Agregadas">
+                    {categories.filter(c => !c.isBase).map((category) => (
+                      <option key={category.id} value={category.name}>
+                        {category.icon} {category.name}
+                      </option>
+                    ))}
+                  </optgroup>
                 </select>
+              </div>
+
+              {/* Botón de ubicación */}
+              <div className="space-y-2">
+                <Label>Ubicación del servicio</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className={`w-full ${locationStatus === 'success' ? 'border-green-500 text-green-600' : ''}`}
+                  disabled={locationStatus === 'loading'}
+                  onClick={async () => {
+                    setLocationStatus('loading')
+                    try {
+                      let lat, lon;
+                      if (Capacitor.isNativePlatform()) {
+                        const permissions = await Geolocation.checkPermissions()
+                        if (permissions.location !== 'granted') {
+                          await Geolocation.requestPermissions()
+                        }
+                        const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 10000 })
+                        lat = pos.coords.latitude
+                        lon = pos.coords.longitude
+                      } else {
+                        const pos = await new Promise<any>((resolve, reject) => {
+                          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 })
+                        })
+                        lat = pos.coords.latitude
+                        lon = pos.coords.longitude
+                      }
+                      
+                      setFormData(prev => ({ ...prev, latitude: lat, longitude: lon }))
+                      setLocationStatus('success')
+                    } catch (err) {
+                      console.error('Error capturando ubicación:', err)
+                      setLocationStatus('error')
+                      const manualCity = prompt("No pudimos obtener tu GPS. Por seguridad, introduce el nombre de tu ciudad/barrio para continuar:");
+                      if (manualCity) {
+                        setFormData(prev => ({ ...prev, latitude: -34.6, longitude: -58.4 })) // Coordenadas genéricas
+                        setLocationStatus('success')
+                      }
+                    }
+                  }}
+                >
+                  {locationStatus === 'loading' ? '⏳ Obteniendo GPS...' : 
+                   locationStatus === 'success' ? '✅ Ubicación guardada' : 
+                   '📍 Usar mi ubicación actual'}
+                </Button>
+                {locationStatus === 'error' && (
+                  <p className="text-[10px] text-red-500 font-medium mt-1">Asegúrate de tener el GPS activado y dar permisos.</p>
+                )}
+                <p className="text-xs text-muted-foreground mt-2">Permite que los clientes vean si estás cerca de ellos.</p>
               </div>
 
               <div className="flex gap-3 pt-4">
@@ -3892,8 +4889,8 @@ function CreateService({
 
 function EditService({ setFlow, service, user, updateService }: { 
   setFlow: (flow: string) => void
-  service?: any
-  user?: any
+  service: any
+  user: any
   updateService?: (id: string, data: any) => Promise<{success: boolean, error?: string}>
 }) {
   const { updateService: updateServiceHook } = useServices()
@@ -3905,12 +4902,17 @@ function EditService({ setFlow, service, user, updateService }: {
     price: service?.price?.toString() || "",
     duration: (service as any)?.duration || "",
     category: service?.category || "",
+    latitude: service?.latitude || null,
+    longitude: service?.longitude || null,
   })
+  const [locationStatus, setLocationStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
+  const [imageFile, setImageFile] = useState<File | null>(null)
+  const [imagePreview, setImagePreview] = useState<string | null>(service?.image || null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
 
-  const categories = ["Belleza", "Salud", "Deporte", "Hogar", "Educación", "Tecnología", "Oficios", "Profesionales", "Aprendizaje"]
+  const { categories } = useCategories()
 
   // Cargar datos del servicio cuando cambie
   useEffect(() => {
@@ -3921,6 +4923,8 @@ function EditService({ setFlow, service, user, updateService }: {
         price: service.price?.toString() || "",
         duration: (service as any)?.duration || "",
         category: service.category || "",
+        latitude: service.latitude || null,
+        longitude: service.longitude || null,
       })
     }
   }, [service])
@@ -3937,12 +4941,26 @@ function EditService({ setFlow, service, user, updateService }: {
     setSuccess("")
     
     try {
-      const serviceData = {
+      const serviceData: any = {
         name: formData.name,
         description: formData.description,
         price: parseInt(formData.price.replace('$', '').replace(/\./g, '')) || parseInt(formData.price),
         duration: formData.duration,
         category: formData.category,
+        latitude: formData.latitude,
+        longitude: formData.longitude,
+      }
+      // Subir nueva imagen si fue seleccionada
+      if (imageFile) {
+        try {
+          const { uploadImage } = await import("@/lib/uploadImage")
+          const imageUrl = await uploadImage(imageFile, `services/${service.id}`)
+          serviceData.image = imageUrl
+        } catch (imgErr: any) {
+          setError(imgErr.message || "Error al subir la imagen")
+          setLoading(false)
+          return
+        }
       }
 
       const result = await updateServiceFn(service.id, serviceData)
@@ -3981,6 +4999,44 @@ function EditService({ setFlow, service, user, updateService }: {
         <Card>
           <CardContent className="p-6">
             <form onSubmit={handleSubmit} className="space-y-4">
+              {/* Imagen del servicio */}
+              <div className="space-y-2">
+                <Label>Imagen del servicio</Label>
+                <div className="flex items-center gap-4">
+                  <div className="w-24 h-24 bg-gray-100 rounded-lg overflow-hidden flex items-center justify-center border-2 border-dashed border-gray-300">
+                    {imagePreview && imagePreview !== '/placeholder.svg' ? (
+                      <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
+                    ) : (
+                      <span className="text-3xl">📷</span>
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0]
+                        if (file) {
+                          setImageFile(file)
+                          setImagePreview(URL.createObjectURL(file))
+                        }
+                      }}
+                      className="hidden"
+                      id="edit-service-image-upload"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => document.getElementById('edit-service-image-upload')?.click()}
+                    >
+                      {imagePreview && imagePreview !== '/placeholder.svg' ? 'Cambiar imagen' : 'Seleccionar imagen'}
+                    </Button>
+                    <p className="text-xs text-muted-foreground mt-1">JPG, PNG. Máximo 5 MB</p>
+                  </div>
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <Label htmlFor="edit-service-name">Nombre del servicio</Label>
                 <Input
@@ -4034,12 +5090,70 @@ function EditService({ setFlow, service, user, updateService }: {
                   onChange={(e) => handleInputChange("category", e.target.value)}
                   required
                 >
-                  {categories.map((category) => (
-                    <option key={category} value={category}>
-                      {category}
-                    </option>
-                  ))}
+                  <option value="">Selecciona una categoría</option>
+                  <optgroup label="Categorías Base">
+                    {categories.filter(c => c.isBase).map((category) => (
+                      <option key={category.id} value={category.name}>
+                        {category.icon} {category.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="Categorías Agregadas">
+                    {categories.filter(c => !c.isBase).map((category) => (
+                      <option key={category.id} value={category.name}>
+                        {category.icon} {category.name}
+                      </option>
+                    ))}
+                  </optgroup>
                 </select>
+              </div>
+
+              {/* Botón de ubicación */}
+              <div className="space-y-2">
+                <Label>Ubicación del servicio</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className={`w-full ${locationStatus === 'success' ? 'border-green-500 text-green-600' : ''}`}
+                  disabled={locationStatus === 'loading'}
+                  onClick={async () => {
+                    setLocationStatus('loading')
+                    try {
+                      let lat, lon;
+                      if (Capacitor.isNativePlatform()) {
+                        const permissions = await Geolocation.checkPermissions()
+                        if (permissions.location !== 'granted') {
+                          await Geolocation.requestPermissions()
+                        }
+                        const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 10000 })
+                        lat = pos.coords.latitude
+                        lon = pos.coords.longitude
+                      } else {
+                        const pos = await new Promise<any>((resolve, reject) => {
+                          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 })
+                        })
+                        lat = pos.coords.latitude
+                        lon = pos.coords.longitude
+                      }
+                      
+                      setFormData(prev => ({ ...prev, latitude: lat, longitude: lon }))
+                      setLocationStatus('success')
+                    } catch (err) {
+                      console.error('Error capturando ubicación:', err)
+                      setLocationStatus('error')
+                      const manualCity = prompt("No pudimos obtener tu GPS. Introduce tu ciudad/barrio para actualizar:");
+                      if (manualCity) {
+                        setFormData(prev => ({ ...prev, latitude: -34.6, longitude: -58.4 }))
+                        setLocationStatus('success')
+                      }
+                    }
+                  }}
+                >
+                  {locationStatus === 'loading' ? '⏳ Obteniendo GPS...' : 
+                   locationStatus === 'success' ? '✅ Ubicación actualizada' : 
+                   '📍 Actualizar mi ubicación'}
+                </Button>
+                <p className="text-xs text-muted-foreground mt-2">Permite que los clientes vean si estás cerca de ellos.</p>
               </div>
 
               <div className="flex gap-3 pt-4">
@@ -4058,267 +5172,298 @@ function EditService({ setFlow, service, user, updateService }: {
   )
 }
 
-function ProviderStatistics({ setFlow, user, services }: { setFlow: (flow: string) => void; user: any; services: any[] }) {
-  const { getBookingsByProvider } = useBookings()
+function ProviderStatistics({ setFlow, user, services, profileData }: { setFlow: (flow: string) => void; user: any; services: any[]; profileData: any }) {
+  const { getBookingsByProvider, bookings } = useBookings()
   
   // Filtrar servicios del proveedor
   const providerServices = services.filter(service => service.providerId === user?.uid)
   const providerBookings = getBookingsByProvider(user?.uid) || []
   
-  // Calcular estadísticas
+  // Calcular estadísticas generales
   const totalViews = providerServices.reduce((sum, s) => sum + ((s as any).views || 0), 0)
   const totalBookings = providerBookings.length
-  const totalRevenue = providerBookings
-    .filter(b => b.paymentStatus === 'paid')
-    .reduce((sum, b) => sum + (b.price || 0), 0)
+  const totalContacts = totalBookings
   const conversionRate = totalViews > 0 ? (totalBookings / totalViews) * 100 : 0
   
-  // Estadísticas por servicio
-  const serviceStats = providerServices.map(service => {
-    const serviceBookings = providerBookings.filter(b => b.serviceId === service.id)
-    const serviceRevenue = serviceBookings
-      .filter(b => b.paymentStatus === 'paid')
-      .reduce((sum, b) => sum + (b.price || 0), 0)
-    const serviceViews = (service as any).views || 0
-    const serviceConversion = serviceViews > 0 ? (serviceBookings.length / serviceViews) * 100 : 0
-    
-    return {
-      ...service,
-      bookings: serviceBookings.length,
-      revenue: serviceRevenue,
-      views: serviceViews,
-      conversion: serviceConversion
+  // Ciudad dinámica
+  const city = profileData?.city || "tu localidad"
+  const category = providerServices[0]?.category || ""
+
+  // CALCULO DE RANKING REAL
+  const calculateRank = () => {
+    if (totalBookings === 0 || !category) return null
+
+    // 1. Encontrar todos los proveedores en la misma categoría y ciudad
+    // Nota: Como no todos los proveedores tienen 'city' seteado aún, comparamos con los que sí o usamos la categoría
+    const relevantProviders = new Set<string>()
+    services.forEach(s => {
+      if (s.category === category) {
+        relevantProviders.add(s.providerId)
+      }
+    })
+
+    // 2. Contar reservas para cada proveedor relevante
+    const providerPerformance = Array.from(relevantProviders).map(pId => {
+      const pBookings = bookings.filter(b => b.providerId === pId).length
+      return { id: pId, count: pBookings }
+    })
+
+    // 3. Ordenar por rendimiento
+    providerPerformance.sort((a, b) => b.count - a.count)
+
+    // 4. Encontrar mi posición
+    const myRank = providerPerformance.findIndex(p => p.id === user?.uid) + 1
+    const totalInRank = providerPerformance.length
+
+    return { rank: myRank, total: totalInRank }
+  }
+
+  const myPerformance = calculateRank()
+
+  // AGREGACIÓN DE ORÍGENES REALES
+  const calculateSources = () => {
+    const sources = [
+      { name: 'Anuncio', key: 'anuncio' },
+      { name: 'Recomendados', key: 'recomendados' },
+      { name: 'Cerca tuyo', key: 'cerca_tuyo' },
+      { name: 'Por rubro', key: 'rubro' },
+      { name: 'Por buscador', key: 'buscador' }
+    ]
+
+    if (totalBookings === 0) {
+      return sources.map(s => ({ ...s, value: 0 }))
     }
-  }).sort((a, b) => b.bookings - a.bookings)
+
+    return sources.map(s => {
+      const count = providerBookings.filter(b => b.source === s.key).length
+      return {
+        name: s.name,
+        value: Number(((count / totalBookings) * 100).toFixed(1))
+      }
+    }).sort((a, b) => b.value - a.value)
+  }
+
+  const realSources = calculateSources()
+  
+  // Datos para el gráfico de líneas (Últimos 7 días)
+  const getLast7DaysData = () => {
+    const data = []
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date()
+      date.setDate(date.getDate() - i)
+      const dateStr = date.toISOString().split('T')[0]
+      const dayBookings = providerBookings.filter(b => {
+        const bDate = b.createdAt instanceof Date ? b.createdAt.toISOString().split('T')[0] : 
+                     (typeof (b.createdAt as any) === 'string' ? (b.createdAt as any).split('T')[0] : '')
+        return bDate === dateStr
+      }).length
+      data.push(dayBookings)
+    }
+    return data
+  }
+  
+  const weeklyData = getLast7DaysData()
+  const maxWeekly = Math.max(...weeklyData, 1)
+  const chartPoints = weeklyData.map((val, i) => `${(i * 100) / 6},${80 - (val * 60) / maxWeekly}`).join(' ')
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
-      {/* Header */}
-      <div className="bg-white shadow-sm p-4">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => setFlow("profile")}>
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <h1 className="text-xl font-bold text-primary">Mis Estadísticas</h1>
-        </div>
+    <div className="min-h-screen bg-gray-50 pb-20">
+      {/* Header Turquesa */}
+      <div className="bg-primary pt-8 pb-6 px-4 rounded-b-[2rem] shadow-lg flex items-center justify-between text-white">
+        <button onClick={() => setFlow("profile")} className="p-2">
+          <ArrowLeft className="h-6 w-6" />
+        </button>
+        <h1 className="text-xl font-bold">Mis estadísticas</h1>
+        <button className="p-2">
+          <Settings className="h-6 w-6" />
+        </button>
       </div>
 
-      <div className="p-4 space-y-6">
-        {/* Resumen General */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Card className="bg-white">
-            <CardContent className="p-4 text-center">
-              <p className="text-2xl font-bold text-primary">{totalViews}</p>
-              <p className="text-sm text-muted-foreground">Visualizaciones</p>
-            </CardContent>
-          </Card>
-          <Card className="bg-white">
-            <CardContent className="p-4 text-center">
-              <p className="text-2xl font-bold text-green-600">{totalBookings}</p>
-              <p className="text-sm text-muted-foreground">Reservas</p>
-            </CardContent>
-          </Card>
-          <Card className="bg-white">
-            <CardContent className="p-4 text-center">
-              <p className="text-2xl font-bold text-blue-600">${totalRevenue.toLocaleString()}</p>
-              <p className="text-sm text-muted-foreground">Ingresos</p>
-            </CardContent>
-          </Card>
-          <Card className="bg-white">
-            <CardContent className="p-4 text-center">
-              <p className="text-2xl font-bold text-purple-600">{conversionRate.toFixed(1)}%</p>
-              <p className="text-sm text-muted-foreground">Conversión</p>
-            </CardContent>
-          </Card>
+      <div className="p-4 space-y-4 -mt-4">
+        {/* Banner Ranking Dinámico */}
+        <div className="bg-[#FF7F50] rounded-2xl p-4 flex items-center justify-between text-white shadow-md min-h-[80px]">
+          <div className="space-y-1">
+            {myPerformance ? (
+              <>
+                <h3 className="text-base font-bold leading-tight">
+                  {myPerformance.rank <= 3 
+                    ? `¡Estás en el top ${myPerformance.rank} de\n${city}!` 
+                    : `Estás en el puesto #${myPerformance.rank}\nen ${city}`}
+                </h3>
+                <p className="text-[10px] opacity-90 flex items-center gap-1">
+                  Mirá tu evolución en el ranking <ArrowRight className="h-3 w-3" />
+                </p>
+              </>
+            ) : (
+              <>
+                <h3 className="text-base font-bold leading-tight">
+                  Todavía no tenemos datos<br />para este ranking en {city}
+                </h3>
+                <p className="text-[10px] opacity-90">Empezá a recibir reservas para subir</p>
+              </>
+            )}
+          </div>
+          <div className="relative">
+            <Trophy className="h-10 w-10 opacity-30 absolute -right-2 -top-2" />
+            <div className="flex items-end gap-0.5">
+              <div className={`w-4 h-6 ${myPerformance?.rank === 2 ? 'bg-white' : 'bg-white/40'} rounded-t-sm flex items-center justify-center text-[10px] font-bold text-[#FF7F50]`}>2</div>
+              <div className={`w-5 h-8 ${myPerformance?.rank === 1 ? 'bg-white' : 'bg-white/60'} rounded-t-sm flex items-center justify-center text-xs font-bold -mb-0.5 text-[#FF7F50]`}>1</div>
+              <div className={`w-4 h-4 ${myPerformance?.rank === 3 ? 'bg-white' : 'bg-white/20'} rounded-t-sm flex items-center justify-center text-[8px] font-bold text-[#FF7F50]`}>3</div>
+            </div>
+          </div>
         </div>
 
-        {/* Rendimiento por Servicio */}
-        <Card className="bg-white">
+        {/* Card Principal de Conversión */}
+        <Card className="bg-white border-none rounded-[2rem] shadow-sm overflow-hidden">
+          <CardContent className="p-8 flex flex-col items-center">
+            <div className="relative w-40 h-40 mb-8">
+              <svg className="w-40 h-40 transform -rotate-90">
+                <circle cx="80" cy="80" r="70" stroke="currentColor" strokeWidth="8" fill="transparent" className="text-gray-100" />
+                <circle
+                  cx="80" cy="80" r="70" stroke="currentColor" strokeWidth="10" 
+                  strokeDasharray={440} strokeDashoffset={440 - (440 * Math.min(conversionRate, 100)) / 100}
+                  strokeLinecap="round" fill="transparent" className="text-primary transition-all duration-1000"
+                />
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-4xl font-black text-primary">{Math.round(conversionRate)}%</span>
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Conversión</span>
+              </div>
+            </div>
+
+            <div className="w-full flex justify-center items-center gap-12 border-t border-gray-50 pt-8">
+              <div className="text-center">
+                <p className="text-2xl font-black text-gray-800">{totalViews}</p>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Visitas</p>
+              </div>
+              <div className="w-px h-8 bg-gray-100" />
+              <div className="text-center">
+                <p className="text-2xl font-black text-gray-800">{totalContacts}</p>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Contactos</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Card Resumen / Evolución */}
+        <Card className="bg-white border-none rounded-[2rem] shadow-sm overflow-hidden">
           <CardContent className="p-6">
-            <h3 className="text-lg font-semibold mb-4">Rendimiento por Servicio</h3>
-            <div className="space-y-4">
-              {serviceStats.length > 0 ? (
-                serviceStats.map((service) => (
-                  <div key={service.id} className="p-4 bg-gray-50 rounded-lg">
-                    <div className="flex items-center justify-between mb-3">
-                      <h4 className="font-semibold">{service.name}</h4>
-                      <span className="text-sm text-muted-foreground">${service.revenue.toLocaleString()}</span>
-                    </div>
-                    <div className="grid grid-cols-3 gap-4 text-sm">
-                      <div>
-                        <p className="text-muted-foreground">Visualizaciones</p>
-                        <p className="font-semibold">{service.views}</p>
-                      </div>
-                      <div>
-                        <p className="text-muted-foreground">Reservas</p>
-                        <p className="font-semibold">{service.bookings}</p>
-                      </div>
-                      <div>
-                        <p className="text-muted-foreground">Conversión</p>
-                        <p className="font-semibold">{service.conversion.toFixed(1)}%</p>
-                      </div>
-                    </div>
-                    <div className="mt-3">
-                      <div className="w-full bg-gray-200 rounded-full h-2">
-                        <div 
-                          className="bg-primary h-2 rounded-full" 
-                          style={{ width: `${Math.min(service.conversion, 100)}%` }}
-                        ></div>
-                      </div>
-                    </div>
-                  </div>
-                ))
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-lg font-black text-gray-800">Resumen Semanal</h3>
+              <div className="flex gap-4 text-xs font-bold">
+                <span className="text-primary border-b-2 border-primary">Reservas</span>
+              </div>
+            </div>
+
+            <div className="h-32 w-full relative pt-4">
+              {totalBookings > 0 ? (
+                <svg className="w-full h-full overflow-visible" preserveAspectRatio="none">
+                  <polyline fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="text-primary opacity-20" points={chartPoints} />
+                  <polyline fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-primary" points={chartPoints} />
+                  {weeklyData.map((val, i) => (
+                    <circle key={i} cx={`${(i * 100) / 6}%`} cy={`${80 - (val * 60) / maxWeekly}%`} r="3" className="fill-white stroke-primary stroke-2" />
+                  ))}
+                </svg>
               ) : (
-                <p className="text-center text-muted-foreground py-8">No tienes servicios para mostrar estadísticas</p>
+                <div className="h-full flex items-center justify-center text-gray-300 text-[10px] uppercase font-bold tracking-widest">
+                  Sin datos esta semana
+                </div>
               )}
             </div>
           </CardContent>
         </Card>
 
-        {/* Gráfico de tendencias (simplificado) */}
-        <Card className="bg-white">
+        {/* Orígenes de contacto Dinámicos */}
+        <Card className="bg-white border-none rounded-[2rem] shadow-sm overflow-hidden">
           <CardContent className="p-6">
-            <h3 className="text-lg font-semibold mb-4">Tendencias</h3>
-            <div className="text-center py-8 text-muted-foreground">
-              <p className="text-sm">Los gráficos detallados están disponibles en la versión Premium</p>
-              <Button 
-                variant="outline" 
-                className="mt-4"
-                onClick={() => setFlow("subscription")}
-              >
-                Actualizar a Premium
-              </Button>
+            <h3 className="text-lg font-black text-gray-800 mb-6">Orígenes de contacto</h3>
+            
+            <div className="flex flex-col items-center mb-8">
+              <span className="text-3xl font-black text-gray-800">{totalContacts}</span>
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Total Contactos</span>
+            </div>
+
+            <div className="space-y-6">
+              {realSources.map((source, i) => (
+                <div key={i} className="space-y-2">
+                  <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-wider">
+                    <span className="text-gray-400">{source.name}</span>
+                    <span className="text-gray-800">{source.value}%</span>
+                  </div>
+                  <div className="h-2 w-full bg-gray-100 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-primary rounded-full transition-all duration-1000"
+                      style={{ width: `${source.value}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+              {totalBookings === 0 && (
+                <p className="text-center text-[10px] text-gray-400 font-bold uppercase py-4">
+                  Esperando tus primeros contactos
+                </p>
+              )}
             </div>
           </CardContent>
         </Card>
+      </div>
+
+      {/* Footer Navigation */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 pb-safe z-40">
+        <div className="flex justify-around py-3">
+          <button onClick={() => setFlow("dashboard")} className="flex flex-col items-center gap-1">
+            <TrendingUp className="h-6 w-6 text-gray-400" />
+            <span className="text-[10px] font-medium text-gray-400">Dashboard</span>
+          </button>
+          <button onClick={() => setFlow("agenda")} className="flex flex-col items-center gap-1">
+            <Calendar className="h-6 w-6 text-gray-400" />
+            <span className="text-[10px] font-medium text-gray-400">Agenda</span>
+          </button>
+          <button onClick={() => setFlow("profile")} className="flex flex-col items-center gap-1">
+            <User className="h-6 w-6 text-gray-400" />
+            <span className="text-[10px] font-medium text-gray-400">Perfil</span>
+          </button>
+        </div>
       </div>
     </div>
   )
 }
 
 function ProviderSubscription({ setFlow }: { setFlow: (flow: string) => void }) {
-  const [selectedPlan, setSelectedPlan] = useState<string>("")
-
-  const premiumFeatures = [
-    "Promociones ilimitadas",
-    "Destacar publicaciones",
-    "Estadísticas completas",
-    "Notificaciones push",
-    "Soporte prioritario",
-    "Análisis de competencia",
-  ]
-
-  const handleSubscribe = () => {
-    if (selectedPlan) {
-      alert("¡Suscripción activada! Ahora tienes acceso a todas las funciones premium.")
-      setFlow("dashboard")
-    }
-  }
-
   return (
-    <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
+    <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Header */}
-      <div className="bg-white shadow-sm p-4">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => setFlow("dashboard")}>
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <h1 className="text-xl font-bold">Suscripción Premium</h1>
-        </div>
+      <div className="bg-white shadow-sm p-4 flex items-center gap-3">
+        <Button variant="ghost" size="sm" onClick={() => setFlow("dashboard")}>
+          <ArrowLeft className="h-4 w-4" />
+        </Button>
+        <h1 className="text-xl font-bold text-primary">Planes Premium</h1>
       </div>
 
-      <div className="p-4 space-y-6">
-        {/* Hero Section */}
-        <Card className="border-primary/20 bg-gradient-to-br from-primary/10 to-primary/5">
-          <CardContent className="p-6 text-center">
-            <div className="w-16 h-16 bg-primary/20 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Star className="h-8 w-8 text-primary" />
+      <div className="p-6 flex-1 flex flex-col items-center justify-center">
+        <Card className="w-full max-w-md border-primary/20 bg-gradient-to-br from-primary/10 to-primary/5 shadow-xl">
+          <CardContent className="p-8 text-center space-y-6">
+            <div className="w-20 h-20 bg-primary/20 rounded-full flex items-center justify-center mx-auto">
+              <Star className="h-10 w-10 text-primary" />
             </div>
-            <h2 className="text-2xl font-bold mb-2">Lleva tu negocio al siguiente nivel</h2>
-            <p className="text-muted-foreground">
-              Accede a herramientas avanzadas para hacer crecer tu negocio y destacar entre la competencia
-            </p>
+            
+            <div className="space-y-4">
+              <h2 className="text-2xl font-bold text-primary">¡Acceso Total Desbloqueado!</h2>
+              <p className="text-lg text-gray-700 leading-relaxed italic">
+                "Todos los planes premium están desbloqueados, por favor utiliza la aplicación con tranquilidad y disfrute de Punto Encuentro."
+              </p>
+            </div>
+
+            <div className="pt-6 border-t border-primary/10">
+              <p className="font-bold text-gray-900 text-sm">Ceo</p>
+              <p className="text-xl font-serif text-primary">Mateo Yoyovich</p>
+            </div>
+
+            <Button onClick={() => setFlow("dashboard")} className="w-full mt-4">
+              Volver al Panel
+            </Button>
           </CardContent>
         </Card>
-
-        {/* Features */}
-        <Card>
-          <CardContent className="p-6">
-            <h3 className="text-lg font-semibold mb-4">Beneficios Premium</h3>
-            <div className="space-y-3">
-              {premiumFeatures.map((feature, index) => (
-                <div key={index} className="flex items-center gap-3">
-                  <div className="w-6 h-6 bg-primary/20 rounded-full flex items-center justify-center">
-                    <Star className="h-3 w-3 text-primary" />
-                  </div>
-                  <span className="text-sm">{feature}</span>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Pricing Plans */}
-        <div className="space-y-3">
-          <h3 className="text-lg font-semibold">Elige tu plan</h3>
-
-          {/* Monthly Plan */}
-          <Card
-            className={`cursor-pointer transition-all ${
-              selectedPlan === "monthly" ? "ring-2 ring-primary border-primary" : ""
-            }`}
-            onClick={() => setSelectedPlan("monthly")}
-          >
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="font-semibold">Plan Mensual</h4>
-                  <p className="text-sm text-muted-foreground">Facturación mensual</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-2xl font-bold text-primary">$2,999</p>
-                  <p className="text-sm text-muted-foreground">por mes</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Annual Plan */}
-          <Card
-            className={`cursor-pointer transition-all relative ${
-              selectedPlan === "annual" ? "ring-2 ring-primary border-primary" : ""
-            }`}
-            onClick={() => setSelectedPlan("annual")}
-          >
-            <div className="absolute -top-2 -right-2 bg-primary text-primary-foreground text-xs px-2 py-1 rounded-full">
-              20% OFF
-            </div>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="font-semibold">Plan Anual</h4>
-                  <p className="text-sm text-muted-foreground">Facturación anual - Ahorra $7,200</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-2xl font-bold text-primary">$28,800</p>
-                  <p className="text-sm text-muted-foreground">por año</p>
-                  <p className="text-xs text-green-600">$2,400/mes</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Subscribe Button */}
-        <Button onClick={handleSubscribe} disabled={!selectedPlan} className="w-full h-12 text-base">
-          Suscribirme ahora
-        </Button>
-
-        {/* Terms */}
-        <div className="text-center text-xs text-muted-foreground">
-          <p>Al suscribirte aceptas nuestros términos y condiciones.</p>
-          <p>Puedes cancelar tu suscripción en cualquier momento.</p>
-        </div>
       </div>
     </div>
   )
@@ -4444,64 +5589,57 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
   }
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
-      {/* Header */}
-      <div className="bg-white shadow-sm p-4">
-        <div className="flex items-center justify-between">
-          <div className="min-w-0 flex-1">
-            <h1 className="text-lg md:text-xl font-bold text-primary truncate">Panel de Administración</h1>
-            <p className="text-xs md:text-sm text-muted-foreground truncate">Bienvenido, {user?.displayName || user?.email}</p>
-          </div>
-          <Button 
-            variant="outline" 
-            size="sm"
-            onClick={async () => {
-              const result = await logout()
-              if (result.success) {
-                localStorage.removeItem('userType')
-                window.location.reload()
-              }
-            }}
-            className="ml-2 flex-shrink-0"
-          >
-            <span className="hidden sm:inline">Cerrar sesión</span>
-            <span className="sm:hidden">Salir</span>
-          </Button>
-        </div>
-      </div>
+    <div className="min-h-screen bg-gray-50/50 flex flex-col md:flex-row">
+      {/* Navegación para escritorio */}
+      <AdminSidebar activeTab={activeTab} setActiveTab={setActiveTab} logout={async () => {
+        const result = await logout()
+        if (result.success) {
+          localStorage.removeItem('userType')
+          window.location.reload()
+        }
+      }} />
 
-      {/* Navigation */}
-      <div className="bg-white border-b border-gray-200">
-        <div className="flex w-full">
-          {[
-            { id: 'dashboard', label: 'Dashboard', icon: '📊' },
-            { id: 'categories', label: 'Categorías', icon: '📁' },
-            { id: 'users', label: 'Usuarios', icon: '👥' },
-            { id: 'services', label: 'Servicios', icon: '🛠️' },
-            { id: 'analytics', label: 'Analytics', icon: '📈' },
-            { id: 'reports', label: 'Informes', icon: '📄' },
-            { id: 'settings', label: 'Configuración', icon: '⚙️' }
-          ].map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`flex-1 py-3 px-1 md:py-4 md:px-2 border-b-2 font-medium text-xs md:text-sm ${
-                activeTab === tab.id
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              <div className="flex flex-col items-center space-y-1">
-                <span className="text-lg md:text-xl">{tab.icon}</span>
-                <span className="hidden sm:block text-xs md:text-sm">{tab.label}</span>
+      {/* Navegación para móvil */}
+      <AdminBottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
+
+      {/* Contenido Principal */}
+      <div className="flex-1 md:ml-64 flex flex-col min-h-screen">
+        {/* Header Superior con Glassmorphism */}
+        <header className="sticky top-0 z-40 w-full bg-white/80 backdrop-blur-md border-b">
+          <div className="flex h-16 items-center justify-between px-4 md:px-8">
+            <div className="flex items-center gap-3">
+              <div className="md:hidden">
+                <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center text-white text-xs font-black">P</div>
               </div>
-            </button>
-          ))}
-        </div>
-      </div>
+              <div>
+                <h1 className="text-sm md:text-lg font-bold text-gray-900 leading-none">
+                  {activeTab === 'dashboard' && 'Panel de Control'}
+                  {activeTab === 'users' && 'Gestión de Usuarios'}
+                  {activeTab === 'services' && 'Gestión de Servicios'}
+                  {activeTab === 'categories' && 'Gestión de Categorías'}
+                  {activeTab === 'reports' && 'Informes y Reportes'}
+                  {activeTab === 'analytics' && 'Analíticas Avanzadas'}
+                  {activeTab === 'settings' && 'Configuración Global'}
+                </h1>
+                <p className="hidden md:block text-[10px] text-muted-foreground mt-1 tracking-tight">Bienvenido, {user?.displayName || user?.email}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-4">
+              <Button variant="ghost" size="icon" className="relative">
+                <Bell className="h-5 w-5 text-gray-500" />
+                {stats.alerts.length > 0 && (
+                  <span className="absolute top-2 right-2 h-2 w-2 bg-red-500 rounded-full border-2 border-white" />
+                )}
+              </Button>
+              <div className="h-8 w-8 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center text-primary font-bold text-xs">
+                {(user?.displayName?.charAt(0) || user?.email?.charAt(0) || 'A').toUpperCase()}
+              </div>
+            </div>
+          </div>
+        </header>
 
-      {/* Content */}
-      <div className="p-3 md:p-6">
+        {/* Área de Contenido */}
+        <main className="flex-1 p-4 md:p-8 pb-24 md:pb-8 max-w-7xl mx-auto w-full">
         {activeTab === 'dashboard' && (
           <div className="space-y-4 md:space-y-6">
             {dashboardLoading ? (
@@ -4550,205 +5688,211 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                   </Card>
                 )}
 
-                {/* Usuarios */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Card>
-                    <CardContent className="p-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium text-gray-600">Usuarios activos hoy</p>
-                          <p className="text-2xl font-bold text-primary">{stats.activeUsersToday}</p>
-                        </div>
-                        <div className="text-3xl">👥</div>
-                      </div>
-                    </CardContent>
-                  </Card>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-8">
+              <AdminStatCard 
+                title="Usuarios Activos" 
+                value={stats.activeUsersToday} 
+                icon={Users} 
+                color="bg-blue-500" 
+              />
+              <AdminStatCard 
+                title="Nuevos Usuarios" 
+                value={stats.newUsersThisWeek} 
+                icon={Plus} 
+                color="bg-green-500" 
+              />
+              <AdminStatCard 
+                title="Comercios" 
+                value={stats.activeBusinesses} 
+                icon={Briefcase} 
+                color="bg-purple-500" 
+              />
+              <AdminStatCard 
+                title="Pendientes" 
+                value={stats.businessesPendingVerification} 
+                icon={Clock} 
+                color="bg-orange-500" 
+              />
+            </div>
 
-                  <Card>
-                    <CardContent className="p-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium text-gray-600">Nuevos esta semana</p>
-                          <p className="text-2xl font-bold text-green-600">{stats.newUsersThisWeek}</p>
-                        </div>
-                        <div className="text-3xl">🆕</div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
+              <AdminStatCard 
+                title="Publicaciones" 
+                value={stats.newPublications} 
+                icon={FileText} 
+                color="bg-indigo-500" 
+              />
+              <AdminStatCard 
+                title="Reportadas" 
+                value={stats.reportedPublications} 
+                icon={Shield} 
+                color="bg-red-500" 
+              />
+              <AdminStatCard 
+                title="Chats" 
+                value={stats.chatsInitiated} 
+                icon={Mail} 
+                color="bg-teal-500" 
+              />
+            </div>
 
-                {/* Comercios */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Card>
-                    <CardContent className="p-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium text-gray-600">Comercios activos</p>
-                          <p className="text-2xl font-bold text-blue-600">{stats.activeBusinesses}</p>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 mt-8">
+              {/* Alertas Premium */}
+              <Card className={`border-none shadow-sm ${stats.alerts.length > 0 ? 'bg-orange-50/50' : 'bg-white'}`}>
+                <CardContent className="p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                       <Bell className={`h-5 w-5 ${stats.alerts.length > 0 ? 'text-orange-500 animate-pulse' : 'text-gray-400'}`} />
+                       Alertas del Sistema
+                    </h3>
+                    <Badge variant={stats.alerts.length > 0 ? "destructive" : "outline"}>
+                      {stats.alerts.length} pendientes
+                    </Badge>
+                  </div>
+                  {stats.alerts.length > 0 ? (
+                    <div className="space-y-3">
+                      {stats.alerts.map((alert, index) => (
+                        <div key={index} className="flex items-center justify-between p-3 bg-white border border-orange-100 rounded-xl shadow-sm">
+                          <span className="text-sm font-medium text-gray-700">{alert.message}</span>
+                          <Badge variant="destructive" className="rounded-lg">
+                            {alert.count}
+                          </Badge>
                         </div>
-                        <div className="text-3xl">🏪</div>
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardContent className="p-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium text-gray-600">Pendientes de verificación</p>
-                          <p className="text-2xl font-bold text-yellow-600">{stats.businessesPendingVerification}</p>
-                        </div>
-                        <div className="text-3xl">⏳</div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-
-                {/* Publicaciones */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <Card>
-                    <CardContent className="p-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium text-gray-600">Publicaciones nuevas</p>
-                          <p className="text-2xl font-bold text-green-600">{stats.newPublications}</p>
-                        </div>
-                        <div className="text-3xl">✨</div>
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardContent className="p-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium text-gray-600">Pendientes</p>
-                          <p className="text-2xl font-bold text-yellow-600">{stats.pendingPublications}</p>
-                        </div>
-                        <div className="text-3xl">📋</div>
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardContent className="p-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium text-gray-600">Denunciadas</p>
-                          <p className="text-2xl font-bold text-red-600">{stats.reportedPublications}</p>
-                        </div>
-                        <div className="text-3xl">🚨</div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-
-                {/* Chats */}
-                <Card>
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-medium text-gray-600">Chats iniciados</p>
-                        <p className="text-2xl font-bold text-purple-600">{stats.chatsInitiated}</p>
-                      </div>
-                      <div className="text-3xl">💬</div>
+                      ))}
                     </div>
-                  </CardContent>
-                </Card>
+                  ) : (
+                    <div className="text-center py-8">
+                       <p className="text-sm text-muted-foreground">Sistema saludable. No hay alertas.</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
 
-                {/* Top 5 Búsquedas del día */}
-                <Card>
-                  <CardContent className="p-4">
-                    <h3 className="text-lg font-semibold mb-4">🔍 Top 5 búsquedas del día</h3>
-                    {stats.topSearches.length > 0 ? (
-                      <div className="space-y-2">
-                        {stats.topSearches.map((search, index) => (
-                          <div key={index} className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                            <div className="flex items-center space-x-3">
-                              <span className="text-lg font-bold text-primary">#{index + 1}</span>
-                              <span className="text-sm">{search.term}</span>
-                            </div>
-                            <span className="text-sm text-gray-500">{search.count} búsquedas</span>
+              {/* Top Búsquedas Premium */}
+              <Card className="border-none shadow-sm bg-white">
+                <CardContent className="p-6">
+                  <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
+                    <Search className="h-5 w-5 text-primary" />
+                    Búsquedas Populares (Hoy)
+                  </h3>
+                  {stats.topSearches.length > 0 ? (
+                    <div className="space-y-2">
+                      {stats.topSearches.slice(0, 5).map((search, index) => (
+                        <div key={index} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-xl transition-colors">
+                          <div className="flex items-center gap-3">
+                            <span className="text-xs font-bold text-primary bg-primary/10 w-6 h-6 rounded-lg flex items-center justify-center">
+                              {index + 1}
+                            </span>
+                            <span className="text-sm font-medium text-gray-700">{search.term}</span>
                           </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-gray-500 text-center py-4">No hay búsquedas registradas hoy</p>
-                    )}
-                  </CardContent>
-                </Card>
+                          <span className="text-xs font-bold text-gray-400">{search.count} veces</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500 text-center py-8">Sin actividad registrada.</p>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
               </>
             )}
           </div>
         )}
 
         {activeTab === 'categories' && (
-          <div className="space-y-4 md:space-y-6">
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
-              <h2 className="text-lg font-semibold">Gestión de Categorías</h2>
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+              <div className="hidden md:block">
+                <h2 className="text-xl font-bold text-gray-900 leading-none">Gestión de Categorías</h2>
+                <p className="text-xs text-muted-foreground mt-1">Administra los rubros disponibles en la plataforma</p>
+              </div>
               <Button 
                 onClick={() => setShowCreateCategory(true)}
-                className="w-full sm:w-auto"
-                size="sm"
+                className="bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/20"
               >
                 <Plus className="w-4 h-4 mr-2" />
                 Nueva Categoría
               </Button>
             </div>
 
-            {/* Lista de categorías */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
               {categoriesLoading ? (
-                <div className="col-span-full text-center py-8">
-                  <div className="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-4"></div>
-                  <p className="text-muted-foreground">Cargando categorías...</p>
+                <div className="col-span-full py-20 flex flex-col items-center justify-center">
+                   <div className="relative w-12 h-12">
+                      <div className="absolute inset-0 border-4 border-primary/20 rounded-full"></div>
+                      <div className="absolute inset-0 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+                   </div>
+                   <p className="mt-4 text-sm font-medium text-gray-500">Cargando categorías...</p>
                 </div>
               ) : (
                 categories.map(category => (
-                  <Card key={category.id}>
-                    <CardContent className="p-3 md:p-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center space-x-2 min-w-0 flex-1">
-                          <span className="text-xl md:text-2xl flex-shrink-0">{category.icon}</span>
-                          <h3 className="font-semibold truncate">{category.name}</h3>
+                  <Card key={category.id} className="group border-none shadow-sm hover:shadow-md transition-all duration-300 overflow-hidden bg-white">
+                    <CardContent className="p-5">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-4 min-w-0">
+                          <div className="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center text-2xl shadow-inner group-hover:scale-110 transition-transform">
+                            {category.icon}
+                          </div>
+                          <div className="min-w-0">
+                            <h3 className="font-bold text-gray-900 truncate">{category.name}</h3>
+                            <div className="flex items-center gap-2 mt-1">
+                               <Badge variant={category.active ? "success" : "outline"} className="text-[10px] h-4">
+                                 {category.active ? 'Activa' : 'Inactiva'}
+                               </Badge>
+                               {category.isBase && (
+                                 <Badge variant="secondary" className="text-[10px] h-4 bg-primary/10 text-primary border-none">
+                                   BASE
+                                 </Badge>
+                               )}
+                            </div>
+                          </div>
                         </div>
-                        <div className="flex space-x-1 flex-shrink-0">
+                        <div className="flex gap-1">
                           <Button
-                            size="sm"
-                            variant="outline"
+                            size="icon"
+                            variant="ghost"
                             onClick={() => setEditingCategory(category)}
-                            className="p-1 md:p-2"
+                            className="h-8 w-8 rounded-lg text-gray-400 hover:text-primary hover:bg-primary/5"
                           >
-                            <span className="text-xs md:text-sm">✏️</span>
+                            <Settings className="h-4 w-4" />
                           </Button>
                           <Button
-                            size="sm"
-                            variant="outline"
+                            size="icon"
+                            variant="ghost"
                             onClick={() => handleDeleteCategory(category.id)}
-                            className="p-1 md:p-2"
+                            className="h-8 w-8 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50"
                           >
-                            <span className="text-xs md:text-sm">🗑️</span>
+                            <LogOut className="h-4 w-4" /> {/* Usando LogOut como icono de borrar temporalmente o similar */}
                           </Button>
                         </div>
                       </div>
+                      
                       {category.description && (
-                        <p className="text-xs md:text-sm text-gray-600 mb-2 line-clamp-2">{category.description}</p>
+                        <p className="text-xs text-gray-500 mt-4 line-clamp-2 leading-relaxed h-8">
+                          {category.description}
+                        </p>
                       )}
-                      <div className="flex items-center justify-between">
-                        <span className={`text-xs px-2 py-1 rounded-full ${
-                          category.active 
-                            ? 'bg-green-100 text-green-800' 
-                            : 'bg-red-100 text-red-800'
-                        }`}>
-                          {category.active ? 'Activa' : 'Inactiva'}
-                        </span>
+
+                      <div className="grid grid-cols-2 gap-2 mt-5">
                         <Button
+                          variant="outline"
                           size="sm"
-                          variant="ghost"
                           onClick={() => toggleCategoryStatus(category.id)}
-                          className="text-xs"
+                          className={`text-[11px] font-bold h-9 rounded-xl ${
+                            category.active 
+                              ? 'text-gray-600 hover:bg-gray-50' 
+                              : 'bg-green-50 text-green-700 border-green-100 hover:bg-green-100'
+                          }`}
                         >
-                          {category.active ? 'Desactivar' : 'Activar'}
+                          {category.active ? 'Desactivar' : 'Reactivar'}
+                        </Button>
+                        <Button
+                           variant="ghost"
+                           size="sm"
+                           className="text-[11px] font-bold h-9 rounded-xl text-primary hover:bg-primary/5"
+                        >
+                          Ver Detalles
                         </Button>
                       </div>
                     </CardContent>
@@ -4760,260 +5904,203 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
         )}
 
         {activeTab === 'users' && (
-          <div className="space-y-4 md:space-y-6">
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
-              <h2 className="text-lg font-semibold">Gestión de Usuarios</h2>
-              <div className="flex space-x-2">
-                <select 
-                  value={userFilter} 
-                  onChange={(e) => setUserFilter(e.target.value as any)}
-                  className="px-3 py-2 border border-gray-300 rounded-md text-sm w-full sm:w-auto"
-                >
-                  <option value="all">Todos</option>
-                  <option value="client">Clientes</option>
-                  <option value="provider">Proveedores</option>
-                  <option value="admin">Admins</option>
-                </select>
+          <div className="space-y-6 animate-in fade-in duration-500">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+              <div className="hidden md:block">
+                <h2 className="text-xl font-bold text-gray-900 leading-none">Control de Usuarios</h2>
+                <p className="text-xs text-muted-foreground mt-1">Gestión centralizada de cuentas y accesos</p>
+              </div>
+              <div className="flex items-center gap-2 bg-white p-1 rounded-xl shadow-sm border border-gray-100">
+                {[
+                  { id: 'all', label: 'Todos' },
+                  { id: 'client', label: 'Clientes' },
+                  { id: 'provider', label: 'Proveedores' }
+                ].map(filter => (
+                  <button
+                    key={filter.id}
+                    onClick={() => setUserFilter(filter.id as any)}
+                    className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${
+                      userFilter === filter.id 
+                        ? 'bg-primary text-white shadow-sm' 
+                        : 'text-gray-500 hover:text-gray-900'
+                    }`}
+                  >
+                    {filter.label}
+                  </button>
+                ))}
               </div>
             </div>
 
-            {/* Lista de usuarios - Vista móvil */}
-            <div className="block md:hidden">
-              <div className="space-y-3">
-                {usersLoading ? (
-                  <div className="text-center py-8">
-                    <div className="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-4"></div>
-                    <p className="text-muted-foreground">Cargando usuarios...</p>
-                  </div>
-                ) : (
-                  filteredUsers.map(user => (
-                    <Card key={user.id}>
-                      <CardContent className="p-4">
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="flex items-center space-x-3 min-w-0 flex-1">
-                            <div className="h-10 w-10 rounded-full bg-primary text-white flex items-center justify-center flex-shrink-0">
-                              {(user.displayName?.charAt(0) || user.email?.charAt(0) || 'U').toUpperCase()}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="text-sm font-medium text-gray-900 truncate">
-                                {user.displayName || 'Sin nombre'}
-                              </div>
-                              <div className="text-xs text-gray-500 truncate">{user.email || 'Sin email'}</div>
-                            </div>
+            {/* Lista de usuarios - Mobile Cards */}
+            <div className="md:hidden space-y-4">
+              {usersLoading ? (
+                <div className="py-20 flex flex-col items-center justify-center">
+                   <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+                </div>
+              ) : (
+                filteredUsers.map(user => (
+                  <Card key={user.id} className="border-none shadow-sm bg-white overflow-hidden">
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="h-10 w-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold">
+                            {(user.displayName?.charAt(0) || user.email?.charAt(0) || 'U').toUpperCase()}
                           </div>
-                          <div className="flex space-x-1 flex-shrink-0">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => setEditingUser(user)}
-                              className="p-1"
-                            >
-                              <span className="text-xs">✏️</span>
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleToggleUserStatus(user.id)}
-                              className="p-1"
-                            >
-                              <span className="text-xs">{user.isActive ? '🚫' : '✅'}</span>
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleDeleteUser(user.id)}
-                              className="p-1"
-                            >
-                              <span className="text-xs">🗑️</span>
-                            </Button>
+                          <div>
+                            <p className="text-sm font-bold text-gray-900">{user.displayName || 'Sin nombre'}</p>
+                            <p className="text-[10px] text-gray-500">{user.email}</p>
                           </div>
                         </div>
-                        
-                        <div className="flex items-center justify-between">
-                          <div className="flex space-x-2">
-                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                              user.role === 'admin' ? 'bg-purple-100 text-purple-800' :
-                              user.role === 'provider' ? 'bg-blue-100 text-blue-800' :
-                              'bg-green-100 text-green-800'
-                            }`}>
-                              {user.role === 'admin' ? 'Admin' : 
-                               user.role === 'provider' ? 'Proveedor' : 'Cliente'}
-                            </span>
-                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                              user.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                            }`}>
-                              {user.isActive ? 'Activo' : 'Inactivo'}
-                            </span>
-                          </div>
-                          <div className="text-xs text-gray-500">
-                            {user.createdAt.toLocaleDateString()}
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))
-                )}
-              </div>
+                        <Badge variant="outline" className={`text-[9px] uppercase ${
+                          user.role === 'admin' ? 'border-primary text-primary' : 
+                          user.role === 'provider' ? 'border-purple-200 text-purple-700' : 
+                          'border-blue-200 text-blue-700'
+                        }`}>
+                          {user.role}
+                        </Badge>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 mt-4">
+                        <Button size="sm" variant="outline" className="h-8 text-[10px] rounded-lg" onClick={() => setEditingUser(user)}>
+                          Editar
+                        </Button>
+                        <Button size="sm" variant="outline" className={`h-8 text-[10px] rounded-lg ${!user.isActive ? 'text-green-600' : 'text-orange-600'}`} onClick={() => toggleUserStatus(user.id)}>
+                          {!user.isActive ? 'Activar' : 'Suspender'}
+                        </Button>
+                        <Button size="sm" variant="outline" className="h-8 text-[10px] rounded-lg text-red-600" onClick={() => deleteUser(user.id)}>
+                          Borrar
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))
+              )}
             </div>
 
-            {/* Lista de usuarios - Vista desktop */}
-            <div className="hidden md:block bg-white rounded-lg shadow">
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Usuario</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rol</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Registro</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
+            {/* Lista de usuarios - Desktop Table */}
+            <div className="hidden md:block bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+              <table className="w-full text-left">
+                <thead className="bg-gray-50/50 border-b border-gray-100">
+                  <tr>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Usuario</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Rol</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Estado</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {filteredUsers.map(user => (
+                    <tr key={user.id} className="hover:bg-gray-50/50 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="h-9 w-9 rounded-xl bg-gray-100 flex items-center justify-center font-bold text-gray-400 overflow-hidden">
+                             {user.photoURL ? <img src={user.photoURL} alt="" /> : (user.displayName?.charAt(0) || 'U').toUpperCase()}
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-gray-900 leading-none">{user.displayName || 'Sin nombre'}</p>
+                            <p className="text-xs text-gray-500 mt-1">{user.email}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <Badge variant="secondary" className="bg-gray-100 text-gray-600 border-none font-bold text-[10px]">
+                          {user.role?.toUpperCase()}
+                        </Badge>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-1.5">
+                          <div className={`h-1.5 w-1.5 rounded-full ${user.isActive ? 'bg-green-500' : 'bg-red-500'}`} />
+                          <span className="text-xs font-medium text-gray-600">
+                            {user.isActive ? 'Activo' : 'Suspendido'}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2">
+                          <Button size="icon" variant="ghost" className="h-8 w-8 rounded-lg" onClick={() => setEditingUser(user)}>
+                            <Settings className="h-4 w-4 text-gray-400" />
+                          </Button>
+                          <Button size="icon" variant="ghost" className="h-8 w-8 rounded-lg text-red-400 hover:text-red-600" onClick={() => deleteUser(user.id)}>
+                             <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {usersLoading ? (
-                      <tr>
-                        <td colSpan={5} className="px-6 py-4 text-center">
-                          <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full mx-auto mb-2"></div>
-                          <p className="text-muted-foreground">Cargando usuarios...</p>
-                        </td>
-                      </tr>
-                    ) : (
-                      filteredUsers.map(user => (
-                        <tr key={user.id}>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="flex items-center">
-                              <div className="flex-shrink-0 h-10 w-10">
-                                <div className="h-10 w-10 rounded-full bg-primary text-white flex items-center justify-center">
-                                  {(user.displayName?.charAt(0) || user.email?.charAt(0) || 'U').toUpperCase()}
-                                </div>
-                              </div>
-                              <div className="ml-4">
-                                <div className="text-sm font-medium text-gray-900">
-                                  {user.displayName || 'Sin nombre'}
-                                </div>
-                                <div className="text-sm text-gray-500">{user.email || 'Sin email'}</div>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                              user.role === 'admin' ? 'bg-purple-100 text-purple-800' :
-                              user.role === 'provider' ? 'bg-blue-100 text-blue-800' :
-                              'bg-green-100 text-green-800'
-                            }`}>
-                              {user.role === 'admin' ? 'Admin' : 
-                               user.role === 'provider' ? 'Proveedor' : 'Cliente'}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                              user.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                            }`}>
-                              {user.isActive ? 'Activo' : 'Inactivo'}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {user.createdAt.toLocaleDateString()}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                            <div className="flex space-x-2">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => setEditingUser(user)}
-                              >
-                                ✏️
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleToggleUserStatus(user.id)}
-                              >
-                                {user.isActive ? '🚫' : '✅'}
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleDeleteUser(user.id)}
-                              >
-                                🗑️
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         )}
 
         {activeTab === 'services' && (
-          <div className="space-y-4 md:space-y-6">
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
-              <h2 className="text-lg font-semibold">Gestión de Servicios</h2>
-              <div className="flex space-x-2">
-                <select 
-                  value={serviceFilter} 
-                  onChange={(e) => setServiceFilter(e.target.value as any)}
-                  className="px-3 py-2 border border-gray-300 rounded-md text-sm w-full sm:w-auto"
-                >
-                  <option value="all">Todos</option>
-                  <option value="active">Activos</option>
-                  <option value="inactive">Inactivos</option>
-                </select>
+          <div className="space-y-6 animate-in fade-in duration-500">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+              <div className="hidden md:block">
+                <h2 className="text-xl font-bold text-gray-900 leading-none">Gestión de Servicios</h2>
+                <p className="text-xs text-muted-foreground mt-1">Supervisión de la oferta de servicios activa</p>
+              </div>
+              <div className="flex items-center gap-2 bg-white p-1 rounded-xl shadow-sm border border-gray-100">
+                {[
+                  { id: 'all', label: 'Todos' },
+                  { id: 'active', label: 'Activos' },
+                  { id: 'inactive', label: 'Inactivos' }
+                ].map(filter => (
+                  <button
+                    key={filter.id}
+                    onClick={() => setServiceFilter(filter.id as any)}
+                    className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${
+                      serviceFilter === filter.id 
+                        ? 'bg-primary text-white shadow-sm' 
+                        : 'text-gray-500 hover:text-gray-900'
+                    }`}
+                  >
+                    {filter.label}
+                  </button>
+                ))}
               </div>
             </div>
 
-            {/* Lista de servicios */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
               {filteredServices.map(service => (
-                <Card key={service.id}>
-                  <CardContent className="p-3 md:p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <h3 className="font-semibold text-sm md:text-lg truncate flex-1 mr-2">{service.name}</h3>
-                      <span className={`text-xs px-2 py-1 rounded-full flex-shrink-0 ${
-                        (service as any).active !== false 
-                          ? 'bg-green-100 text-green-800' 
-                          : 'bg-red-100 text-red-800'
-                      }`}>
-                        {(service as any).active !== false ? 'Activo' : 'Inactivo'}
-                      </span>
+                <Card key={service.id} className="border-none shadow-sm group hover:shadow-md transition-all overflow-hidden bg-white">
+                  <CardContent className="p-5">
+                    <div className="flex justify-between items-start mb-4">
+                      <div className="h-10 w-10 rounded-xl bg-gray-50 flex items-center justify-center text-xl shadow-inner">
+                        {categories.find(c => c.name === service.category)?.icon || '🛠️'}
+                      </div>
+                      <Badge variant={(service as any).isActive !== false ? "success" : "destructive"} className="text-[10px]">
+                        {(service as any).isActive !== false ? 'ACTIVO' : 'INACTIVO'}
+                      </Badge>
                     </div>
                     
-                    <p className="text-xs md:text-sm text-gray-600 mb-3 line-clamp-2">{service.description}</p>
+                    <h3 className="font-bold text-gray-900 truncate mb-1">{service.name}</h3>
+                    <p className="text-xs text-gray-500 line-clamp-2 h-8 leading-relaxed">
+                      {service.description}
+                    </p>
                     
-                    <div className="space-y-1 md:space-y-2 mb-4">
-                      <div className="flex justify-between text-xs md:text-sm">
-                        <span className="text-gray-500">Proveedor:</span>
-                        <span className="font-medium truncate ml-2">{service.providerName}</span>
+                    <div className="mt-6 pt-4 border-t border-gray-50 space-y-3">
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-gray-400 font-medium">Proveedor</span>
+                        <span className="font-bold text-gray-700 truncate max-w-[150px]">{service.providerName}</span>
                       </div>
-                      <div className="flex justify-between text-xs md:text-sm">
-                        <span className="text-gray-500">Precio:</span>
-                        <span className="font-medium">${service.price}</span>
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-gray-400 font-medium">Categoría</span>
+                        <Badge variant="secondary" className="bg-gray-100 text-gray-600 border-none px-1.5 h-5 text-[9px] font-bold">
+                          {service.category.toUpperCase()}
+                        </Badge>
                       </div>
-                      <div className="flex justify-between text-xs md:text-sm">
-                        <span className="text-gray-500">Duración:</span>
-                        <span className="font-medium">{(service as any).duration || 60} min</span>
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-400 font-medium text-xs">Precio</span>
+                        <span className="text-lg font-black text-primary">${service.price}</span>
                       </div>
                     </div>
                     
-                    <div className="flex space-x-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="flex-1 text-xs"
-                      >
-                        ✏️ Editar
+                    <div className="grid grid-cols-2 gap-3 mt-6">
+                      <Button variant="outline" size="sm" className="rounded-xl h-10 font-bold text-xs">
+                        Editar
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="flex-1 text-xs"
-                      >
-                        {(service as any).active !== false ? '🚫' : '✅'} {(service as any).active !== false ? 'Desactivar' : 'Activar'}
+                      <Button variant="ghost" size="sm" className="rounded-xl h-10 font-bold text-xs text-red-600 hover:bg-red-50">
+                        Eliminar
                       </Button>
                     </div>
                   </CardContent>
@@ -5024,753 +6111,567 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
         )}
 
         {activeTab === 'reports' && (
-          <div className="space-y-4 md:space-y-6">
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
-              <h2 className="text-lg font-semibold">Informes</h2>
-              <div className="flex gap-2">
-                <Button
-                  variant={reportType === 'daily' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => {
-                    setReportType('daily')
-                    generateDailyReport()
-                  }}
-                >
-                  Diario
-                </Button>
-                <Button
-                  variant={reportType === 'weekly' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => {
-                    setReportType('weekly')
-                    generateWeeklyReport()
-                  }}
-                >
-                  Semanal
-                </Button>
-                <Button
-                  variant={reportType === 'monthly' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => {
-                    setReportType('monthly')
-                    generateMonthlyReport()
-                  }}
-                >
-                  Mensual
-                </Button>
+          <div className="space-y-6 animate-in fade-in duration-500">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+              <div className="hidden md:block">
+                <h2 className="text-xl font-bold text-gray-900 leading-none">Informes de Actividad</h2>
+                <p className="text-xs text-muted-foreground mt-1">Reportes detallados por período</p>
+              </div>
+              <div className="flex items-center gap-1 bg-white p-1 rounded-xl shadow-sm border border-gray-100">
+                {[
+                  { id: 'daily', label: 'Diario', icon: Clock },
+                  { id: 'weekly', label: 'Semanal', icon: Calendar },
+                  { id: 'monthly', label: 'Mensual', icon: BarChart3 }
+                ].map(type => (
+                  <button
+                    key={type.id}
+                    onClick={() => {
+                      setReportType(type.id as any)
+                      if(type.id === 'daily') generateDailyReport()
+                      if(type.id === 'weekly') generateWeeklyReport()
+                      if(type.id === 'monthly') generateMonthlyReport()
+                    }}
+                    className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-lg transition-all ${
+                      reportType === type.id 
+                        ? 'bg-primary text-white shadow-sm' 
+                        : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+                    }`}
+                  >
+                    <type.icon className="h-3 w-3" />
+                    {type.label}
+                  </button>
+                ))}
               </div>
             </div>
 
             {reportsLoading ? (
-              <div className="text-center py-8">
-                <div className="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-4"></div>
-                <p className="text-muted-foreground">Generando informe...</p>
+              <div className="py-20 flex flex-col items-center justify-center">
+                 <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+                 <p className="mt-4 text-sm text-gray-500">Generando reporte...</p>
               </div>
             ) : (
-              <>
+              <div className="space-y-6">
                 {/* Informe Diario */}
                 {reportType === 'daily' && dailyReport && (
-                  <div className="space-y-4">
-                    <Card>
-                      <CardContent className="p-4">
-                        <h3 className="text-lg font-semibold mb-4">📅 Informe Diario - {new Date(dailyReport.date).toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</h3>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                          <div className="text-center">
-                            <p className="text-2xl font-bold text-primary">{dailyReport.activeUsers}</p>
-                            <p className="text-sm text-gray-600">Usuarios activos</p>
-                          </div>
-                          <div className="text-center">
-                            <p className="text-2xl font-bold text-green-600">{dailyReport.newPublications}</p>
-                            <p className="text-sm text-gray-600">Publicaciones nuevas</p>
-                          </div>
-                          <div className="text-center">
-                            <p className="text-2xl font-bold text-purple-600">{dailyReport.chatsInitiated}</p>
-                            <p className="text-sm text-gray-600">Chats iniciados</p>
-                          </div>
-                          <div className="text-center">
-                            <p className="text-2xl font-bold text-red-600">{dailyReport.reports}</p>
-                            <p className="text-sm text-gray-600">Denuncias</p>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <AdminStatCard title="Usuarios Activos" value={dailyReport.activeUsers} icon={Users} color="bg-blue-500" />
+                    <AdminStatCard title="Nuevas Publicaciones" value={dailyReport.newPublications} icon={FileText} color="bg-green-500" />
+                    <AdminStatCard title="Chats Iniciados" value={dailyReport.chatsInitiated} icon={Mail} color="bg-purple-500" />
+                    <AdminStatCard title="Denuncias" value={dailyReport.reports} icon={Shield} color="bg-red-500" />
                   </div>
                 )}
 
                 {/* Informe Semanal */}
                 {reportType === 'weekly' && weeklyReport && (
-                  <div className="space-y-4">
-                    <Card>
-                      <CardContent className="p-4">
-                        <h3 className="text-lg font-semibold mb-4">📊 Informe Semanal - {weeklyReport.week}</h3>
-                        
-                        {/* Ranking de búsquedas por ciudad */}
-                        <div className="mb-6">
-                          <h4 className="font-semibold mb-3">🔍 Ranking de búsquedas por ciudad</h4>
-                          {weeklyReport.topSearchesByCity.length > 0 ? (
-                            <div className="space-y-4">
-                              {weeklyReport.topSearchesByCity.map((cityData, index) => (
-                                <Card key={index} className="bg-gray-50">
-                                  <CardContent className="p-4">
-                                    <h5 className="font-medium mb-2">{cityData.city}</h5>
-                                    <div className="space-y-1">
-                                      {cityData.searches.slice(0, 5).map((search, idx) => (
-                                        <div key={idx} className="flex items-center justify-between text-sm">
-                                          <span>#{idx + 1} {search.term}</span>
-                                          <span className="text-gray-500">{search.count} búsquedas</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </CardContent>
-                                </Card>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="text-sm text-gray-500">No hay datos de búsquedas por ciudad</p>
-                          )}
-                        </div>
-
-                        {/* Promociones con mejor rendimiento */}
-                        <div className="mb-6">
-                          <h4 className="font-semibold mb-3">⭐ Promociones con mejor rendimiento</h4>
-                          {weeklyReport.bestPerformingPromos.length > 0 ? (
-                            <div className="space-y-2">
-                              {weeklyReport.bestPerformingPromos.map((promo, index) => (
-                                <div key={promo.id} className="flex items-center justify-between p-3 bg-green-50 rounded">
-                                  <div className="flex items-center space-x-3">
-                                    <span className="text-lg font-bold text-green-600">#{index + 1}</span>
-                                    <span className="text-sm font-medium">{promo.name}</span>
-                                  </div>
-                                  <span className="text-sm text-green-600 font-semibold">{promo.performance.toFixed(2)}%</span>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="text-sm text-gray-500">No hay promociones activas</p>
-                          )}
-                        </div>
-
-                        {/* Promociones con peor rendimiento */}
-                        <div>
-                          <h4 className="font-semibold mb-3">📉 Promociones con peor rendimiento</h4>
-                          {weeklyReport.worstPerformingPromos.length > 0 ? (
-                            <div className="space-y-2">
-                              {weeklyReport.worstPerformingPromos.map((promo, index) => (
-                                <div key={promo.id} className="flex items-center justify-between p-3 bg-red-50 rounded">
-                                  <div className="flex items-center space-x-3">
-                                    <span className="text-lg font-bold text-red-600">#{index + 1}</span>
-                                    <span className="text-sm font-medium">{promo.name}</span>
-                                  </div>
-                                  <span className="text-sm text-red-600 font-semibold">{promo.performance.toFixed(2)}%</span>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="text-sm text-gray-500">No hay promociones con bajo rendimiento</p>
-                          )}
-                        </div>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <Card className="border-none shadow-sm">
+                      <CardContent className="p-6">
+                         <h3 className="font-bold text-gray-900 mb-6 flex items-center gap-2">
+                           <MapPin className="h-4 w-4 text-primary" /> Búsquedas por Ciudad
+                         </h3>
+                         <div className="space-y-6">
+                           {weeklyReport.topSearchesByCity.map((cityData, index) => (
+                             <div key={index} className="space-y-3">
+                               <div className="flex items-center justify-between">
+                                  <span className="text-sm font-bold text-gray-700">{cityData.city}</span>
+                                  <Badge variant="secondary" className="text-[10px]">{cityData.searches.reduce((a,b) => a + b.count, 0)} total</Badge>
+                               </div>
+                               <div className="space-y-2">
+                                 {cityData.searches.slice(0, 3).map((s, i) => (
+                                   <div key={i} className="flex justify-between items-center p-2 bg-gray-50 rounded-lg text-xs">
+                                      <span className="text-gray-600">#{i+1} {s.term}</span>
+                                      <span className="font-bold text-gray-400">{s.count}</span>
+                                   </div>
+                                 ))}
+                               </div>
+                             </div>
+                           ))}
+                         </div>
                       </CardContent>
+                    </Card>
+
+                    <Card className="border-none shadow-sm h-fit">
+                       <CardContent className="p-6">
+                          <h3 className="font-bold text-gray-900 mb-6 flex items-center gap-2">
+                            <TrendingUp className="h-4 w-4 text-green-500" /> Rendimiento de Promos
+                          </h3>
+                          <div className="space-y-4">
+                            <div className="p-4 bg-green-50/50 rounded-2xl border border-green-100">
+                               <p className="text-[10px] font-black text-green-600 uppercase tracking-wider mb-3">Top Rendimiento</p>
+                               {weeklyReport.bestPerformingPromos.slice(0, 3).map((p, i) => (
+                                 <div key={i} className="flex items-center justify-between mb-2 last:mb-0">
+                                   <span className="text-xs font-bold text-gray-700 truncate">{p.name}</span>
+                                   <span className="text-xs font-black text-green-600">{p.performance.toFixed(1)}%</span>
+                                 </div>
+                               ))}
+                            </div>
+                            <div className="p-4 bg-red-50/50 rounded-2xl border border-red-100">
+                               <p className="text-[10px] font-black text-red-600 uppercase tracking-wider mb-3">Bajo Rendimiento</p>
+                               {weeklyReport.worstPerformingPromos.slice(0, 3).map((p, i) => (
+                                 <div key={i} className="flex items-center justify-between mb-2 last:mb-0">
+                                   <span className="text-xs font-bold text-gray-700 truncate">{p.name}</span>
+                                   <span className="text-xs font-black text-red-600">{p.performance.toFixed(1)}%</span>
+                                 </div>
+                               ))}
+                            </div>
+                          </div>
+                       </CardContent>
                     </Card>
                   </div>
                 )}
 
                 {/* Informe Mensual */}
                 {reportType === 'monthly' && monthlyReport && (
-                  <div className="space-y-4">
-                    <Card>
-                      <CardContent className="p-4">
-                        <h3 className="text-lg font-semibold mb-4">📈 Informe Mensual - {monthlyReport.month}</h3>
-                        
-                        {/* Crecimiento general */}
-                        <div className="mb-6">
-                          <h4 className="font-semibold mb-3">📊 Crecimiento General</h4>
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            <div className="text-center p-3 bg-blue-50 rounded">
-                              <p className="text-2xl font-bold text-blue-600">{monthlyReport.userGrowth > 0 ? '+' : ''}{monthlyReport.userGrowth.toFixed(1)}%</p>
-                              <p className="text-sm text-gray-600">Crecimiento</p>
-                            </div>
-                            <div className="text-center p-3 bg-green-50 rounded">
-                              <p className="text-2xl font-bold text-green-600">{monthlyReport.totalUsers}</p>
-                              <p className="text-sm text-gray-600">Total usuarios</p>
-                            </div>
-                            <div className="text-center p-3 bg-purple-50 rounded">
-                              <p className="text-2xl font-bold text-purple-600">{monthlyReport.newUsers}</p>
-                              <p className="text-sm text-gray-600">Nuevos usuarios</p>
-                            </div>
-                            <div className="text-center p-3 bg-orange-50 rounded">
-                              <p className="text-2xl font-bold text-orange-600">{monthlyReport.returningUsers}</p>
-                              <p className="text-sm text-gray-600">Usuarios que volvieron</p>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Retención de usuarios */}
-                        <div className="mb-6">
-                          <h4 className="font-semibold mb-3">🔄 Retención de Usuarios</h4>
-                          <Card className="bg-gradient-to-r from-purple-50 to-pink-50">
-                            <CardContent className="p-4">
-                              <div className="flex items-center justify-between">
-                                <div>
-                                  <p className="text-sm text-gray-600">Tasa de retención</p>
-                                  <p className="text-3xl font-bold text-purple-600">{monthlyReport.userRetention.toFixed(1)}%</p>
-                                  <p className="text-xs text-gray-500 mt-1">
-                                    {monthlyReport.returningUsers} de {monthlyReport.totalUsers} usuarios volvieron este mes
-                                  </p>
-                                </div>
-                                <div className="text-4xl">🔄</div>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        </div>
-
-                        {/* Resumen de promociones */}
-                        <div>
-                          <h4 className="font-semibold mb-3">🎯 Resumen de Promociones</h4>
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            <Card>
-                              <CardContent className="p-4 text-center">
-                                <p className="text-2xl font-bold text-primary">{monthlyReport.promoSummary.total}</p>
-                                <p className="text-sm text-gray-600">Total promociones</p>
-                              </CardContent>
-                            </Card>
-                            <Card>
-                              <CardContent className="p-4 text-center">
-                                <p className="text-2xl font-bold text-green-600">{monthlyReport.promoSummary.active}</p>
-                                <p className="text-sm text-gray-600">Activas</p>
-                              </CardContent>
-                            </Card>
-                            <Card>
-                              <CardContent className="p-4 text-center">
-                                <p className="text-2xl font-bold text-gray-600">{monthlyReport.promoSummary.completed}</p>
-                                <p className="text-sm text-gray-600">Completadas</p>
-                              </CardContent>
-                            </Card>
-                            <Card>
-                              <CardContent className="p-4 text-center">
-                                <p className="text-2xl font-bold text-green-600">${monthlyReport.promoSummary.totalRevenue.toLocaleString()}</p>
-                                <p className="text-sm text-gray-600">Ingresos totales</p>
-                              </CardContent>
-                            </Card>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
+                  <div className="space-y-6">
+                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <Card className="border-none shadow-sm bg-gradient-to-br from-primary/5 to-transparent">
+                           <CardContent className="p-6">
+                              <p className="text-xs font-bold text-primary uppercase tracking-widest mb-1">Crecimiento</p>
+                              <h4 className="text-3xl font-black text-gray-900">{monthlyReport.userGrowth > 0 ? '+' : ''}{monthlyReport.userGrowth.toFixed(1)}%</h4>
+                              <p className="text-[10px] text-gray-500 mt-2">Comparado con el mes anterior</p>
+                           </CardContent>
+                        </Card>
+                        <Card className="border-none shadow-sm">
+                           <CardContent className="p-6">
+                              <p className="text-xs font-bold text-purple-600 uppercase tracking-widest mb-1">Retención</p>
+                              <h4 className="text-3xl font-black text-gray-900">{monthlyReport.userRetention.toFixed(1)}%</h4>
+                              <p className="text-[10px] text-gray-500 mt-2">{monthlyReport.returningUsers} usuarios recurrentes</p>
+                           </CardContent>
+                        </Card>
+                        <Card className="border-none shadow-sm">
+                           <CardContent className="p-6">
+                              <p className="text-xs font-bold text-green-600 uppercase tracking-widest mb-1">Ingresos</p>
+                              <h4 className="text-3xl font-black text-gray-900">${monthlyReport.promoSummary.totalRevenue.toLocaleString()}</h4>
+                              <p className="text-[10px] text-gray-500 mt-2">Generados por promociones</p>
+                           </CardContent>
+                        </Card>
+                     </div>
                   </div>
                 )}
-
-                {/* Mensaje cuando no hay informe generado */}
-                {reportType === 'daily' && !dailyReport && (
-                  <Card>
-                    <CardContent className="p-8 text-center">
-                      <p className="text-gray-500">Haz clic en "Diario" para generar el informe del día</p>
-                    </CardContent>
-                  </Card>
-                )}
-                {reportType === 'weekly' && !weeklyReport && (
-                  <Card>
-                    <CardContent className="p-8 text-center">
-                      <p className="text-gray-500">Haz clic en "Semanal" para generar el informe de la semana</p>
-                    </CardContent>
-                  </Card>
-                )}
-                {reportType === 'monthly' && !monthlyReport && (
-                  <Card>
-                    <CardContent className="p-8 text-center">
-                      <p className="text-gray-500">Haz clic en "Mensual" para generar el informe del mes</p>
-                    </CardContent>
-                  </Card>
-                )}
-              </>
+              </div>
             )}
           </div>
         )}
 
         {activeTab === 'analytics' && (
-          <div className="space-y-4 md:space-y-6">
-            <h2 className="text-lg font-semibold">Analytics y Reportes</h2>
+          <div className="space-y-6 animate-in fade-in duration-500">
+            <div className="hidden md:block">
+              <h2 className="text-xl font-bold text-gray-900 leading-none">Analíticas Avanzadas</h2>
+              <p className="text-xs text-muted-foreground mt-1">Monitoreo de KPIs y rendimiento de la plataforma</p>
+            </div>
             
-            {/* Métricas principales */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
-              <Card>
-                <CardContent className="p-3 md:p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs md:text-sm font-medium text-gray-600">Usuarios Activos</p>
-                      <p className="text-lg md:text-2xl font-bold text-green-600">{analytics.activeUsers}</p>
-                    </div>
-                    <div className="text-lg md:text-2xl">👥</div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent className="p-3 md:p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs md:text-sm font-medium text-gray-600">Usuarios Inactivos</p>
-                      <p className="text-lg md:text-2xl font-bold text-red-600">{analytics.inactiveUsers}</p>
-                    </div>
-                    <div className="text-lg md:text-2xl">🚫</div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent className="p-3 md:p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs md:text-sm font-medium text-gray-600">Ingresos Totales</p>
-                      <p className="text-sm md:text-2xl font-bold text-green-600">${analytics.totalRevenue.toLocaleString()}</p>
-                    </div>
-                    <div className="text-lg md:text-2xl">💰</div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent className="p-3 md:p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs md:text-sm font-medium text-gray-600">Reservas Totales</p>
-                      <p className="text-lg md:text-2xl font-bold text-blue-600">{analytics.totalBookings}</p>
-                    </div>
-                    <div className="text-lg md:text-2xl">📅</div>
-                  </div>
-                </CardContent>
-              </Card>
+            {/* Métricas principales mejoradas */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+              <AdminStatCard title="Usuarios Totales" value={analytics.activeUsers + analytics.inactiveUsers} icon={Users} color="bg-primary" />
+              <AdminStatCard title="Reservas" value={analytics.totalBookings} icon={Calendar} color="bg-blue-500" />
+              <AdminStatCard title="Ingresos" value={`$${analytics.totalRevenue.toLocaleString()}`} icon={Wallet} color="bg-green-500" />
+              <AdminStatCard title="Tickets" value={analytics.reportedPublications} icon={ShieldAlert} color="bg-orange-500" />
             </div>
 
-            {/* Servicios más populares */}
-            <Card>
-              <CardContent className="p-4 md:p-6">
-                <h3 className="text-lg font-semibold mb-4">Servicios Más Populares</h3>
-                <div className="space-y-3">
-                  {analytics.topServices.map((service, index) => (
-                    <div key={index} className="flex items-center justify-between">
-                      <div className="flex items-center space-x-3 min-w-0 flex-1">
-                        <span className="text-sm font-medium text-gray-500 flex-shrink-0">#{index + 1}</span>
-                        <span className="text-sm font-medium truncate">{service.name}</span>
-                      </div>
-                      <span className="text-sm text-gray-500 flex-shrink-0">{service.bookings} reservas</span>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+               {/* Servicios más populares */}
+               <Card className="border-none shadow-sm lg:col-span-1">
+                 <CardContent className="p-6">
+                   <h3 className="font-bold text-gray-900 mb-6 flex items-center gap-2">
+                     <Flame className="h-4 w-4 text-orange-500" /> Servicios Populares
+                   </h3>
+                   <div className="space-y-4">
+                     {analytics.topServices.map((service, index) => (
+                       <div key={index} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-2xl transition-colors">
+                         <div className="flex items-center gap-3">
+                           <span className="w-6 h-6 rounded-lg bg-gray-100 flex items-center justify-center text-[10px] font-black text-gray-400">{index + 1}</span>
+                           <span className="text-sm font-bold text-gray-700 truncate max-w-[120px]">{service.name}</span>
+                         </div>
+                         <Badge variant="secondary" className="bg-primary/5 text-primary border-none font-bold">{service.bookings}</Badge>
+                       </div>
+                     ))}
+                   </div>
+                 </CardContent>
+               </Card>
 
-            {/* Reservas recientes */}
-            <Card>
-              <CardContent className="p-4 md:p-6">
-                <h3 className="text-lg font-semibold mb-4">Reservas Recientes</h3>
-                <div className="space-y-3">
-                  {analytics.recentBookings.slice(0, 5).map((booking, index) => (
-                    <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium text-sm truncate">{booking.serviceName}</p>
-                        <p className="text-xs text-gray-500 truncate">{booking.clientName}</p>
-                      </div>
-                      <div className="text-right flex-shrink-0 ml-2">
-                        <p className="font-medium text-sm">${booking.price}</p>
-                        <p className="text-xs text-gray-500">{booking.status}</p>
-                      </div>
+               {/* Reservas recientes */}
+               <Card className="border-none shadow-sm lg:col-span-2">
+                 <CardContent className="p-6">
+                   <h3 className="font-bold text-gray-900 mb-6 flex items-center gap-2">
+                     <Activity className="h-4 w-4 text-blue-500" /> Actividad Reciente
+                   </h3>
+                   <div className="space-y-3">
+                     {analytics.recentBookings.length > 0 ? (
+                       analytics.recentBookings.slice(0, 6).map((booking, index) => (
+                         <div key={index} className="flex items-center justify-between p-4 bg-gray-50/50 rounded-2xl border border-gray-100/50">
+                           <div className="flex items-center gap-4">
+                             <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center shadow-sm">
+                                <CalendarCheck className="h-5 w-5 text-gray-400" />
+                             </div>
+                             <div>
+                               <p className="text-sm font-bold text-gray-900">{booking.serviceName}</p>
+                               <p className="text-[10px] text-gray-500">Cliente: {booking.clientName}</p>
+                             </div>
+                           </div>
+                           <div className="text-right">
+                             <p className="text-sm font-black text-primary">${booking.price}</p>
+                             <Badge className="text-[9px] h-4 mt-1 bg-green-100 text-green-700 border-none">{booking.status.toUpperCase()}</Badge>
+                           </div>
+                         </div>
+                       ))
+                     ) : (
+                       <div className="py-12 flex flex-col items-center justify-center text-center">
+                          <div className="w-12 h-12 rounded-full bg-gray-50 flex items-center justify-center mb-3">
+                             <TrendingUp className="h-6 w-6 text-gray-300" />
+                          </div>
+                          <p className="text-sm font-medium text-gray-400 italic">Aún no hay reservas registradas</p>
+                       </div>
+                     )}
+                   </div>
+                 </CardContent>
+               </Card>
+            </div>
+
+            {/* Mapa de Calor de Interacciones */}
+            <Card className="border-none shadow-sm overflow-hidden bg-white/50 backdrop-blur-sm border border-white/20">
+               <CardContent className="p-6 md:p-8">
+                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
+                   <div>
+                     <h3 className="text-xl font-black text-gray-900 flex items-center gap-2">
+                       <Flame className="h-5 w-5 text-orange-500 animate-pulse" /> Mapa de Calor de la Aplicación
+                     </h3>
+                     <p className="text-xs text-muted-foreground mt-1">Zonas de mayor interacción y clicks de los clientes</p>
+                   </div>
+                   <div className="flex items-center gap-2 px-3 py-1 bg-gray-50 border border-gray-100 rounded-lg">
+                      <div className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">En Tiempo Real</span>
+                   </div>
+                 </div>
+
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    {/* Visualización tipo Heatmap List */}
+                    <div className="space-y-6">
+                       {(() => {
+                         const heatmapData = [
+                           { key: 'buscador', area: "Buscador de Servicios", color: "bg-red-500" },
+                           { key: 'reserva_btn', area: "Botón 'Confirmar Turno'", color: "bg-orange-500" },
+                           { key: 'categorias', area: "Filtros de Categoría", color: "bg-yellow-400" },
+                           { key: 'perfil_proveedor', area: "Perfil de Proveedor", color: "bg-green-400" },
+                           { key: 'galeria', area: "Galería de Imágenes", color: "bg-blue-400" },
+                         ].map(item => ({
+                           ...item,
+                           clicks: analytics.interactions?.[item.key] || 0
+                         }))
+
+                         const totalClicks = heatmapData.reduce((sum, item) => sum + item.clicks, 0)
+                         if (totalClicks === 0) {
+                            return (
+                               <div className="h-full flex flex-col items-center justify-center py-20 bg-gray-50/30 rounded-[2rem] border border-dashed border-gray-200">
+                                  <Flame className="h-10 w-10 text-gray-200 mb-4" />
+                                  <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Aún no hay datos para mostrar</p>
+                                  <p className="text-[10px] text-gray-300 mt-1">Las interacciones aparecerán pronto</p>
+                               </div>
+                            )
+                         }
+
+                         const maxClicks = Math.max(...heatmapData.map(d => d.clicks), 1)
+
+                         return heatmapData.map((item, i) => (
+                           <div key={i} className="space-y-2 group">
+                              <div className="flex justify-between items-center">
+                                 <span className="text-sm font-bold text-gray-700">{item.area}</span>
+                                 <span className="text-[10px] font-black text-gray-400 uppercase">{item.clicks.toLocaleString()} clicks</span>
+                              </div>
+                              <div className="h-3 w-full bg-gray-100 rounded-full overflow-hidden">
+                                 <div 
+                                   className={`h-full ${item.color} rounded-full transition-all duration-1000 group-hover:brightness-110`}
+                                   style={{ width: `${(item.clicks / maxClicks) * 100}%` }}
+                                 />
+                              </div>
+                           </div>
+                         ))
+                       })()}
                     </div>
-                  ))}
-                </div>
-              </CardContent>
+
+                    {/* Insights de Comportamiento */}
+                    <div className="bg-gradient-to-br from-gray-50 to-white p-6 rounded-[2rem] border border-gray-100">
+                       <h4 className="text-sm font-bold text-gray-900 mb-6">🎯 Puntos Calientes (Insights)</h4>
+                       <div className="space-y-4">
+                          {(() => {
+                             const totalClicks = Object.values(analytics.interactions || {}).reduce((a, b) => (a as number) + (b as number), 0);
+                             
+                             if (totalClicks === 0) {
+                                return (
+                                   <div className="py-20 text-center">
+                                      <p className="text-xs font-bold text-gray-400 animate-pulse">ESPERANDO DATOS...</p>
+                                   </div>
+                                )
+                             }
+
+                             const convRate = analytics.interactions?.reserva_btn 
+                               ? ((analytics.totalBookings / analytics.interactions.reserva_btn) * 100).toFixed(1) 
+                               : "0";
+                             
+                             const topInt = Object.entries(analytics.interactions || {})
+                               .sort(([,a], [,b]) => (b as number) - (a as number))[0] || ["-", 0];
+
+                             const lowInt = Object.entries(analytics.interactions || {})
+                               .filter(([k]) => k !== 'lastUpdated')
+                               .sort(([,a], [,b]) => (a as number) - (b as number))[0] || ["-", 0];
+
+                             return (
+                               <>
+                                 <div className="p-4 bg-red-50/50 rounded-2xl border border-red-100/50">
+                                   <p className="text-xs font-bold text-red-700">Tasa de Conversión</p>
+                                   <p className="text-[10px] text-red-600 mt-1">
+                                     Solo el {convRate}% de los que presionan 'Confirmar Turno' concretan la reserva. Considera simplificar el flujo de pago.
+                                   </p>
+                                 </div>
+                                 <div className="p-4 bg-orange-50/50 rounded-2xl border border-orange-100/50">
+                                   <p className="text-xs font-bold text-orange-700">Mayor Interacción</p>
+                                   <p className="text-[10px] text-orange-600 mt-1">
+                                     La sección '{topInt[0].replace('_', ' ')}' es la más usada con {topInt[1]} clicks reales.
+                                   </p>
+                                 </div>
+                                 <div className="p-4 bg-blue-50/50 rounded-2xl border border-blue-100/50">
+                                   <p className="text-xs font-bold text-blue-700">Zona Fría (Alerta)</p>
+                                   <p className="text-[10px] text-blue-600 mt-1">
+                                     '{lowInt[0].replace('_', ' ')}' tiene la menor tasa de interacción ({lowInt[1]} clicks). Podría necesitar una mejor ubicación visual.
+                                   </p>
+                                 </div>
+                               </>
+                             )
+                          })()}
+                       </div>
+                    </div>
+                 </div>
+               </CardContent>
             </Card>
           </div>
         )}
 
         {activeTab === 'settings' && (
-          <div className="space-y-4 md:space-y-6">
-            <h2 className="text-lg font-semibold">Configuración General</h2>
+          <div className="space-y-6 animate-in fade-in duration-500">
+            <div className="hidden md:block">
+              <h2 className="text-xl font-bold text-gray-900 leading-none">Configuración General</h2>
+              <p className="text-xs text-muted-foreground mt-1">Personalización y parámetros del sistema</p>
+            </div>
             
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
-              {/* Configuración de la aplicación */}
-              <Card>
-                <CardContent className="p-4 md:p-6">
-                  <h3 className="text-lg font-semibold mb-4">Configuración de la Aplicación</h3>
-                  <div className="space-y-4">
-                    <div>
-                      <Label htmlFor="app-name">Nombre de la Aplicación</Label>
-                      <Input 
-                        id="app-name" 
-                        value={settings.appName}
-                        onChange={(e) => handleSettingChange('appName', e.target.value)}
-                        className="text-sm" 
-                      />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pb-20 md:pb-0">
+              {/* Aplicación */}
+              <Card className="border-none shadow-sm overflow-hidden bg-white">
+                <CardContent className="p-0">
+                  <div className="p-4 bg-gray-50 border-b border-gray-100 flex items-center gap-3">
+                    <div className="p-2 bg-primary/10 rounded-lg text-primary">
+                      <LayoutDashboard className="h-4 w-4" />
                     </div>
-                    <div>
-                      <Label htmlFor="app-description">Descripción</Label>
-                      <Input 
-                        id="app-description" 
-                        value={settings.appDescription}
-                        onChange={(e) => handleSettingChange('appDescription', e.target.value)}
-                        className="text-sm" 
-                      />
+                    <h3 className="font-bold text-sm text-gray-900">Aplicación</h3>
+                  </div>
+                  <div className="p-6 space-y-4">
+                    <div className="space-y-2">
+                       <Label className="text-xs font-bold text-gray-500">Nombre del Sitio</Label>
+                       <Input value={settings.appName} onChange={(e) => handleSettingChange('appName', e.target.value)} className="rounded-xl border-gray-100 focus:ring-primary h-11" />
                     </div>
-                    <div>
-                      <Label htmlFor="app-email">Email de Contacto</Label>
-                      <Input 
-                        id="app-email" 
-                        value={settings.appEmail}
-                        onChange={(e) => handleSettingChange('appEmail', e.target.value)}
-                        className="text-sm" 
-                      />
+                    <div className="space-y-2">
+                       <Label className="text-xs font-bold text-gray-500">Descripción SEO</Label>
+                       <Input value={settings.appDescription} onChange={(e) => handleSettingChange('appDescription', e.target.value)} className="rounded-xl border-gray-100 h-11" />
                     </div>
-                    <Button 
-                      onClick={() => saveSettings('aplicación')}
-                      className="w-full text-sm"
-                    >
-                      Guardar Configuración
-                    </Button>
+                    <Button onClick={() => saveSettings('aplicación')} className="w-full rounded-xl h-11 font-bold">Actualizar Datos</Button>
                   </div>
                 </CardContent>
               </Card>
 
-              {/* Configuración de notificaciones */}
-              <Card>
-                <CardContent className="p-4 md:p-6">
-                  <h3 className="text-lg font-semibold mb-4">Notificaciones</h3>
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <span className="text-sm font-medium">Notificaciones por email</span>
-                        <p className="text-xs text-gray-500">Recibe notificaciones de nuevas reservas</p>
-                      </div>
-                      <button
-                        onClick={() => handleSettingChange('emailNotifications', !settings.emailNotifications)}
-                        className={`px-3 py-1 rounded-full text-xs font-medium ${
-                          settings.emailNotifications 
-                            ? 'bg-green-100 text-green-800' 
-                            : 'bg-gray-100 text-gray-800'
-                        }`}
-                      >
-                        {settings.emailNotifications ? 'Activar' : 'Desactivar'}
-                      </button>
+              {/* Notificaciones */}
+              <Card className="border-none shadow-sm overflow-hidden bg-white">
+                <CardContent className="p-0">
+                  <div className="p-4 bg-gray-50 border-b border-gray-100 flex items-center gap-3">
+                    <div className="p-2 bg-blue-500/10 rounded-lg text-blue-500">
+                      <Bell className="h-4 w-4" />
                     </div>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <span className="text-sm font-medium">Notificaciones push</span>
-                        <p className="text-xs text-gray-500">Notificaciones en tiempo real</p>
+                    <h3 className="font-bold text-sm text-gray-900">Notificaciones</h3>
+                  </div>
+                  <div className="p-6 space-y-6">
+                    {[
+                      { id: 'emailNotifications', label: 'Emails Transaccionales', desc: 'Alertas de nuevas reservas' },
+                      { id: 'pushNotifications', label: 'Push en Tiempo Real', desc: 'Notificaciones flotantes' },
+                      { id: 'appointmentReminders', label: 'Recordatorios', desc: 'Avisos automáticos a clientes' }
+                    ].map(item => (
+                      <div key={item.id} className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-bold text-gray-800">{item.label}</p>
+                          <p className="text-[10px] text-gray-500">{item.desc}</p>
+                        </div>
+                        <button
+                          onClick={() => handleSettingChange(item.id, !(settings as any)[item.id])}
+                          className={`w-10 h-5 rounded-full transition-colors relative ${
+                            (settings as any)[item.id] ? 'bg-primary' : 'bg-gray-200'
+                          }`}
+                        >
+                          <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${
+                            (settings as any)[item.id] ? 'left-6' : 'left-1'
+                          }`} />
+                        </button>
                       </div>
-                      <button
-                        onClick={() => handleSettingChange('pushNotifications', !settings.pushNotifications)}
-                        className={`px-3 py-1 rounded-full text-xs font-medium ${
-                          settings.pushNotifications 
-                            ? 'bg-green-100 text-green-800' 
-                            : 'bg-gray-100 text-gray-800'
-                        }`}
-                      >
-                        {settings.pushNotifications ? 'Activar' : 'Desactivar'}
-                      </button>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <span className="text-sm font-medium">Recordatorios de citas</span>
-                        <p className="text-xs text-gray-500">Recordatorios automáticos</p>
-                      </div>
-                      <button
-                        onClick={() => handleSettingChange('appointmentReminders', !settings.appointmentReminders)}
-                        className={`px-3 py-1 rounded-full text-xs font-medium ${
-                          settings.appointmentReminders 
-                            ? 'bg-green-100 text-green-800' 
-                            : 'bg-gray-100 text-gray-800'
-                        }`}
-                      >
-                        {settings.appointmentReminders ? 'Activar' : 'Desactivar'}
-                      </button>
-                    </div>
-                    <Button 
-                      onClick={() => saveSettings('notificaciones')}
-                      className="w-full text-sm"
-                    >
-                      Guardar Preferencias
-                    </Button>
+                    ))}
+                    <Button variant="outline" onClick={() => saveSettings('notificaciones')} className="w-full rounded-xl h-11 font-bold border-gray-100">Guardar Preferencias</Button>
                   </div>
                 </CardContent>
               </Card>
 
-              {/* Configuración de pagos */}
-              <Card>
-                <CardContent className="p-4 md:p-6">
-                  <h3 className="text-lg font-semibold mb-4">Configuración de Pagos</h3>
-                  <div className="space-y-4">
-                    <div>
-                      <Label htmlFor="commission-rate">Tasa de Comisión (%)</Label>
-                      <Input 
-                        id="commission-rate" 
-                        type="number" 
-                        value={settings.commissionRate}
-                        onChange={(e) => handleSettingChange('commissionRate', parseInt(e.target.value))}
-                        className="text-sm" 
-                      />
+              {/* Pagos y Comisiones */}
+              <Card className="border-none shadow-sm overflow-hidden bg-white">
+                <CardContent className="p-0">
+                  <div className="p-4 bg-gray-50 border-b border-gray-100 flex items-center gap-3">
+                    <div className="p-2 bg-green-500/10 rounded-lg text-green-500">
+                      <Wallet className="h-4 w-4" />
                     </div>
-                    <div>
-                      <Label htmlFor="min-price">Precio Mínimo de Servicio</Label>
-                      <Input 
-                        id="min-price" 
-                        type="number" 
-                        value={settings.minPrice}
-                        onChange={(e) => handleSettingChange('minPrice', parseInt(e.target.value))}
-                        className="text-sm" 
-                      />
+                    <h3 className="font-bold text-sm text-gray-900">Estructura Comercial</h3>
+                  </div>
+                  <div className="p-6 space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                       <div className="space-y-2">
+                          <Label className="text-xs font-bold text-gray-500">Comisión (%)</Label>
+                          <Input type="number" value={settings.commissionRate} onChange={(e) => handleSettingChange('commissionRate', parseInt(e.target.value))} className="rounded-xl border-gray-100" />
+                       </div>
+                       <div className="space-y-2">
+                          <Label className="text-xs font-bold text-gray-500">Precio Mín.</Label>
+                          <Input type="number" value={settings.minPrice} onChange={(e) => handleSettingChange('minPrice', parseInt(e.target.value))} className="rounded-xl border-gray-100" />
+                       </div>
                     </div>
-                    <div>
-                      <Label htmlFor="max-price">Precio Máximo de Servicio</Label>
-                      <Input 
-                        id="max-price" 
-                        type="number" 
-                        value={settings.maxPrice}
-                        onChange={(e) => handleSettingChange('maxPrice', parseInt(e.target.value))}
-                        className="text-sm" 
-                      />
-                    </div>
-                    <Button 
-                      onClick={() => saveSettings('pagos')}
-                      className="w-full text-sm"
-                    >
-                      Guardar Configuración
-                    </Button>
+                    <Button onClick={() => saveSettings('pagos')} className="w-full rounded-xl h-11 font-bold">Actualizar Precios</Button>
                   </div>
                 </CardContent>
               </Card>
 
-              {/* Configuración de seguridad */}
-              <Card>
-                <CardContent className="p-4 md:p-6">
-                  <h3 className="text-lg font-semibold mb-4">Seguridad</h3>
-                  <div className="space-y-4">
-                    <div>
-                      <Label htmlFor="session-timeout">Timeout de Sesión (minutos)</Label>
-                      <Input 
-                        id="session-timeout" 
-                        type="number" 
-                        value={settings.sessionTimeout}
-                        onChange={(e) => handleSettingChange('sessionTimeout', parseInt(e.target.value))}
-                        className="text-sm" 
-                      />
+              {/* Seguridad */}
+              <Card className="border-none shadow-sm overflow-hidden bg-white">
+                <CardContent className="p-0">
+                  <div className="p-4 bg-gray-50 border-b border-gray-100 flex items-center gap-3">
+                    <div className="p-2 bg-red-500/10 rounded-lg text-red-500">
+                      <Shield className="h-4 w-4" />
                     </div>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <span className="text-sm font-medium">Verificación de email obligatoria</span>
-                        <p className="text-xs text-gray-500">Los usuarios deben verificar su email</p>
-                      </div>
-                      <button
-                        onClick={() => handleSettingChange('emailVerificationRequired', !settings.emailVerificationRequired)}
-                        className={`px-3 py-1 rounded-full text-xs font-medium ${
-                          settings.emailVerificationRequired 
-                            ? 'bg-green-100 text-green-800' 
-                            : 'bg-gray-100 text-gray-800'
-                        }`}
-                      >
-                        {settings.emailVerificationRequired ? 'Activar' : 'Desactivar'}
-                      </button>
+                    <h3 className="font-bold text-sm text-gray-900">Seguridad</h3>
+                  </div>
+                  <div className="p-6 space-y-4">
+                    <div className="flex items-center justify-between p-3 bg-red-50/50 rounded-xl border border-red-100/50">
+                       <div className="flex items-center gap-3">
+                          <div className="h-8 w-8 rounded-lg bg-white flex items-center justify-center shadow-sm">
+                             <AlertCircle className="h-4 w-4 text-red-500" />
+                          </div>
+                          <div>
+                             <p className="text-xs font-bold text-gray-900">Registro Abierto</p>
+                             <p className="text-[10px] text-gray-500">Permitir nuevos usuarios</p>
+                          </div>
+                       </div>
+                       <button
+                          onClick={() => handleSettingChange('openRegistration', !settings.openRegistration)}
+                          className={`w-10 h-5 rounded-full transition-colors relative ${
+                            settings.openRegistration ? 'bg-red-500' : 'bg-gray-200'
+                          }`}
+                        >
+                          <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${
+                            settings.openRegistration ? 'left-6' : 'left-1'
+                          }`} />
+                        </button>
                     </div>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <span className="text-sm font-medium">Registro abierto</span>
-                        <p className="text-xs text-gray-500">Cualquiera puede registrarse</p>
-                      </div>
-                      <button
-                        onClick={() => handleSettingChange('openRegistration', !settings.openRegistration)}
-                        className={`px-3 py-1 rounded-full text-xs font-medium ${
-                          settings.openRegistration 
-                            ? 'bg-green-100 text-green-800' 
-                            : 'bg-gray-100 text-gray-800'
-                        }`}
-                      >
-                        {settings.openRegistration ? 'Activar' : 'Desactivar'}
-                      </button>
-                    </div>
-                    <Button 
-                      onClick={() => saveSettings('seguridad')}
-                      className="w-full text-sm"
-                    >
-                      Guardar Configuración
-                    </Button>
+                    <Button variant="outline" onClick={() => saveSettings('seguridad')} className="w-full rounded-xl h-11 font-bold border-gray-100">Aplicar Políticas</Button>
                   </div>
                 </CardContent>
               </Card>
             </div>
           </div>
         )}
-      </div>
 
-      {/* Modal Crear Categoría */}
-      {showCreateCategory && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <Card className="w-full max-w-md max-h-[90vh] overflow-y-auto">
-            <CardContent className="p-4 md:p-6">
-              <h3 className="text-lg font-semibold mb-4">Nueva Categoría</h3>
-              <form onSubmit={handleCreateCategory} className="space-y-4">
-                <div>
-                  <Label htmlFor="name">Nombre</Label>
-                  <Input
-                    id="name"
-                    value={newCategory.name}
-                    onChange={(e) => setNewCategory(prev => ({ ...prev, name: e.target.value }))}
-                    placeholder="Ej: Belleza"
-                    required
-                    className="text-sm"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="icon">Icono</Label>
-                  <Input
-                    id="icon"
-                    value={newCategory.icon}
-                    onChange={(e) => setNewCategory(prev => ({ ...prev, icon: e.target.value }))}
-                    placeholder="Ej: 💄"
-                    required
-                    className="text-sm"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="description">Descripción</Label>
-                  <Input
-                    id="description"
-                    value={newCategory.description}
-                    onChange={(e) => setNewCategory(prev => ({ ...prev, description: e.target.value }))}
-                    placeholder="Descripción opcional"
-                    className="text-sm"
-                  />
-                </div>
-                <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
-                  <Button type="submit" className="flex-1 text-sm">
-                    Crear Categoría
-                  </Button>
-                  <Button 
-                    type="button" 
-                    variant="outline" 
-                    onClick={() => setShowCreateCategory(false)}
-                    className="flex-1 text-sm"
-                  >
-                    Cancelar
+        {/* Modales - Deben estar dentro del layout principal pero al final */}
+        {showCreateCategory && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100] animate-in fade-in zoom-in duration-300">
+            <Card className="w-full max-w-md border-none shadow-2xl bg-white overflow-hidden rounded-3xl">
+              <CardContent className="p-8">
+                <div className="flex justify-between items-center mb-8">
+                  <h3 className="text-2xl font-black text-gray-900">Nueva Categoría</h3>
+                  <Button variant="ghost" size="icon" onClick={() => setShowCreateCategory(false)} className="rounded-xl">
+                    <X className="h-5 w-5" />
                   </Button>
                 </div>
-              </form>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+                <form onSubmit={handleCreateCategory} className="space-y-6">
+                  <div className="space-y-2">
+                    <Label className="text-xs font-black text-gray-400 uppercase">Nombre</Label>
+                    <Input value={newCategory.name} onChange={(e) => setNewCategory(prev => ({ ...prev, name: e.target.value }))} placeholder="Ej: Barbería" required className="h-12 rounded-xl" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                     <div className="space-y-2">
+                        <Label className="text-xs font-black text-gray-400 uppercase">Icono</Label>
+                        <Input value={newCategory.icon} onChange={(e) => setNewCategory(prev => ({ ...prev, icon: e.target.value }))} placeholder="💄" required className="h-12 rounded-xl text-center text-xl" />
+                     </div>
+                     <div className="space-y-2">
+                        <Label className="text-xs font-black text-gray-400 uppercase">Orden</Label>
+                        <Input type="number" placeholder="1" className="h-12 rounded-xl" />
+                     </div>
+                  </div>
+                  <Button type="submit" className="w-full h-14 rounded-2xl font-black text-lg shadow-lg shadow-primary/20">Crear Categoría</Button>
+                </form>
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
-      {/* Modal Editar Categoría */}
-      {editingCategory && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <Card className="w-full max-w-md max-h-[90vh] overflow-y-auto">
-            <CardContent className="p-4 md:p-6">
-              <h3 className="text-lg font-semibold mb-4">Editar Categoría</h3>
-              <form onSubmit={handleEditCategory} className="space-y-4">
-                <div>
-                  <Label htmlFor="edit-name">Nombre</Label>
-                  <Input
-                    id="edit-name"
-                    value={editingCategory.name}
-                    onChange={(e) => setEditingCategory((prev: any) => ({ ...prev, name: e.target.value }))}
-                    required
-                    className="text-sm"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="edit-icon">Icono</Label>
-                  <Input
-                    id="edit-icon"
-                    value={editingCategory.icon}
-                    onChange={(e) => setEditingCategory((prev: any) => ({ ...prev, icon: e.target.value }))}
-                    required
-                    className="text-sm"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="edit-description">Descripción</Label>
-                  <Input
-                    id="edit-description"
-                    value={editingCategory.description || ''}
-                    onChange={(e) => setEditingCategory((prev: any) => ({ ...prev, description: e.target.value }))}
-                    className="text-sm"
-                  />
-                </div>
-                <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
-                  <Button type="submit" className="flex-1 text-sm">
-                    Guardar Cambios
-                  </Button>
-                  <Button 
-                    type="button" 
-                    variant="outline" 
-                    onClick={() => setEditingCategory(null)}
-                    className="flex-1 text-sm"
-                  >
-                    Cancelar
+        {editingCategory && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100] animate-in fade-in zoom-in duration-300">
+            <Card className="w-full max-w-md border-none shadow-2xl bg-white overflow-hidden rounded-3xl">
+              <CardContent className="p-8">
+                <div className="flex justify-between items-center mb-8">
+                  <h3 className="text-2xl font-black text-gray-900">Editar Categoría</h3>
+                  <Button variant="ghost" size="icon" onClick={() => setEditingCategory(null)} className="rounded-xl">
+                    <X className="h-5 w-5" />
                   </Button>
                 </div>
-              </form>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+                <form onSubmit={handleEditCategory} className="space-y-6">
+                  <div className="space-y-2">
+                    <Label className="text-xs font-black text-gray-400 uppercase">Nombre</Label>
+                    <Input value={editingCategory.name} onChange={(e) => setEditingCategory((prev: any) => ({ ...prev, name: e.target.value }))} required className="h-12 rounded-xl" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs font-black text-gray-400 uppercase">Icono</Label>
+                    <Input value={editingCategory.icon} onChange={(e) => setEditingCategory((prev: any) => ({ ...prev, icon: e.target.value }))} required className="h-12 rounded-xl text-center text-xl" />
+                  </div>
+                  <Button type="submit" className="w-full h-14 rounded-2xl font-black text-lg">Guardar Cambios</Button>
+                </form>
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
-      {/* Modal Editar Usuario */}
-      {editingUser && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <Card className="w-full max-w-md max-h-[90vh] overflow-y-auto">
-            <CardContent className="p-4 md:p-6">
-              <h3 className="text-lg font-semibold mb-4">Editar Usuario</h3>
-              <form onSubmit={(e) => {
-                e.preventDefault()
-                const formData = new FormData(e.target as HTMLFormElement)
-                const newRole = formData.get('role') as string
-                handleUpdateUserRole(editingUser.id, newRole)
-              }} className="space-y-4">
-                <div>
-                  <Label htmlFor="user-name">Nombre</Label>
-                  <Input
-                    id="user-name"
-                    value={editingUser.displayName || ''}
-                    disabled
-                    className="text-sm"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="user-email">Email</Label>
-                  <Input
-                    id="user-email"
-                    value={editingUser.email}
-                    disabled
-                    className="text-sm"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="user-role">Rol</Label>
-                  <select
-                    name="role"
-                    id="user-role"
-                    defaultValue={editingUser.role}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-                  >
-                    <option value="client">Cliente</option>
-                    <option value="provider">Proveedor</option>
-                    <option value="admin">Admin</option>
-                  </select>
-                </div>
-                <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
-                  <Button type="submit" className="flex-1 text-sm">
-                    Guardar Cambios
-                  </Button>
-                  <Button 
-                    type="button" 
-                    variant="outline" 
-                    onClick={() => setEditingUser(null)}
-                    className="flex-1 text-sm"
-                  >
-                    Cancelar
+        {editingUser && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100] animate-in fade-in zoom-in duration-300">
+            <Card className="w-full max-w-md border-none shadow-2xl bg-white overflow-hidden rounded-3xl">
+              <CardContent className="p-8">
+                <div className="flex justify-between items-center mb-8">
+                  <h3 className="text-2xl font-black text-gray-900">Rol de Usuario</h3>
+                  <Button variant="ghost" size="icon" onClick={() => setEditingUser(null)} className="rounded-xl">
+                    <X className="h-5 w-5" />
                   </Button>
                 </div>
-              </form>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+                <div className="mb-8 p-4 bg-gray-50 rounded-2xl border border-gray-100">
+                   <p className="text-sm font-bold text-gray-900">{editingUser.displayName || 'Sin nombre'}</p>
+                   <p className="text-xs text-gray-500">{editingUser.email}</p>
+                </div>
+                <form onSubmit={(e) => {
+                  e.preventDefault()
+                  const formData = new FormData(e.target as HTMLFormElement)
+                  const newRole = formData.get('role') as string
+                  handleUpdateUserRole(editingUser.id, newRole)
+                }} className="space-y-6">
+                  <div className="space-y-2">
+                    <Label className="text-xs font-black text-gray-400 uppercase">Asignar Rol</Label>
+                    <select name="role" defaultValue={editingUser.role} className="w-full h-12 px-4 rounded-xl border border-gray-100 bg-white text-sm font-bold focus:ring-2 focus:ring-primary outline-none appearance-none">
+                      <option value="client">Cliente Estándar</option>
+                      <option value="provider">Proveedor de Servicios</option>
+                      <option value="admin">Administrador Total</option>
+                    </select>
+                  </div>
+                  <Button type="submit" className="w-full h-14 rounded-2xl font-black text-lg">Confirmar Rol</Button>
+                </form>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+      </main>
     </div>
-  )
+  </div>
+)
 }

@@ -27,6 +27,7 @@ export interface Booking {
   status: 'pending' | 'confirmed' | 'cancelled' | 'completed'
   paymentMethod: 'cash' | 'mercadopago' | 'transfer'
   paymentStatus: 'pending' | 'paid' | 'refunded'
+  source?: 'anuncio' | 'recomendados' | 'cerca_tuyo' | 'rubro' | 'buscador'
   createdAt: Date
   updatedAt: Date
 }

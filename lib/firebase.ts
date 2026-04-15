@@ -1,7 +1,14 @@
 import { initializeApp } from 'firebase/app'
-import { getAuth, setPersistence, browserLocalPersistence } from 'firebase/auth'
+import {
+  getAuth,
+  initializeAuth,
+  setPersistence,
+  browserLocalPersistence,
+  type Auth,
+} from 'firebase/auth'
 import { getFirestore } from 'firebase/firestore'
 import { getStorage } from 'firebase/storage'
+import { Capacitor } from '@capacitor/core'
 
 const firebaseConfig = {
   apiKey: "AIzaSyDtcg_xQXLi0IX9C3B0D7k5AznagrOLMk0",
@@ -16,15 +23,19 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig)
 
-// Initialize Firebase services
-export const auth = getAuth(app)
+// Auth: en app nativa (Capacitor/Android) la sesión se pierde si usamos getAuth + setPersistence.
+// Inicializar con persistence desde el inicio en nativo evita que al cerrar/abrir pida login de nuevo.
+export const auth: Auth = Capacitor.isNativePlatform()
+  ? initializeAuth(app, { persistence: browserLocalPersistence })
+  : (() => {
+      const a = getAuth(app)
+      setPersistence(a, browserLocalPersistence).catch((error) => {
+        console.error('Error setting persistence:', error)
+      })
+      return a
+    })()
 export const db = getFirestore(app)
 export const storage = getStorage(app)
-
-// Configure persistence
-setPersistence(auth, browserLocalPersistence).catch((error) => {
-  console.error('Error setting persistence:', error)
-})
 
 export default app
 

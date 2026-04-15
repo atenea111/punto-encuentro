@@ -23,6 +23,8 @@ export interface Service {
   rating: number
   reviews: number
   image?: string
+  latitude?: number
+  longitude?: number
   createdAt: Date
   updatedAt: Date
 }

@@ -7,7 +7,8 @@ import {
   deleteDoc, 
   doc, 
   query, 
-  orderBy 
+  orderBy,
+  writeBatch
 } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 
@@ -17,9 +18,22 @@ export interface Category {
   icon: string
   description?: string
   active: boolean
+  isBase?: boolean
   createdAt: Date
   updatedAt: Date
 }
+
+const DEFAULT_CATEGORIES = [
+  { name: "Belleza", icon: "💄", description: "Estética, peluquería y cuidado personal" },
+  { name: "Salud", icon: "🩺", description: "Salud, bienestar y medicina" },
+  { name: "Deporte", icon: "⚽", description: "Entrenamiento, deportes y vida sana" },
+  { name: "Hogar", icon: "🏠", description: "Reparaciones, limpieza y mantenimiento del hogar" },
+  { name: "Educación", icon: "📚", description: "Clases particulares, idiomas y apoyo escolar" },
+  { name: "Tecnología", icon: "💻", description: "Soporte técnico, programación y dispositivos" },
+  { name: "Oficios", icon: "🔨", description: "Carpintería, electricidad, plomería y más" },
+  { name: "Profesionales", icon: "💼", description: "Abogados, contadores y servicios especializados" },
+  { name: "Aprendizaje", icon: "🎓", description: "Cursos, talleres y capacitación profesional" }
+]
 
 export function useCategories() {
   const [categories, setCategories] = useState<Category[]>([])
@@ -29,12 +43,51 @@ export function useCategories() {
     fetchCategories()
   }, [])
 
+  const seedCategories = async () => {
+    try {
+      console.log('Sembrando categorías iniciales...')
+      const categoriesRef = collection(db, 'categories')
+      const existingSnapshot = await getDocs(categoriesRef)
+      const existingNames = new Set(existingSnapshot.docs.map(doc => doc.data().name))
+      
+      const batch = writeBatch(db)
+      let addedCount = 0
+      
+      for (const cat of DEFAULT_CATEGORIES) {
+        if (!existingNames.has(cat.name)) {
+          const newDocRef = doc(categoriesRef)
+          batch.set(newDocRef, {
+            ...cat,
+            active: true,
+            isBase: true,
+            createdAt: new Date(),
+            updatedAt: new Date()
+          })
+          addedCount++
+        }
+      }
+      
+      if (addedCount > 0) {
+        await batch.commit()
+        console.log(`✅ ${addedCount} categorías iniciales sembradas con éxito`)
+      }
+      await fetchCategories()
+    } catch (error) {
+      console.error('Error seeding categories:', error)
+    }
+  }
+
   const fetchCategories = async () => {
     try {
       setLoading(true)
       const categoriesRef = collection(db, 'categories')
       const q = query(categoriesRef, orderBy('name', 'asc'))
       const querySnapshot = await getDocs(q)
+      
+      if (querySnapshot.empty) {
+        await seedCategories()
+        return
+      }
       
       const categoriesData = querySnapshot.docs.map(doc => ({
         id: doc.id,
@@ -43,7 +96,17 @@ export function useCategories() {
         updatedAt: doc.data().updatedAt?.toDate() || new Date()
       })) as Category[]
       
-      setCategories(categoriesData)
+      // Deduplicar por nombre (preferir las que tienen isBase: true)
+      const uniqueMap = new Map<string, Category>()
+      categoriesData.forEach(cat => {
+        const existing = uniqueMap.get(cat.name)
+        if (!existing || (!existing.isBase && cat.isBase)) {
+          uniqueMap.set(cat.name, cat)
+        }
+      })
+      
+      const dedupedCategories = Array.from(uniqueMap.values()).sort((a, b) => a.name.localeCompare(b.name))
+      setCategories(dedupedCategories)
     } catch (error) {
       console.error('Error fetching categories:', error)
     } finally {
@@ -55,6 +118,7 @@ export function useCategories() {
     try {
       const docRef = await addDoc(collection(db, 'categories'), {
         ...categoryData,
+        isBase: false,
         createdAt: new Date(),
         updatedAt: new Date()
       })
@@ -63,6 +127,7 @@ export function useCategories() {
       const newCategory: Category = {
         id: docRef.id,
         ...categoryData,
+        isBase: false,
         createdAt: new Date(),
         updatedAt: new Date()
       }

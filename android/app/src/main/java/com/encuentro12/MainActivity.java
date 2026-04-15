@@ -1,4 +1,4 @@
-package com.puntoencuentro.app;
+package com.encuentro12;
 
 import com.getcapacitor.BridgeActivity;
 

@@ -2923,6 +2923,15 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
                   >
                     Editar perfil
                   </Button>
+                  <Button
+                    variant="ghost"
+                    className="w-full text-red-600 hover:text-red-700 hover:bg-red-50 mt-2"
+                    onClick={handleLogout}
+                    disabled={loading}
+                  >
+                    <LogOut className="h-4 w-4 mr-2" />
+                    {loading ? "Cerrando sesión..." : "Cerrar sesión"}
+                  </Button>
                 </>
               )}
             </div>
@@ -3045,15 +3054,10 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
           </AlertDialogContent>
         </AlertDialog>
 
-        <Button 
-          variant="destructive" 
-          className="w-full" 
-          onClick={handleLogout}
-          disabled={loading}
-        >
-          {loading ? "Cerrando sesión..." : "Cerrar sesión"}
-        </Button>
       </div>
+
+      {/* Espacio extra para que el scroll no quede tapado por el footer */}
+      <div className="h-24"></div>
 
       {/* Footer Navigation */}
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 pb-safe z-40">

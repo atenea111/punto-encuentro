@@ -31,6 +31,7 @@ import { useCategories } from "@/hooks/useCategories"
 import { useUsers } from "@/hooks/useUsers"
 import { useAnalytics } from "@/hooks/useAnalytics"
 import { useGeolocation } from "@/hooks/useGeolocation"
+import { FloatingAssistant } from "@/components/FloatingAssistant"
 import { calcularDistanciaKm, formatearDistancia } from "@/lib/locationUtils"
 import { db, auth, storage, uploadFile } from "@/lib/firebase"
 import { useReviews } from "@/hooks/useReviews"
@@ -79,6 +80,8 @@ import {
   AlertCircle,
   Send,
   MessageSquare,
+  Info,
+  CheckCheck,
 } from "lucide-react"
 
 
@@ -171,7 +174,7 @@ const AdminBottomNav = ({ activeTab, setActiveTab }: { activeTab: string, setAct
 export default function HomePage() {
   const { user, signIn, signUp, logout, loading: authLoading } = useAuth()
   const { services, loading: servicesLoading, searchServices, createService } = useServices()
-  const { createBooking, getBookingsByClient } = useBookings()
+  const { bookings, createBooking, getBookingsByClient } = useBookings()
   const { isAdmin, isClient, isProvider, updateUserRole, loading: rolesLoading } = useRoles()
   const { logInteraction } = useAnalytics()
   
@@ -464,6 +467,15 @@ export default function HomePage() {
     return (
       <>
         {locationError === "permission_denied" && <LocationBanner />}
+        
+        {/* PuntoBot - Asistente para Clientes */}
+        <FloatingAssistant 
+          user={user} 
+          bookings={bookings} 
+          services={services}
+          setFlow={setClientFlow}
+        />
+
         <ClientFlow
           flow={clientFlow}
           setFlow={setClientFlow}
@@ -502,6 +514,15 @@ export default function HomePage() {
     return (
       <>
         {locationError === "permission_denied" && <LocationBanner />}
+
+        {/* PuntoBot - Asistente para Proveedores */}
+        <FloatingAssistant 
+          user={user} 
+          bookings={bookings} 
+          services={services}
+          setFlow={setProviderFlow}
+        />
+
         <ProviderFlow 
           flow={providerFlow} 
           setFlow={setProviderFlow}
@@ -529,6 +550,15 @@ export default function HomePage() {
   return (
     <>
       {locationError === "permission_denied" && <LocationBanner />}
+
+      {/* PuntoBot - Asistente General */}
+      <FloatingAssistant 
+        user={user} 
+        bookings={bookings} 
+        services={services}
+        setFlow={setClientFlow}
+      />
+
       <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
         <div className="w-full max-w-4xl space-y-8">
           {/* Logo y descripción */}
@@ -5949,7 +5979,7 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
   const { categories, loading: categoriesLoading, createCategory, updateCategory, deleteCategory, toggleCategoryStatus } = useCategories()
   const { services } = useServices()
   const { bookings } = useBookings()
-  const { users, loading: usersLoading, updateUserRole, toggleUserStatus, deleteUser, getUsersByRole } = useUsers()
+  const { users, loading: usersLoading, updateUserRole, toggleUserStatus, deleteUser, getUsersByRole, verifyUser } = useUsers()
   const { analytics, loading: analyticsLoading } = useAnalytics()
   const { stats, loading: dashboardLoading, refresh } = useAdminDashboard()
 
@@ -5976,6 +6006,8 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
   const [editingUser, setEditingUser] = useState<any>(null)
   const [userFilter, setUserFilter] = useState<'all' | 'client' | 'provider' | 'admin'>('all')
   const [serviceFilter, setServiceFilter] = useState<'all' | 'active' | 'inactive'>('all')
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [adminActionStatus, setAdminActionStatus] = useState<{type: 'success' | 'error', message: string} | null>(null)
 
   // Estados para configuración
   const [settings, setSettings] = useState({
@@ -5998,10 +6030,16 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
     e.preventDefault()
     if (!newCategory.name || !newCategory.icon) return
 
+    setIsProcessing(true)
     const result = await createCategory(newCategory)
+    setIsProcessing(false)
     if (result.success) {
       setNewCategory({ name: '', icon: '', description: '', active: true })
       setShowCreateCategory(false)
+      setAdminActionStatus({ type: 'success', message: 'Categoría creada exitosamente' })
+      setTimeout(() => setAdminActionStatus(null), 3000)
+    } else {
+      setAdminActionStatus({ type: 'error', message: 'Error al crear categoría' })
     }
   }
 
@@ -6009,44 +6047,85 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
     e.preventDefault()
     if (!editingCategory) return
 
+    setIsProcessing(true)
     const result = await updateCategory(editingCategory.id, editingCategory)
+    setIsProcessing(false)
     if (result.success) {
       setEditingCategory(null)
+      setAdminActionStatus({ type: 'success', message: 'Categoría actualizada' })
+      setTimeout(() => setAdminActionStatus(null), 3000)
     }
   }
 
   const handleDeleteCategory = async (id: string) => {
     if (confirm('¿Estás seguro de que quieres eliminar esta categoría?')) {
-      await deleteCategory(id)
+      setIsProcessing(true)
+      const result = await deleteCategory(id)
+      setIsProcessing(false)
+      if (result.success) {
+        setAdminActionStatus({ type: 'success', message: 'Categoría eliminada' })
+        setTimeout(() => setAdminActionStatus(null), 3000)
+      }
     }
   }
 
   const handleUpdateUserRole = async (userId: string, newRole: string) => {
+    setIsProcessing(true)
     const result = await updateUserRole(userId, newRole as any)
+    setIsProcessing(false)
     if (result.success) {
       setEditingUser(null)
+      setAdminActionStatus({ type: 'success', message: 'Rol de usuario actualizado' })
+      setTimeout(() => setAdminActionStatus(null), 3000)
     }
   }
 
   const handleToggleUserStatus = async (userId: string) => {
-    await toggleUserStatus(userId)
+    setIsProcessing(true)
+    const result = await toggleUserStatus(userId)
+    setIsProcessing(false)
+    if (result.success) {
+      setAdminActionStatus({ type: 'success', message: 'Estado del usuario actualizado' })
+      setTimeout(() => setAdminActionStatus(null), 3000)
+    }
   }
 
   const handleDeleteUser = async (userId: string) => {
     if (confirm('¿Estás seguro de que quieres eliminar este usuario?')) {
-      await deleteUser(userId)
+      setIsProcessing(true)
+      const result = await deleteUser(userId)
+      setIsProcessing(false)
+      if (result.success) {
+        setAdminActionStatus({ type: 'success', message: 'Usuario eliminado correctamente' })
+        setTimeout(() => setAdminActionStatus(null), 3000)
+      }
     }
   }
 
-  const filteredUsers = userFilter === 'all'
-    ? users
-    : getUsersByRole(userFilter as any)
+  const handleVerifyUser = async (userId: string) => {
+    setIsProcessing(true)
+    const result = await verifyUser(userId)
+    setIsProcessing(false)
+    if (result.success) {
+      setAdminActionStatus({ type: 'success', message: 'Usuario verificado correctamente' })
+      setTimeout(() => setAdminActionStatus(null), 3000)
+    }
+  }
 
-  const filteredServices = serviceFilter === 'all'
-    ? services
-    : services.filter(service =>
-      serviceFilter === 'active' ? (service as any).active !== false : (service as any).active === false
-    )
+  const filteredUsers = users.filter(u => {
+    if (userFilter === 'all') return true
+    if (userFilter === 'pending') return !u.verified && u.role === 'provider'
+    return u.role === userFilter
+  })
+
+  const filteredServices = services.filter(service => {
+    if (serviceFilter === 'all') return true
+    if (serviceFilter === 'active') return (service as any).active !== false
+    if (serviceFilter === 'inactive') return (service as any).active === false
+    if (serviceFilter === 'pending') return (service as any).status === 'pending' || (service as any).status === 'review'
+    if (serviceFilter === 'reported') return (service as any).status === 'reported' || (service as any).reported === true
+    return true
+  })
 
   // Funciones para configuración
   const handleSettingChange = (key: string, value: any) => {
@@ -6116,6 +6195,16 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
 
         {/* Área de Contenido */}
         <main className="flex-1 p-4 md:p-8 pb-24 md:pb-8 max-w-7xl mx-auto w-full">
+          {adminActionStatus && (
+            <div className="mb-6 animate-in slide-in-from-top duration-300">
+               <CustomAlert 
+                type={adminActionStatus.type}
+                title={adminActionStatus.type === 'success' ? 'Éxito' : 'Error'}
+                message={adminActionStatus.message}
+                onClose={() => setAdminActionStatus(null)}
+               />
+            </div>
+          )}
         {activeTab === 'dashboard' && (
           <div className="space-y-4 md:space-y-6">
             {dashboardLoading ? (
@@ -6149,12 +6238,40 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                       {stats.alerts.length > 0 ? (
                         <div className="space-y-2">
                           {stats.alerts.map((alert, index) => (
-                            <div key={index} className="flex items-center justify-between p-2 bg-white rounded">
-                              <span className="text-sm">{alert.message}</span>
-                              <span className="px-2 py-1 bg-red-100 text-red-800 text-xs font-semibold rounded-full">
-                                {alert.count}
-                              </span>
-                            </div>
+                            <button 
+                              key={index} 
+                              onClick={() => {
+                                if (alert.type === 'verification') {
+                                  setActiveTab('users')
+                                  setUserFilter('pending' as any)
+                                } else if (alert.type === 'publications') {
+                                  setActiveTab('services')
+                                  setServiceFilter('pending' as any)
+                                } else if (alert.type === 'reports') {
+                                  setActiveTab('services')
+                                  setServiceFilter('reported' as any)
+                                }
+                                setShowAlerts(false)
+                              }}
+                              className="w-full flex items-center justify-between p-3 bg-white rounded-xl border border-transparent hover:border-primary/20 hover:bg-primary/5 transition-all group"
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className={`p-2 rounded-lg ${
+                                  alert.type === 'verification' ? 'bg-blue-50 text-blue-600' :
+                                  alert.type === 'reports' ? 'bg-red-50 text-red-600' :
+                                  'bg-orange-50 text-orange-600'
+                                }`}>
+                                  <AlertCircle className="h-4 w-4" />
+                                </div>
+                                <span className="text-sm font-medium text-gray-700">{alert.message}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="px-2.5 py-1 bg-red-100 text-red-800 text-[10px] font-black rounded-full">
+                                  {alert.count}
+                                </span>
+                                <ChevronRight className="h-4 w-4 text-gray-300 group-hover:text-primary transition-colors" />
+                              </div>
+                            </button>
                           ))}
                         </div>
                       ) : (
@@ -6386,22 +6503,44 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                 <h2 className="text-xl font-bold text-gray-900 leading-none">Control de Usuarios</h2>
                 <p className="text-xs text-muted-foreground mt-1">Gestión centralizada de cuentas y accesos</p>
               </div>
+              
+              {/* Nota Informativa sobre aprobación automática */}
+              <div className="flex-1 max-w-md mx-4">
+                <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 flex items-start gap-3">
+                  <div className="bg-blue-100 p-1.5 rounded-lg text-blue-600">
+                    <Info className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-bold text-blue-900 leading-tight">Aprobación Automática</p>
+                    <p className="text-[10px] text-blue-700 mt-0.5 leading-snug">
+                      Los usuarios se activan automáticamente al registrarse. Puedes suspender cualquier cuenta de forma manual si es necesario.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
               <div className="flex items-center gap-2 bg-white p-1 rounded-xl shadow-sm border border-gray-100">
                 {[
-                  { id: 'all', label: 'Todos' },
-                  { id: 'client', label: 'Clientes' },
-                  { id: 'provider', label: 'Proveedores' }
+                  { id: 'all', label: 'Todos', count: users.length },
+                  { id: 'client', label: 'Clientes', count: users.filter(u => u.role === 'client').length },
+                  { id: 'provider', label: 'Proveedores', count: users.filter(u => u.role === 'provider').length },
+                  { id: 'pending', label: 'Pendientes', count: users.filter(u => u.role === 'provider' && !u.verified).length }
                 ].map(filter => (
                   <button
                     key={filter.id}
                     onClick={() => setUserFilter(filter.id as any)}
-                    className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${
+                    className={`px-3 py-1.5 text-[10px] sm:text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
                       userFilter === filter.id 
                         ? 'bg-primary text-white shadow-sm' 
-                        : 'text-gray-500 hover:text-gray-900'
+                        : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
                     }`}
                   >
-                    {filter.label}
+                    <span>{filter.label}</span>
+                    <span className={`px-1.5 py-0.5 rounded-md text-[9px] ${
+                      userFilter === filter.id ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500'
+                    }`}>
+                      {filter.count}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -6435,14 +6574,19 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                           {user.role}
                         </Badge>
                       </div>
-                      <div className="grid grid-cols-3 gap-2 mt-4">
+                      <div className="grid grid-cols-4 gap-2 mt-4">
+                        {user.role === 'provider' && !user.verified && (
+                          <Button size="sm" variant="outline" className="h-8 text-[10px] rounded-lg bg-blue-50 text-blue-600 border-blue-100" onClick={() => handleVerifyUser(user.id)}>
+                            Verificar
+                          </Button>
+                        )}
                         <Button size="sm" variant="outline" className="h-8 text-[10px] rounded-lg" onClick={() => setEditingUser(user)}>
                           Editar
                         </Button>
-                        <Button size="sm" variant="outline" className={`h-8 text-[10px] rounded-lg ${!user.isActive ? 'text-green-600' : 'text-orange-600'}`} onClick={() => toggleUserStatus(user.id)}>
+                        <Button size="sm" variant="outline" className={`h-8 text-[10px] rounded-lg ${!user.isActive ? 'text-green-600' : 'text-orange-600'}`} onClick={() => handleToggleUserStatus(user.id)}>
                           {!user.isActive ? 'Activar' : 'Suspender'}
                         </Button>
-                        <Button size="sm" variant="outline" className="h-8 text-[10px] rounded-lg text-red-600" onClick={() => deleteUser(user.id)}>
+                        <Button size="sm" variant="outline" className="h-8 text-[10px] rounded-lg text-red-600" onClick={() => handleDeleteUser(user.id)}>
                           Borrar
                         </Button>
                       </div>
@@ -6492,10 +6636,18 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2">
+                          {user.role === 'provider' && !user.verified && (
+                            <Button size="icon" variant="ghost" className="h-8 w-8 rounded-lg text-blue-400 hover:text-blue-600" onClick={() => handleVerifyUser(user.id)} title="Verificar comercio">
+                               <CheckCheck className="h-4 w-4" />
+                            </Button>
+                          )}
                           <Button size="icon" variant="ghost" className="h-8 w-8 rounded-lg" onClick={() => setEditingUser(user)}>
                             <Settings className="h-4 w-4 text-gray-400" />
                           </Button>
-                          <Button size="icon" variant="ghost" className="h-8 w-8 rounded-lg text-red-400 hover:text-red-600" onClick={() => deleteUser(user.id)}>
+                          <Button size="icon" variant="ghost" className="h-8 w-8 rounded-lg text-orange-400 hover:text-orange-600" onClick={() => handleToggleUserStatus(user.id)} title={user.isActive ? 'Suspender' : 'Activar'}>
+                             {user.isActive ? <ShieldAlert className="h-4 w-4" /> : <Shield className="h-4 w-4" />}
+                          </Button>
+                          <Button size="icon" variant="ghost" className="h-8 w-8 rounded-lg text-red-400 hover:text-red-600" onClick={() => handleDeleteUser(user.id)} title="Borrar">
                              <X className="h-4 w-4" />
                           </Button>
                         </div>
@@ -6519,7 +6671,9 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                 {[
                   { id: 'all', label: 'Todos' },
                   { id: 'active', label: 'Activos' },
-                  { id: 'inactive', label: 'Inactivos' }
+                  { id: 'inactive', label: 'Inactivos' },
+                  { id: 'pending', label: 'Pendientes' },
+                  { id: 'reported', label: 'Denunciados' }
                 ].map(filter => (
                   <button
                     key={filter.id}
@@ -7126,11 +7280,15 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                    <p className="text-sm font-bold text-gray-900">{editingUser.displayName || 'Sin nombre'}</p>
                    <p className="text-xs text-gray-500">{editingUser.email}</p>
                 </div>
-                <form onSubmit={(e) => {
+                <form onSubmit={async (e) => {
                   e.preventDefault()
+                  setIsProcessing(true)
                   const formData = new FormData(e.target as HTMLFormElement)
                   const newRole = formData.get('role') as string
-                  handleUpdateUserRole(editingUser.id, newRole)
+                  await handleUpdateUserRole(editingUser.id, newRole)
+                  setIsProcessing(false)
+                  setAdminActionStatus({ type: 'success', message: 'Rol actualizado correctamente' })
+                  setTimeout(() => setAdminActionStatus(null), 3000)
                 }} className="space-y-6">
                   <div className="space-y-2">
                     <Label className="text-xs font-black text-gray-400 uppercase">Asignar Rol</Label>
@@ -7140,7 +7298,18 @@ function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ s
                       <option value="admin">Administrador Total</option>
                     </select>
                   </div>
-                  <Button type="submit" className="w-full h-14 rounded-2xl font-black text-lg">Confirmar Rol</Button>
+                  <Button 
+                    type="submit" 
+                    disabled={isProcessing}
+                    className="w-full h-14 rounded-2xl font-black text-lg flex items-center justify-center gap-2"
+                  >
+                    {isProcessing ? (
+                      <>
+                        <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        Procesando...
+                      </>
+                    ) : 'Confirmar Rol'}
+                  </Button>
                 </form>
               </CardContent>
             </Card>

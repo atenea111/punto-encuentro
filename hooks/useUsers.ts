@@ -21,6 +21,7 @@ export interface UserData {
   updatedAt: Date
   lastLogin?: Date
   isActive: boolean
+  verified?: boolean
 }
 
 export function useUsers() {
@@ -49,7 +50,8 @@ export function useUsers() {
           createdAt: data.createdAt?.toDate() || new Date(),
           updatedAt: data.updatedAt?.toDate() || new Date(),
           lastLogin: data.lastLogin?.toDate(),
-          isActive: data.isActive !== false // Por defecto activo
+          isActive: data.isActive !== false,
+          verified: data.verified === true
         }
       }) as UserData[]
       
@@ -109,6 +111,28 @@ export function useUsers() {
     }
   }
 
+  const verifyUser = async (userId: string, status: boolean = true) => {
+    try {
+      const userRef = doc(db, 'users', userId)
+      await updateDoc(userRef, {
+        verified: status,
+        updatedAt: new Date()
+      })
+      
+      setUsers(prev => 
+        prev.map(u => 
+          u.id === userId 
+            ? { ...u, verified: status, updatedAt: new Date() }
+            : u
+        )
+      )
+      
+      return { success: true }
+    } catch (error: any) {
+      return { success: false, error: error.message }
+    }
+  }
+
   const deleteUser = async (userId: string) => {
     try {
       await deleteDoc(doc(db, 'users', userId))
@@ -140,6 +164,7 @@ export function useUsers() {
     deleteUser,
     getUsersByRole,
     getActiveUsers,
-    getInactiveUsers
+    getInactiveUsers,
+    verifyUser
   }
 }

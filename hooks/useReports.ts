@@ -7,6 +7,7 @@ import {
   Timestamp
 } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
+import { parseMoney } from '@/lib/formatMoney'
 
 export interface DailyReport {
   date: string
@@ -326,7 +327,7 @@ export function useReports() {
 
       const totalRevenue = promoBookings
         .filter((b: any) => b.paymentStatus === 'paid')
-        .reduce((sum: number, b: any) => sum + (b.price || 0), 0)
+        .reduce((sum: number, b: any) => sum + (parseMoney(b.price) ?? 0), 0)
 
       const monthLabel = targetMonth.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })
 

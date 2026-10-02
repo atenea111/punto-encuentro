@@ -13,6 +13,7 @@ import {
   Timestamp
 } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
+import { parseMoney } from '@/lib/formatMoney'
 
 export interface AnalyticsData {
   totalUsers: number
@@ -30,7 +31,9 @@ export interface AnalyticsData {
   interactions: Record<string, number>
 }
 
-export function useAnalytics() {
+export function useAnalytics(options?: { autoFetch?: boolean }) {
+  // En la app cliente solo se usa logInteraction; el fetch masivo es solo admin.
+  const autoFetch = options?.autoFetch ?? false
   const [analytics, setAnalytics] = useState<AnalyticsData>({
     totalUsers: 0,
     totalProviders: 0,
@@ -46,11 +49,7 @@ export function useAnalytics() {
     bookingTrends: [],
     interactions: {}
   })
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    fetchAnalytics()
-  }, [])
+  const [loading, setLoading] = useState(autoFetch)
 
   const logInteraction = useCallback(async (area: string) => {
     try {
@@ -64,7 +63,7 @@ export function useAnalytics() {
     }
   }, [])
 
-  const fetchAnalytics = async () => {
+  const fetchAnalytics = useCallback(async () => {
     try {
       setLoading(true)
       
@@ -98,7 +97,7 @@ export function useAnalytics() {
       const totalBookings = bookings.length
       const totalRevenue = bookings
         .filter((booking: any) => booking.paymentStatus === 'paid')
-        .reduce((sum: number, booking: any) => sum + (booking.price || 0), 0)
+        .reduce((sum: number, booking: any) => sum + (parseMoney(booking.price) ?? 0), 0)
       
       const activeUsers = users.filter((user: any) => user.isActive !== false).length
       const inactiveUsers = users.filter((user: any) => user.isActive === false).length
@@ -182,7 +181,13 @@ export function useAnalytics() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    if (autoFetch) {
+      void fetchAnalytics()
+    }
+  }, [autoFetch, fetchAnalytics])
 
   return {
     analytics,

@@ -7,6 +7,7 @@ import {
   Timestamp
 } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
+import { isServiceReported } from '@/lib/serviceUtils'
 
 export interface AdminDashboardStats {
   // Usuarios
@@ -88,8 +89,10 @@ export function useAdminDashboard() {
       // Obtener proveedores (comercios)
       const providers = users.filter((user: any) => user.role === 'provider')
       const activeBusinesses = providers.filter((user: any) => user.isActive !== false).length
-      const businessesPendingVerification = providers.filter((user: any) => 
-        !user.verified && !user.verificationStatus || user.verificationStatus === 'pending'
+      const businessesPendingVerification = providers.filter((user: any) =>
+        user.role === 'provider' &&
+        !user.verified &&
+        (!user.verificationStatus || user.verificationStatus === 'pending')
       ).length
 
       // Obtener servicios (publicaciones)
@@ -116,8 +119,8 @@ export function useAdminDashboard() {
       ).length
 
       // Publicaciones denunciadas
-      const reportedPublications = services.filter((service: any) => 
-        service.status === 'reported' || service.reported === true
+      const reportedPublications = services.filter((service: any) =>
+        isServiceReported(service as Record<string, unknown>)
       ).length
 
       // Obtener chats (si existe la colección)

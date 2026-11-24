@@ -1,8 +1,16 @@
 import type React from "react"
-import type { Metadata } from "next"
+import type { Metadata, Viewport } from "next"
 import { GeistSans } from "geist/font/sans"
 import { GeistMono } from "geist/font/mono"
 import "./globals.css"
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  // resizes-content achica TODA la app al abrir el teclado y aplasta las pantallas.
+  interactiveWidget: "resizes-visual",
+}
 
 export const metadata: Metadata = {
   title: "Punto Encuentro",
@@ -18,7 +26,6 @@ export default function RootLayout({
   return (
     <html lang="es" suppressHydrationWarning>
       <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         <style>{`
 html {
   font-family: ${GeistSans.style.fontFamily};

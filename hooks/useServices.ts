@@ -11,6 +11,7 @@ import {
   where 
 } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
+import { rankServicesForSearch, serviceMatchesCategory } from '@/lib/searchUtils'
 
 export interface Service {
   id: string
@@ -20,11 +21,18 @@ export interface Service {
   category: string
   providerId: string
   providerName: string
+  businessName?: string
+  address?: string
+  city?: string
   rating: number
   reviews: number
   image?: string
+  images?: string[]
+  duration?: string
   latitude?: number
   longitude?: number
+  lat?: number
+  lng?: number
   createdAt: Date
   updatedAt: Date
 }
@@ -61,11 +69,24 @@ export function useServices() {
 
   const createService = async (serviceData: Omit<Service, 'id' | 'createdAt' | 'updatedAt'>) => {
     try {
+      if (serviceData.providerId) {
+        const existing = await getDocs(
+          query(collection(db, 'services'), where('providerId', '==', serviceData.providerId))
+        )
+        if (!existing.empty) {
+          return {
+            success: false,
+            error: 'Ya tenés un servicio con esta cuenta. Solo se permite uno por correo: editá el existente.',
+          }
+        }
+      }
+
       const docRef = await addDoc(collection(db, 'services'), {
         ...serviceData,
         createdAt: new Date(),
         updatedAt: new Date()
       })
+      await fetchServices()
       return { success: true, id: docRef.id }
     } catch (error: any) {
       return { success: false, error: error.message }
@@ -79,6 +100,7 @@ export function useServices() {
         ...serviceData,
         updatedAt: new Date()
       })
+      await fetchServices()
       return { success: true }
     } catch (error: any) {
       return { success: false, error: error.message }
@@ -88,6 +110,7 @@ export function useServices() {
   const deleteService = async (id: string) => {
     try {
       await deleteDoc(doc(db, 'services', id))
+      await fetchServices()
       return { success: true }
     } catch (error: any) {
       return { success: false, error: error.message }
@@ -95,15 +118,11 @@ export function useServices() {
   }
 
   const getServicesByCategory = (category: string) => {
-    return services.filter(service => service.category === category)
+    return services.filter(service => serviceMatchesCategory(service as Record<string, unknown>, category))
   }
 
   const searchServices = (searchTerm: string) => {
-    return services.filter(service => 
-      service.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      service.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      service.category.toLowerCase().includes(searchTerm.toLowerCase())
-    )
+    return rankServicesForSearch(services as any[], searchTerm)
   }
 
   return {

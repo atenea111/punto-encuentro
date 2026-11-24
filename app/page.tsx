@@ -2,8 +2,10 @@
 
 import type React from "react"
 import { useState, useEffect, useMemo, useRef } from "react"
+import dynamic from "next/dynamic"
 import { Capacitor } from "@capacitor/core"
 import { App } from "@capacitor/app"
+import { Geolocation } from "@capacitor/geolocation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -32,21 +34,52 @@ import { useUsers } from "@/hooks/useUsers"
 import { useAnalytics } from "@/hooks/useAnalytics"
 import { useGeolocation } from "@/hooks/useGeolocation"
 import { FloatingAssistant } from "@/components/FloatingAssistant"
+import { DraggableFloat } from "@/components/DraggableFloat"
+import { BOT_HOME_EVENT, consumeBotHomeAction } from "@/lib/botHomeAction"
+import { GoogleSignInButton } from "@/components/GoogleSignInButton"
 import { calcularDistanciaKm, formatearDistancia } from "@/lib/locationUtils"
+import { serviceMatchesSearch, serviceMatchesLocationSearch, getServiceCoordinates, normalizeSearchText, serviceMatchesCategory, findOfficialCategoryName, isUncategorizedService, rankServicesForSearch } from "@/lib/searchUtils"
 import { db, auth, storage, uploadFile } from "@/lib/firebase"
 import { useReviews } from "@/hooks/useReviews"
+import { useFavorites } from "@/hooks/useFavorites"
+import { StoriesShelf, ProviderStoriesManager, StoriesLimitPromoBanner } from "@/components/stories"
+import { ForceUpdateScreen, useForceUpdateRequired } from "@/components/ForceUpdateGate"
+import { AdminDashboard } from "@/components/AdminDashboard"
+import { HelpLink } from "@/components/SupportCenter"
+import { AdminMovedToWeb } from "@/components/AdminMovedToWeb"
+import { isNativeApp } from "@/lib/adminWeb"
+import { AppIcon } from "@/components/AppIcon"
+import { WhatsAppIcon } from "@/components/WhatsAppIcon"
+import { CategoryIcon } from "@/components/CategoryIcon"
+import { AdminPushNotifications } from "@/components/AdminPushNotifications"
+import { sendChatMessage, ensureChatDocument } from "@/lib/chat"
+import { usePresence, usePartnerPresence, useChatInbox, markChatRead } from "@/hooks/useChat"
+import { useVisibleViewport } from "@/hooks/useKeyboardInset"
+import { usePushNotifications } from "@/hooks/usePushNotifications"
+import { clearPendingPush, readPendingPush, supportPushUrl, type PushPayload } from "@/lib/pushNotifications"
+import { useAdminAudit } from "@/hooks/useAdminAudit"
+import { useAppSettings, DEFAULT_APP_SETTINGS, type AppSettings } from "@/hooks/useAppSettings"
+import { isServiceActive, serviceMatchesAdminFilter, isServiceReported } from "@/lib/serviceUtils"
+import { downloadCsv } from "@/lib/adminExport"
+import { syncPublicAndroidMinVersion } from "@/lib/forceUpdateConfig"
+import { hasValidProfilePhoto, validateProfilePhotoFile } from "@/lib/profilePhoto"
+import { categorySelectLabel } from "@/lib/categoryIcons"
+import { parseMoney, formatMoney } from "@/lib/formatMoney"
+import { getAvailableSlots } from "@/lib/bookingAvailability"
+import { MercadoPagoConnect } from "@/components/MercadoPagoConnect"
+import { ClientPendingPayments, ProviderPaymentsPanel } from "@/components/BookingPayments"
+import { isUnpaidBooking, paymentMethodLabel, paymentStatusLabel } from "@/lib/bookingPayments"
+import { getCanonicalService, syncCanonicalServiceFromProfile } from "@/lib/myService"
+import { callableErrorMessage, createMercadoPagoCheckout, openExternalUrl as openMercadoPagoUrl } from "@/lib/mercadopagoConnect"
 import { doc, setDoc, updateDoc, collection, addDoc, serverTimestamp, query, where, orderBy, onSnapshot } from "firebase/firestore"
 import {
   Search,
   Star,
   Clock,
-  Phone,
-  Mail,
   ArrowLeft,
   ArrowRight,
   ChevronLeft,
   ChevronRight,
-  CreditCard,
   Banknote,
   Building2,
   Plus,
@@ -57,7 +90,6 @@ import {
   User,
   MapPin,
   MapPinOff,
-  Home,
   Settings,
   Trophy,
   LayoutDashboard,
@@ -65,7 +97,10 @@ import {
   Wrench,
   BarChart3,
   FileText,
-  Bell,
+  Mail,
+  Phone,
+  Instagram,
+  Facebook,
   LogOut,
   Menu,
   X,
@@ -73,6 +108,7 @@ import {
   Shield,
   Briefcase,
   ShieldAlert,
+  Bell,
   Wallet,
   Flame,
   Activity,
@@ -82,8 +118,17 @@ import {
   MessageSquare,
   Info,
   CheckCheck,
+  Globe,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  Download,
 } from "lucide-react"
 
+
+const NearByMap = dynamic(() => import("@/components/NearByMap"), {
+  ssr: false,
+})
 
 // Función para calcular la distancia entre dos puntos (Haversine formula)
 function getDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
@@ -99,83 +144,19 @@ function getDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
   return R * c
 }
 
-const AdminStatCard = ({ title, value, icon: Icon, color }: { title: string, value: string | number, icon: any, color: string }) => (
-  <Card>
-    <CardContent className="p-6 flex items-center space-x-4">
-      <div className={`p-3 rounded-full ${color} bg-opacity-10`}>
-        <Icon className={`w-6 h-6 ${color.replace('bg-', 'text-')}`} />
-      </div>
-      <div>
-        <p className="text-sm font-medium text-muted-foreground">{title}</p>
-        <h3 className="text-2xl font-bold">{value}</h3>
-      </div>
-    </CardContent>
-  </Card>
-)
-
-const AdminSidebar = ({ activeTab, setActiveTab, logout }: { activeTab: string, setActiveTab: (t: string) => void, logout: () => void }) => (
-  <div className="hidden md:flex flex-col w-64 bg-white border-r h-screen fixed left-0 top-0">
-    <div className="p-6">
-      <LogoText />
-    </div>
-    <nav className="flex-1 px-4 space-y-2">
-      {[
-        { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-        { id: 'users', label: 'Usuarios', icon: Users },
-        { id: 'services', label: 'Servicios', icon: Wrench },
-        { id: 'categories', label: 'Categorías', icon: FolderTree },
-        { id: 'reports', label: 'Reportes', icon: FileText },
-        { id: 'analytics', label: 'Estadísticas', icon: BarChart3 },
-        { id: 'settings', label: 'Ajustes', icon: Settings },
-      ].map((item) => (
-        <Button
-          key={item.id}
-          variant={activeTab === item.id ? "secondary" : "ghost"}
-          className="w-full justify-start"
-          onClick={() => setActiveTab(item.id)}
-        >
-          <item.icon className="w-5 h-5 mr-3" />
-          {item.label}
-        </Button>
-      ))}
-    </nav>
-    <div className="p-4 border-t">
-      <Button variant="ghost" className="w-full justify-start text-red-600" onClick={logout}>
-        <LogOut className="w-5 h-5 mr-3" />
-        Cerrar sesión
-      </Button>
-    </div>
-  </div>
-)
-
-const AdminBottomNav = ({ activeTab, setActiveTab }: { activeTab: string, setActiveTab: (t: string) => void }) => (
-  <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around p-2 z-50">
-    {[
-      { id: 'dashboard', icon: LayoutDashboard },
-      { id: 'users', icon: Users },
-      { id: 'services', icon: Wrench },
-      { id: 'categories', icon: FolderTree },
-      { id: 'reports', icon: FileText },
-      { id: 'analytics', icon: BarChart3 },
-      { id: 'settings', icon: Settings },
-    ].map((item) => (
-      <Button
-        key={item.id}
-        variant="ghost"
-        className={activeTab === item.id ? "text-primary" : ""}
-        onClick={() => setActiveTab(item.id)}
-      >
-        <item.icon className="w-6 h-6" />
-      </Button>
-    ))}
-  </div>
-)
 
 export default function HomePage() {
-  const { user, signIn, signUp, logout, loading: authLoading } = useAuth()
+  const { user, signIn, signUp, signInWithGoogle, logout, loading: authLoading } = useAuth()
+  usePresence(user?.uid)
   const { services, loading: servicesLoading, searchServices, createService } = useServices()
+  const { settings: appSettings, loading: appSettingsLoading } = useAppSettings()
+  const forceUpdate = useForceUpdateRequired(appSettings, appSettingsLoading)
+  const publicServices = useMemo(
+    () => services.filter((s) => isServiceActive(s as Record<string, unknown>)),
+    [services]
+  )
   const { bookings, createBooking, getBookingsByClient } = useBookings()
-  const { isAdmin, isClient, isProvider, updateUserRole, loading: rolesLoading } = useRoles()
+  const { isAdmin, isClient, isProvider, hasRole, updateUserRole, loading: rolesLoading } = useRoles()
   const { logInteraction } = useAnalytics()
   
   // Inicializar userType y flujo desde localStorage para que al recargar vaya directo al home del usuario
@@ -185,7 +166,7 @@ export default function HomePage() {
     return saved === "client" || saved === "provider" ? saved : null
   })
   const [clientFlow, setClientFlow] = useState<
-    "onboarding" | "login" | "register" | "home" | "profile" | "agenda" | "service-detail" | "booking" | "payment" | "chat"
+    "onboarding" | "login" | "register" | "home" | "mi-servicio" | "profile" | "agenda" | "service-detail" | "booking" | "payment" | "chats" | "chat"
   >(() => {
     if (typeof window === "undefined") return "onboarding"
     return localStorage.getItem("userType") === "client" ? "home" : "onboarding"
@@ -194,7 +175,9 @@ export default function HomePage() {
     | "onboarding"
     | "login"
     | "register"
+    | "home"
     | "dashboard"
+    | "mi-servicio"
     | "profile"
     | "agenda"
     | "services"
@@ -202,10 +185,15 @@ export default function HomePage() {
     | "edit-service"
     | "subscription"
     | "statistics"
+    | "stories"
+    | "chats"
     | "chat"
+    | "service-detail"
+    | "booking"
+    | "payment"
   >(() => {
     if (typeof window === "undefined") return "onboarding"
-    return localStorage.getItem("userType") === "provider" ? "dashboard" : "onboarding"
+    return localStorage.getItem("userType") === "provider" ? "home" : "onboarding"
   })
   const [selectedService, setSelectedService] = useState<any>(null)
   const [selectedProviderService, setSelectedProviderService] = useState<any>(null)
@@ -215,12 +203,75 @@ export default function HomePage() {
   const [searchTerm, setSearchTerm] = useState("")
   const [authError, setAuthError] = useState("")
   const [authSuccess, setAuthSuccess] = useState("")
-  const [bookingSource, setBookingSource] = useState<'anuncio' | 'recomendados' | 'cerca_tuyo' | 'rubro' | 'buscador'>("anuncio")
+  const [bookingSource, setBookingSource] = useState<'anuncio' | 'recomendados' | 'cerca_tuyo' | 'rubro' | 'buscador' | 'stories'>("anuncio")
   const [activeChat, setActiveChat] = useState<any>(null)
   const [locationError, setLocationError] = useState<string | null>(null)
+  const [needsProfilePhoto, setNeedsProfilePhoto] = useState(false)
 
   // Ref para la función "atrás" actual (usada por el botón físico de Android)
   const handleBackRef = useRef<() => void>(() => {})
+  // Subpantallas del home (recomendados / cerca / categorías / filtros / mapa)
+  const clientHomeBackRef = useRef<(() => boolean) | null>(null)
+  // Panel abierto de PuntoBot
+  const botBackRef = useRef<(() => boolean) | null>(null)
+  const fixingProviderRoleRef = useRef(false)
+
+  const applyPushPayload = (payload: PushPayload) => {
+    if (!payload) return
+    clearPendingPush()
+    if (payload.type === "support_reply") {
+      const href = supportPushUrl(payload, user?.uid)
+      if (href) window.location.assign(href)
+      return
+    }
+    if (isAdmin) return
+
+    if (payload.type === "chat" && payload.partnerId) {
+      setActiveChat({
+        partnerId: payload.partnerId,
+        partnerName: payload.partnerName || "Chat",
+        from: "push",
+      })
+      if (isProvider || userType === "provider") {
+        setUserType("provider")
+        setProviderFlow("chat")
+      } else {
+        setUserType("client")
+        setClientFlow("chat")
+      }
+      return
+    }
+
+    if (payload.type === "booking") {
+      if (isProvider || userType === "provider") {
+        setUserType("provider")
+        setProviderFlow("agenda")
+      } else {
+        setUserType("client")
+        setClientFlow("agenda")
+      }
+      return
+    }
+
+    if (payload.type === "payment_request") {
+      setUserType("client")
+      setClientFlow("profile")
+    }
+  }
+
+  const applyPushPayloadRef = useRef(applyPushPayload)
+  applyPushPayloadRef.current = applyPushPayload
+
+  usePushNotifications(user?.uid, (payload) => {
+    applyPushPayloadRef.current(payload)
+  })
+
+  useEffect(() => {
+    if (!user || authLoading || rolesLoading) return
+    const pending = readPendingPush()
+    if (!pending) return
+    applyPushPayloadRef.current(pending)
+  }, [user, authLoading, rolesLoading, isAdmin, isProvider, userType])
 
   // Actualizar la acción "atrás" según el flujo actual (cliente / proveedor / raíz)
   useEffect(() => {
@@ -240,21 +291,45 @@ export default function HomePage() {
           setClientFlow("home")
           setSelectedService(null)
         }
-        else if (clientFlow === "profile" || clientFlow === "agenda") setClientFlow("home")
-        else if (clientFlow === "home") App.minimizeApp()
+        else if (clientFlow === "profile") {
+          if (needsProfilePhoto) App.minimizeApp()
+          else setClientFlow("home")
+        }
+        else if (clientFlow === "agenda" || clientFlow === "chats" || clientFlow === "mi-servicio") setClientFlow("home")
+        else if (clientFlow === "chat") setClientFlow(activeChat?.from === 'inbox' ? "chats" : "home")
+        else if (clientFlow === "home") {
+          if (clientHomeBackRef.current?.()) return
+          if (botBackRef.current?.()) return
+          App.minimizeApp()
+        }
         else if (clientFlow === "login" || clientFlow === "register") setClientFlow("onboarding")
         else if (clientFlow === "onboarding") App.minimizeApp()
         return
       }
       if (userType === "provider") {
         if (providerFlow === "edit-service") {
-          setProviderFlow("services")
+          setProviderFlow("mi-servicio")
           setSelectedProviderService(null)
         }
-        else if (providerFlow === "create-service") setProviderFlow("services")
-        else if (providerFlow === "services" || providerFlow === "statistics") setProviderFlow("dashboard")
-        else if (providerFlow === "profile" || providerFlow === "agenda" || providerFlow === "subscription") setProviderFlow("dashboard")
-        else if (providerFlow === "dashboard") App.minimizeApp()
+        else if (providerFlow === "create-service") setProviderFlow("mi-servicio")
+        else if (providerFlow === "services" || providerFlow === "statistics" || providerFlow === "stories" || providerFlow === "subscription") setProviderFlow("mi-servicio")
+        else if (providerFlow === "payment") setProviderFlow("booking")
+        else if (providerFlow === "booking") setProviderFlow("service-detail")
+        else if (providerFlow === "service-detail") {
+          setProviderFlow("home")
+          setSelectedService(null)
+        }
+        else if (providerFlow === "profile") {
+          if (needsProfilePhoto) App.minimizeApp()
+          else setProviderFlow("home")
+        }
+        else if (providerFlow === "agenda" || providerFlow === "chats" || providerFlow === "mi-servicio" || providerFlow === "dashboard") setProviderFlow("home")
+        else if (providerFlow === "chat") setProviderFlow(activeChat?.from === 'inbox' ? "chats" : selectedService ? "service-detail" : "home")
+        else if (providerFlow === "home") {
+          if (clientHomeBackRef.current?.()) return
+          if (botBackRef.current?.()) return
+          App.minimizeApp()
+        }
         else if (providerFlow === "login" || providerFlow === "register") setProviderFlow("onboarding")
         else if (providerFlow === "onboarding") App.minimizeApp()
         return
@@ -262,7 +337,7 @@ export default function HomePage() {
       App.minimizeApp()
     }
     handleBackRef.current = goBack
-  }, [user, userType, isAdmin, clientFlow, providerFlow])
+  }, [user, userType, isAdmin, clientFlow, providerFlow, activeChat, needsProfilePhoto, selectedService])
 
   // Listener del botón atrás físico (solo en la app nativa Android)
   useEffect(() => {
@@ -278,38 +353,69 @@ export default function HomePage() {
     }
   }, [])
 
-  // Sincronizar estado inicial al montar o cuando el usuario cambia
+  // Mercado Pago vuelve a la app mediante com.encuentro12://mp-oauth o mp-pay.
+  // Al recibir el enlace cerramos el navegador nativo; Firestore actualiza el
+  // estado de conexión/pago en la pantalla correspondiente.
   useEffect(() => {
-    if (typeof window === "undefined" || rolesLoading || !user) return
+    if (!Capacitor.isNativePlatform()) return
+    let listenerHandle: { remove: () => Promise<void> } | null = null
+    App.addListener("appUrlOpen", ({ url }) => {
+      if (!url.startsWith("com.encuentro12://mp-")) return
+      import("@capacitor/browser")
+        .then(({ Browser }) => Browser.close())
+        .catch(() => undefined)
+    }).then((handle) => {
+      listenerHandle = handle
+    })
+    return () => {
+      listenerHandle?.remove?.()
+    }
+  }, [])
 
-    const savedUserType = localStorage.getItem('userType') as "client" | "provider" | null
-    
-    // Si Firestore dice que somos un proveedor (y no estamos forzando el modo cliente manualmente)
-    if (isProvider && savedUserType !== "client") {
+  // El rol en Firestore es la fuente de verdad (client ↔ provider).
+  // No sincronizar hasta que el doc exista con un rol real (evita pisar registro proveedor).
+  // Si el usuario eligió “Ofrezco mi servicio”, no degradar a client por una carrera/doc viejo.
+  useEffect(() => {
+    if (typeof window === "undefined" || rolesLoading || !user || !hasRole) return
+
+    const providerIntent =
+      localStorage.getItem("providerIntent") === "1" ||
+      localStorage.getItem("providerOnboarding") === "1"
+
+    if (isProvider) {
+      localStorage.removeItem("providerIntent")
       setUserType("provider")
-      if (providerFlow === "onboarding") setProviderFlow("dashboard")
       localStorage.setItem("userType", "provider")
-    } 
-    // Si Firestore dice que somos cliente (y no estamos forzando el modo proveedor manualmente)
-    else if (isClient && savedUserType !== "provider") {
+      if (providerFlow === "onboarding" || providerFlow === "dashboard") setProviderFlow("home")
+      return
+    }
+
+    if (isClient) {
+      if (providerIntent) {
+        // Mantener UI proveedor mientras se corrige el rol en Firestore.
+        setUserType("provider")
+        localStorage.setItem("userType", "provider")
+        if (!fixingProviderRoleRef.current) {
+          fixingProviderRoleRef.current = true
+          void updateUserRole("provider", []).finally(() => {
+            fixingProviderRoleRef.current = false
+          })
+        }
+        return
+      }
       setUserType("client")
-      if (clientFlow === "onboarding") setClientFlow("home")
       localStorage.setItem("userType", "client")
+      if (clientFlow === "onboarding") setClientFlow("home")
     }
-    // Si no aplica ninguna regla fuerte de Firestore, respetamos lo que haya en LocalStorage
-    else if (savedUserType) {
-      setUserType(savedUserType)
-      if (savedUserType === "provider" && providerFlow === "onboarding") setProviderFlow("dashboard")
-      if (savedUserType === "client" && clientFlow === "onboarding") setClientFlow("home")
-    }
-  }, [user, rolesLoading, isClient, isProvider, userType, providerFlow, clientFlow])
+  }, [user, rolesLoading, hasRole, isClient, isProvider, providerFlow, clientFlow])
 
   // Cambiar de rol: actualizar Firestore, estado local y llevar al home del nuevo rol. Devuelve si tuvo éxito.
   const switchToProvider = async (): Promise<{ success: boolean }> => {
     const result = await updateUserRole("provider", [])
     if (result.success) {
+      localStorage.setItem("providerIntent", "1")
       setUserType("provider")
-      setProviderFlow("dashboard")
+      setProviderFlow("mi-servicio")
       localStorage.setItem("userType", "provider")
     }
     return result
@@ -317,6 +423,8 @@ export default function HomePage() {
   const switchToClient = async (): Promise<{ success: boolean }> => {
     const result = await updateUserRole("client", [])
     if (result.success) {
+      localStorage.removeItem("providerIntent")
+      localStorage.removeItem("providerOnboarding")
       setUserType("client")
       setClientFlow("home")
       localStorage.setItem("userType", "client")
@@ -328,9 +436,66 @@ export default function HomePage() {
   useEffect(() => {
     if (!authLoading && !user) {
       localStorage.removeItem('userType')
+      localStorage.removeItem('providerIntent')
       setUserType(null)
     }
   }, [user, authLoading])
+
+  useEffect(() => {
+    if (!user?.uid) {
+      setNeedsProfilePhoto(false)
+      return
+    }
+
+    const userRef = doc(db, "users", user.uid)
+    const unsubscribe = onSnapshot(userRef, (snap) => {
+      const stored = snap.data()?.profileImage
+      if (hasValidProfilePhoto(stored)) {
+        setNeedsProfilePhoto(false)
+        return
+      }
+      if (hasValidProfilePhoto(user.photoURL)) {
+        void setDoc(userRef, {
+          profileImage: user.photoURL,
+          updatedAt: new Date(),
+        }, { merge: true })
+        setNeedsProfilePhoto(false)
+        return
+      }
+      setNeedsProfilePhoto(true)
+    }, () => {
+      setNeedsProfilePhoto(!hasValidProfilePhoto(user.photoURL))
+    })
+
+    return () => unsubscribe()
+  }, [user?.uid, user?.photoURL])
+
+  useEffect(() => {
+    if (!user || !needsProfilePhoto) return
+    const authScreens = ["onboarding", "login", "register"]
+    if (userType === "client" && !authScreens.includes(clientFlow) && clientFlow !== "profile") {
+      setClientFlow("profile")
+    }
+    if (userType === "provider" && !authScreens.includes(providerFlow) && providerFlow !== "profile") {
+      setProviderFlow("profile")
+    }
+  }, [needsProfilePhoto, user, userType, clientFlow, providerFlow])
+
+  const setClientFlowGuarded = (flow: typeof clientFlow | string) => {
+    if (needsProfilePhoto && user && !["onboarding", "login", "register", "profile"].includes(flow)) {
+      setClientFlow("profile")
+      return
+    }
+    setClientFlow(flow as typeof clientFlow)
+  }
+
+  const setProviderFlowGuarded = (flow: typeof providerFlow | string) => {
+    if (needsProfilePhoto && user && !["onboarding", "login", "register", "profile"].includes(flow)) {
+      setProviderFlow("profile")
+      return
+    }
+    setProviderFlow(flow as typeof providerFlow)
+  }
 
   // Obtener ubicación del usuario
   useEffect(() => {
@@ -358,8 +523,16 @@ export default function HomePage() {
     getPos()
   }, [])
 
-  // Mostrar loading mientras se verifica la autenticaci?n
-  if (authLoading || rolesLoading) {
+  useEffect(() => {
+    if (!user || !isAdmin || isNativeApp()) return
+    const path = window.location.pathname
+    if (path === "/admin" || path === "/admin/") return
+    window.location.replace("/admin/")
+  }, [user, isAdmin])
+
+  // No bloquear home si ya hay userType cacheado: roles pueden resolver en background.
+  const waitForRoles = Boolean(user && rolesLoading && !userType)
+  if (authLoading || waitForRoles || appSettingsLoading || forceUpdate.checking) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -370,10 +543,16 @@ export default function HomePage() {
     )
   }
 
-  // Debug: Log del estado de roles
-  console.log('User:', user?.email)
-  console.log('isAdmin:', isAdmin)
-  console.log('rolesLoading:', rolesLoading)
+  if (forceUpdate.required) {
+    return (
+      <ForceUpdateScreen
+        settings={appSettings}
+        installedBuild={forceUpdate.installedBuild}
+        installedVersion={forceUpdate.installedVersion}
+        effectiveMin={forceUpdate.effectiveMin}
+      />
+    )
+  }
 
   const LocationBanner = () => (
     <div className="bg-orange-50 border-b border-orange-200 p-4 sticky top-0 z-[60]">
@@ -409,52 +588,72 @@ export default function HomePage() {
       </div>
     </div>
   )
-  // Si el usuario es admin, mostrar panel de administración
+  // El panel de admin solo vive en la web; en la app nativa se bloquea.
   if (user && isAdmin) {
+    if (isNativeApp()) {
+      return <AdminMovedToWeb logout={logout} />
+    }
     return <AdminDashboard user={user} logout={logout} />
   }
 
   // Si el usuario está logueado pero no se ha seleccionado tipo de usuario, mostrar selección
   if (user && !userType && !isAdmin) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="max-w-md w-full bg-white rounded-lg shadow-md p-6">
-          <div className="text-center mb-6">
+      <div className="min-h-screen flex items-center justify-center p-4"
+        style={{
+          background:
+            "radial-gradient(ellipse 120% 80% at 50% -10%, oklch(0.94 0.04 200), oklch(0.98 0.01 200) 55%, #f3f4f6)",
+        }}
+      >
+        <div className="max-w-md w-full space-y-8">
+          <div className="text-center">
             <img
               src="/logonuevo.jpeg"
               alt="Punto Encuentro"
-              className="w-20 h-20 mx-auto mb-4 rounded-lg object-cover"
+              className="w-24 h-24 mx-auto mb-5 rounded-2xl object-cover shadow-md"
             />
-            <h1 className="text-2xl font-bold text-gray-900 mb-2">¡Bienvenido de vuelta!</h1>
-            <p className="text-gray-600">Selecciona cómo quieres usar la aplicación</p>
+            <h1 className="text-2xl font-bold text-gray-900 tracking-tight">¡Bienvenido de vuelta!</h1>
+            <p className="text-muted-foreground mt-2">Elegí cómo querés entrar</p>
           </div>
 
-          <div className="space-y-4">
-            <Button
+          <div className="space-y-3">
+            <button
+              type="button"
               onClick={() => setUserType("client")}
-              className="w-full h-16 text-lg"
-              variant="outline"
+              className="w-full flex items-center gap-4 rounded-2xl border border-gray-200 bg-white p-4 text-left shadow-sm transition hover:border-primary/40 hover:shadow-md active:scale-[0.99]"
             >
-              <User className="w-6 h-6 mr-2" />
-              Soy Cliente
-            </Button>
+              <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-primary/10">
+                <AppIcon name="usuarios" className="h-9 w-9" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-base font-semibold text-gray-900">Soy cliente</span>
+                <span className="block text-sm text-muted-foreground mt-0.5">
+                  Buscá y contratá servicios cerca tuyo
+                </span>
+              </span>
+              <ChevronRight className="h-5 w-5 text-gray-300 shrink-0" />
+            </button>
 
-            <Button
+            <button
+              type="button"
               onClick={() => setUserType("provider")}
-              className="w-full h-16 text-lg"
-              variant="outline"
+              className="w-full flex items-center gap-4 rounded-2xl border border-gray-200 bg-white p-4 text-left shadow-sm transition hover:border-primary/40 hover:shadow-md active:scale-[0.99]"
             >
-              <Building2 className="w-6 h-6 mr-2" />
-              Soy Proveedor
-            </Button>
+              <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-primary/10">
+                <AppIcon name="trabajo" className="h-9 w-9" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-base font-semibold text-gray-900">Soy proveedor</span>
+                <span className="block text-sm text-muted-foreground mt-0.5">
+                  Ofrecé tu trabajo y gestioná reservas
+                </span>
+              </span>
+              <ChevronRight className="h-5 w-5 text-gray-300 shrink-0" />
+            </button>
           </div>
 
-          <div className="mt-6 text-center">
-            <Button
-              variant="ghost"
-              onClick={logout}
-              className="text-sm text-gray-500"
-            >
+          <div className="text-center">
+            <Button variant="ghost" onClick={logout} className="text-sm text-gray-500">
               Cerrar sesión
             </Button>
           </div>
@@ -470,15 +669,22 @@ export default function HomePage() {
         
         {/* PuntoBot - Asistente para Clientes */}
         <FloatingAssistant 
-          user={user} 
+          user={user}
+          role="client"
           bookings={bookings} 
           services={services}
-          setFlow={setClientFlow}
+          setFlow={setClientFlowGuarded}
+          setActiveChat={setActiveChat}
+          setSelectedService={setSelectedService}
+          currentFlow={clientFlow}
+          registerBotBackHandler={(handler) => {
+            botBackRef.current = handler
+          }}
         />
 
         <ClientFlow
           flow={clientFlow}
-          setFlow={setClientFlow}
+          setFlow={setClientFlowGuarded}
           selectedService={selectedService}
           setSelectedService={setSelectedService}
           selectedDate={selectedDate}
@@ -487,11 +693,12 @@ export default function HomePage() {
           setSelectedTime={setSelectedTime}
           signIn={signIn}
           signUp={signUp}
+          signInWithGoogle={signInWithGoogle}
           setAuthError={setAuthError}
           authError={authError}
           setAuthSuccess={setAuthSuccess}
           authSuccess={authSuccess}
-          services={services}
+          services={publicServices}
           searchTerm={searchTerm}
           setSearchTerm={setSearchTerm}
           searchServices={searchServices}
@@ -505,6 +712,11 @@ export default function HomePage() {
           onSwitchToProvider={switchToProvider}
           setBookingSource={setBookingSource}
           bookingSource={bookingSource}
+          openRegistration={appSettings.openRegistration}
+          appName={appSettings.appName}
+          registerHomeBackHandler={(handler) => {
+            clientHomeBackRef.current = handler
+          }}
         />
       </>
     )
@@ -517,31 +729,56 @@ export default function HomePage() {
 
         {/* PuntoBot - Asistente para Proveedores */}
         <FloatingAssistant 
-          user={user} 
+          user={user}
+          role="provider"
           bookings={bookings} 
           services={services}
-          setFlow={setProviderFlow}
+          setFlow={setProviderFlowGuarded}
+          setActiveChat={setActiveChat}
+          setSelectedProviderService={setSelectedProviderService}
+          currentFlow={providerFlow}
+          registerBotBackHandler={(handler) => {
+            botBackRef.current = handler
+          }}
         />
 
         <ProviderFlow 
           flow={providerFlow} 
-          setFlow={setProviderFlow}
+          setFlow={setProviderFlowGuarded}
           signIn={signIn}
           signUp={signUp}
+          signInWithGoogle={signInWithGoogle}
           setAuthError={setAuthError}
           authError={authError}
           setAuthSuccess={setAuthSuccess}
           authSuccess={authSuccess}
           services={services}
           createService={createService}
+          createBooking={createBooking}
           user={user}
           logout={logout}
           userLocation={userLocation}
           selectedProviderService={selectedProviderService}
           setSelectedProviderService={setSelectedProviderService}
+          selectedService={selectedService}
+          setSelectedService={setSelectedService}
+          selectedDate={selectedDate}
+          setSelectedDate={setSelectedDate}
+          selectedTime={selectedTime}
+          setSelectedTime={setSelectedTime}
           onSwitchToClient={switchToClient}
           activeChat={activeChat}
           setActiveChat={setActiveChat}
+          openRegistration={appSettings.openRegistration}
+          appName={appSettings.appName}
+          searchTerm={searchTerm}
+          setSearchTerm={setSearchTerm}
+          searchServices={searchServices}
+          setBookingSource={setBookingSource}
+          bookingSource={bookingSource}
+          registerHomeBackHandler={(handler) => {
+            clientHomeBackRef.current = handler
+          }}
         />
       </>
     )
@@ -551,29 +788,26 @@ export default function HomePage() {
     <>
       {locationError === "permission_denied" && <LocationBanner />}
 
-      {/* PuntoBot - Asistente General */}
-      <FloatingAssistant 
-        user={user} 
-        bookings={bookings} 
-        services={services}
-        setFlow={setClientFlow}
-      />
-
-      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
-        <div className="w-full max-w-4xl space-y-8">
-          {/* Logo y descripción */}
+      <div
+        className="min-h-screen flex flex-col items-center justify-center p-4"
+        style={{
+          background:
+            "radial-gradient(ellipse 120% 80% at 50% -20%, oklch(0.93 0.05 200), oklch(0.98 0.01 200) 50%, #eef2f4)",
+        }}
+      >
+        <div className="w-full max-w-md space-y-7">
           <div className="text-center">
             <img
               src="/logonuevo.jpeg"
               alt="Punto Encuentro"
-              className="w-32 h-32 mx-auto mb-6 rounded-lg object-cover"
+              className="w-36 h-36 mx-auto mb-5 rounded-3xl object-cover shadow-lg"
             />
-            <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-              Un espacio para encontrar, ofrecer y ayudarnos entre todos.
+            <h1 className="text-3xl font-bold text-primary tracking-tight">Punto Encuentro</h1>
+            <p className="text-lg text-gray-700 mt-3 font-medium leading-snug">
+              Lo que necesitás, más cerca
             </p>
           </div>
 
-          {/* Alertas */}
           {authError && (
             <CustomAlert
               type="error"
@@ -592,34 +826,65 @@ export default function HomePage() {
             />
           )}
 
-          {/* Cards de opciones */}
-          <div className="flex flex-row gap-4 max-w-4xl mx-auto">
-            {/* Card para contratar servicios */}
-            <Card className="cursor-pointer hover:shadow-lg transition-shadow flex-1" onClick={() => setUserType("client")}>
-              <CardContent className="p-4 text-center">
-                <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-3">
-                  <div className="text-2xl">🔍</div>
-                </div>
-                <h2 className="text-lg font-semibold mb-2">Contratar Servicios</h2>
-                <p className="text-sm text-muted-foreground">
-                  Busca servicios, ayuda o soluciones cerca tuyo
-                </p>
-              </CardContent>
-            </Card>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                localStorage.removeItem("providerIntent")
+                localStorage.setItem("userType", "client")
+                setUserType("client")
+                setClientFlow("onboarding")
+              }}
+              className="rounded-2xl border border-gray-200 bg-white p-4 text-center shadow-sm transition hover:border-primary/40 hover:shadow-md active:scale-[0.99]"
+            >
+              <span className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10">
+                <AppIcon name="usuarios" className="h-9 w-9" />
+              </span>
+              <span className="block text-sm font-bold text-gray-900">Cliente</span>
+              <span className="block text-xs text-muted-foreground mt-1 leading-snug">
+                Busco un servicio
+              </span>
+            </button>
 
-            {/* Card para ofrecer servicios */}
-            <Card className="cursor-pointer hover:shadow-lg transition-shadow flex-1" onClick={() => setUserType("provider")}>
-              <CardContent className="p-4 text-center">
-                <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-3">
-                  <div className="text-2xl">💼</div>
-                </div>
-                <h2 className="text-lg font-semibold mb-2">Ofrecer Servicios</h2>
-                <p className="text-sm text-muted-foreground">
-                  Ofrece tu trabajo y encuentra oportunidades
-                </p>
-              </CardContent>
-            </Card>
+            <button
+              type="button"
+              onClick={() => {
+                localStorage.setItem("providerIntent", "1")
+                localStorage.setItem("userType", "provider")
+                setUserType("provider")
+                setProviderFlow("onboarding")
+              }}
+              className="rounded-2xl border border-gray-200 bg-white p-4 text-center shadow-sm transition hover:border-primary/40 hover:shadow-md active:scale-[0.99]"
+            >
+              <span className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10">
+                <AppIcon name="trabajo" className="h-9 w-9" />
+              </span>
+              <span className="block text-sm font-bold text-gray-900">Proveedor</span>
+              <span className="block text-xs text-muted-foreground mt-1 leading-snug">
+                Ofrezco mi servicio
+              </span>
+            </button>
           </div>
+
+          <Button
+            variant="outline"
+            className="w-full h-12 rounded-xl font-semibold"
+            onClick={() => {
+              const last = localStorage.getItem("userType")
+              if (last === "provider") {
+                localStorage.setItem("providerIntent", "1")
+                setUserType("provider")
+                setProviderFlow("login")
+              } else {
+                localStorage.removeItem("providerIntent")
+                setUserType("client")
+                setClientFlow("login")
+              }
+            }}
+          >
+            Iniciar sesión
+          </Button>
+          <div className="flex justify-center"><HelpLink /></div>
         </div>
       </div>
     </>
@@ -631,39 +896,71 @@ function ProviderFlow({
   setFlow,
   signIn,
   signUp,
+  signInWithGoogle,
   setAuthError,
   authError,
   setAuthSuccess,
   authSuccess,
   services,
   createService,
+  createBooking,
   user,
   logout,
   userLocation,
   selectedProviderService,
   setSelectedProviderService,
+  selectedService,
+  setSelectedService,
+  selectedDate,
+  setSelectedDate,
+  selectedTime,
+  setSelectedTime,
   onSwitchToClient,
   activeChat,
-  setActiveChat
+  setActiveChat,
+  openRegistration = true,
+  appName = "Punto Encuentro",
+  searchTerm,
+  setSearchTerm,
+  searchServices,
+  setBookingSource,
+  bookingSource,
+  registerHomeBackHandler,
 }: {
   flow: string
   setFlow: (flow: any) => void
   signIn: (email: string, password: string) => Promise<{ success: boolean, error?: string }>
   signUp: (email: string, password: string) => Promise<{ success: boolean, error?: string }>
+  signInWithGoogle: (defaultRole?: 'client' | 'provider' | 'admin') => Promise<{ success: boolean, error?: string, redirect?: boolean, user?: any }>
   setAuthError: (error: string) => void
   authError: string
   setAuthSuccess: (message: string) => void
   authSuccess: string
   services: any[]
   createService: (serviceData: any) => Promise<{ success: boolean, error?: string }>
+  createBooking: (bookingData: any) => Promise<{ success: boolean, error?: string }>
   user: any
   logout: () => Promise<{ success: boolean }>
   userLocation: { lat: number, lng: number } | null
   selectedProviderService: any
   setSelectedProviderService: (service: any) => void
+  selectedService: any
+  setSelectedService: (service: any) => void
+  selectedDate: string
+  setSelectedDate: (date: string) => void
+  selectedTime: string
+  setSelectedTime: (time: string) => void
   onSwitchToClient: () => Promise<{ success: boolean }>
   activeChat: any
   setActiveChat: (chat: any) => void
+  openRegistration?: boolean
+  appName?: string
+  searchTerm: string
+  setSearchTerm: (term: string) => void
+  searchServices: (term: string) => any[]
+  setBookingSource: (source: any) => void
+  bookingSource: string
+  registerHomeBackHandler?: (handler: (() => boolean) | null) => void
 }) {
   const [profileData, setProfileData] = useState<any>(null)
 
@@ -684,127 +981,18 @@ function ProviderFlow({
     loadProfile()
   }, [user])
   if (flow === "login") {
-    return <ProviderLogin setFlow={setFlow} signIn={signIn} setAuthError={setAuthError} authError={authError} setAuthSuccess={setAuthSuccess} authSuccess={authSuccess} />
+    return <ProviderLogin setFlow={setFlow} signIn={signIn} signInWithGoogle={signInWithGoogle} setAuthError={setAuthError} authError={authError} setAuthSuccess={setAuthSuccess} authSuccess={authSuccess} openRegistration={openRegistration} />
   }
 
   if (flow === "register") {
-    return <ProviderRegister setFlow={setFlow} signUp={signUp} setAuthError={setAuthError} authError={authError} setAuthSuccess={setAuthSuccess} authSuccess={authSuccess} />
+    if (!openRegistration) {
+      return <RegistrationClosed setFlow={setFlow} backFlow="login" appName={appName} />
+    }
+    return <ProviderRegister setFlow={setFlow} signUp={signUp} signInWithGoogle={signInWithGoogle} setAuthError={setAuthError} authError={authError} setAuthSuccess={setAuthSuccess} authSuccess={authSuccess} />
   }
 
-  if (flow === "dashboard") {
-    return <ProviderDashboard setFlow={setFlow} user={user} services={services} logout={logout} />
-  }
-
-  if (flow === "profile") {
-    return <ProviderProfile setFlow={setFlow} user={user} logout={logout} onSwitchToClient={onSwitchToClient} services={services} userLocation={userLocation} />
-  }
-
-  if (flow === "agenda") {
-    return <ProviderAgenda setFlow={setFlow} user={user} setActiveChat={setActiveChat} />
-  }
-
-  if (flow === "services") {
-    return <ProviderServices setFlow={setFlow} services={services} user={user} setSelectedProviderService={setSelectedProviderService} />
-  }
-
-  if (flow === "create-service") {
-    return <CreateService setFlow={setFlow} createService={createService} user={user} userLocation={userLocation} />
-  }
-
-  if (flow === "edit-service") {
-    return <EditService setFlow={setFlow} user={user} service={selectedProviderService} userLocation={userLocation} />
-  }
-
-  if (flow === "subscription") {
-    return <ProviderSubscription setFlow={setFlow} />
-  }
-
-  if (flow === "statistics") {
-    return <ProviderStatistics setFlow={setFlow} user={user} services={services} profileData={profileData} />
-  }
-
-  if (flow === "chat") {
-    return (
-      <ChatWindow
-        user={user}
-        partnerId={activeChat?.partnerId}
-        partnerName={activeChat?.partnerName}
-        onBack={() => setFlow("dashboard")}
-      />
-    )
-  }
-
-  return <ProviderOnboarding setFlow={setFlow} />
-}
-
-function ClientFlow({
-  flow,
-  setFlow,
-  user,
-  services,
-  selectedService,
-  setSelectedService,
-  selectedDate,
-  setSelectedDate,
-  selectedTime,
-  setSelectedTime,
-  searchTerm,
-  setSearchTerm,
-  searchServices,
-  createBooking,
-  getBookingsByClient,
-  userLocation,
-  logout,
-  activeChat,
-  setActiveChat,
-  signIn,
-  signUp,
-  setAuthError,
-  authError,
-  setAuthSuccess,
-  authSuccess,
-  onSwitchToProvider,
-  setBookingSource,
-  bookingSource
-}: {
-  flow: string
-  setFlow: (flow: string) => void
-  user: any
-  services: any[]
-  selectedService: any
-  setSelectedService: (service: any) => void
-  selectedDate: string
-  setSelectedDate: (date: string) => void
-  selectedTime: string
-  setSelectedTime: (time: string) => void
-  searchTerm: string
-  setSearchTerm: (term: string) => void
-  searchServices: (term: string) => any[]
-  createBooking: (bookingData: any) => Promise<{ success: boolean, error?: string }>
-  getBookingsByClient: (id: string) => any[]
-  userLocation: { lat: number, lng: number } | null
-  logout: () => Promise<{ success: boolean }>
-  activeChat: any
-  setActiveChat: (chat: any) => void
-  signIn: (email: string, password: string) => Promise<{ success: boolean, error?: string }>
-  signUp: (email: string, password: string) => Promise<{ success: boolean, error?: string }>
-  setAuthError: (error: string) => void
-  authError: string
-  setAuthSuccess: (message: string) => void
-  authSuccess: string
-  onSwitchToProvider: () => Promise<{ success: boolean }>
-  setBookingSource: (source: any) => void
-  bookingSource: string
-}) {
-  if (flow === "login") {
-    return <ClientLogin setFlow={setFlow} signIn={signIn} setAuthError={setAuthError} authError={authError} setAuthSuccess={setAuthSuccess} authSuccess={authSuccess} />
-  }
-
-  if (flow === "register") {
-    return <ClientRegister setFlow={setFlow} signUp={signUp} setAuthError={setAuthError} authError={authError} setAuthSuccess={setAuthSuccess} authSuccess={authSuccess} />
-  }
-
-  if (flow === "home") {
+  // Inicio unificado: mismo home que el cliente
+  if (flow === "home" || flow === "dashboard") {
     return (
       <ClientHome
         setFlow={setFlow}
@@ -817,20 +1005,68 @@ function ClientFlow({
         setBookingSource={setBookingSource}
         userLocation={userLocation}
         setActiveChat={setActiveChat}
+        registerHomeBackHandler={registerHomeBackHandler}
+      />
+    )
+  }
+
+  if (flow === "mi-servicio") {
+    return (
+      <MyServiceHub
+        role="provider"
+        setFlow={setFlow}
+        user={user}
+        services={services}
+        setSelectedProviderService={setSelectedProviderService}
       />
     )
   }
 
   if (flow === "profile") {
-    return <ClientProfile setFlow={setFlow} user={user} logout={logout} onSwitchToProvider={onSwitchToProvider} />
+    return <ProviderProfile setFlow={setFlow} user={user} logout={logout} onSwitchToClient={onSwitchToClient} services={services} />
   }
 
   if (flow === "agenda") {
-    return <ClientAgenda setFlow={setFlow} user={user} setActiveChat={setActiveChat} />
+    return <ProviderAgenda setFlow={setFlow} user={user} setActiveChat={setActiveChat} />
+  }
+
+  if (flow === "services") {
+    return <ProviderServices setFlow={setFlow} services={services} user={user} setSelectedProviderService={setSelectedProviderService} />
+  }
+
+  if (flow === "create-service") {
+    return <CreateService setFlow={setFlow} createService={createService} user={user} userLocation={userLocation} services={services} />
+  }
+
+  if (flow === "edit-service") {
+    return <EditService setFlow={setFlow} user={user} service={selectedProviderService} userLocation={userLocation} />
+  }
+
+  if (flow === "subscription") {
+    return <ProviderSubscription setFlow={setFlow} />
+  }
+
+  if (flow === "stories") {
+    return <ProviderStoriesManager user={user} services={services} setFlow={setFlow} />
+  }
+
+  if (flow === "statistics") {
+    return <ProviderStatistics setFlow={setFlow} user={user} services={services} profileData={profileData} />
   }
 
   if (flow === "service-detail") {
-    return <ServiceDetail service={selectedService} setFlow={setFlow} bookingSource={bookingSource} userLocation={userLocation} setActiveChat={setActiveChat} />
+    return (
+      <ServiceDetail
+        service={selectedService}
+        services={services}
+        setSelectedService={setSelectedService}
+        setFlow={setFlow}
+        bookingSource={bookingSource}
+        user={user}
+        userLocation={userLocation}
+        setActiveChat={setActiveChat}
+      />
+    )
   }
 
   if (flow === "booking") {
@@ -862,34 +1098,241 @@ function ClientFlow({
     )
   }
 
+  if (flow === "chats") {
+    return <ChatInbox user={user} setFlow={setFlow} setActiveChat={setActiveChat} homeFlow="home" />
+  }
+
   if (flow === "chat") {
     return (
       <ChatWindow
         user={user}
         partnerId={activeChat?.partnerId}
         partnerName={activeChat?.partnerName}
-        onBack={() => setFlow(selectedService ? "service-detail" : "home")}
+        onBack={() => setFlow(activeChat?.from === 'inbox' ? "chats" : selectedService ? "service-detail" : "home")}
       />
     )
   }
 
-  return <ClientOnboarding setFlow={setFlow} />
+  return <ProviderOnboarding setFlow={setFlow} openRegistration={openRegistration} appName={appName} />
 }
 
-function ClientOnboarding({ setFlow }: { setFlow: (flow: string) => void }) {
+function ClientFlow({
+  flow,
+  setFlow,
+  user,
+  services,
+  selectedService,
+  setSelectedService,
+  selectedDate,
+  setSelectedDate,
+  selectedTime,
+  setSelectedTime,
+  searchTerm,
+  setSearchTerm,
+  searchServices,
+  createBooking,
+  getBookingsByClient,
+  userLocation,
+  logout,
+  activeChat,
+  setActiveChat,
+  signIn,
+  signUp,
+  signInWithGoogle,
+  setAuthError,
+  authError,
+  setAuthSuccess,
+  authSuccess,
+  onSwitchToProvider,
+  setBookingSource,
+  bookingSource,
+  openRegistration = true,
+  appName = "Punto Encuentro",
+  registerHomeBackHandler,
+}: {
+  flow: string
+  setFlow: (flow: string) => void
+  user: any
+  services: any[]
+  selectedService: any
+  setSelectedService: (service: any) => void
+  selectedDate: string
+  setSelectedDate: (date: string) => void
+  selectedTime: string
+  setSelectedTime: (time: string) => void
+  searchTerm: string
+  setSearchTerm: (term: string) => void
+  searchServices: (term: string) => any[]
+  createBooking: (bookingData: any) => Promise<{ success: boolean, error?: string }>
+  getBookingsByClient: (id: string) => any[]
+  userLocation: { lat: number, lng: number } | null
+  logout: () => Promise<{ success: boolean }>
+  activeChat: any
+  setActiveChat: (chat: any) => void
+  signIn: (email: string, password: string) => Promise<{ success: boolean, error?: string }>
+  signUp: (email: string, password: string) => Promise<{ success: boolean, error?: string }>
+  signInWithGoogle: (defaultRole?: 'client' | 'provider' | 'admin') => Promise<{ success: boolean, error?: string, redirect?: boolean, user?: any }>
+  setAuthError: (error: string) => void
+  authError: string
+  setAuthSuccess: (message: string) => void
+  authSuccess: string
+  onSwitchToProvider: () => Promise<{ success: boolean }>
+  setBookingSource: (source: any) => void
+  bookingSource: string
+  openRegistration?: boolean
+  appName?: string
+  registerHomeBackHandler?: (handler: (() => boolean) | null) => void
+}) {
+  if (flow === "login") {
+    return <ClientLogin setFlow={setFlow} signIn={signIn} signInWithGoogle={signInWithGoogle} setAuthError={setAuthError} authError={authError} setAuthSuccess={setAuthSuccess} authSuccess={authSuccess} openRegistration={openRegistration} />
+  }
+
+  if (flow === "register") {
+    if (!openRegistration) {
+      return <RegistrationClosed setFlow={setFlow} backFlow="login" appName={appName} />
+    }
+    return <ClientRegister setFlow={setFlow} signUp={signUp} signInWithGoogle={signInWithGoogle} setAuthError={setAuthError} authError={authError} setAuthSuccess={setAuthSuccess} authSuccess={authSuccess} openRegistration={openRegistration} />
+  }
+
+  if (flow === "home") {
+    return (
+      <ClientHome
+        setFlow={setFlow}
+        setSelectedService={setSelectedService}
+        services={services}
+        searchTerm={searchTerm}
+        setSearchTerm={setSearchTerm}
+        searchServices={searchServices}
+        user={user}
+        setBookingSource={setBookingSource}
+        userLocation={userLocation}
+        setActiveChat={setActiveChat}
+        registerHomeBackHandler={registerHomeBackHandler}
+      />
+    )
+  }
+
+  if (flow === "mi-servicio") {
+    return (
+      <MyServiceHub
+        role="client"
+        setFlow={setFlow}
+        user={user}
+        services={services}
+        onBecomeProvider={onSwitchToProvider}
+      />
+    )
+  }
+
+  if (flow === "profile") {
+    return <ClientProfile setFlow={setFlow} user={user} logout={logout} />
+  }
+
+  if (flow === "agenda") {
+    return <ClientAgenda setFlow={setFlow} user={user} setActiveChat={setActiveChat} />
+  }
+
+  if (flow === "service-detail") {
+    return <ServiceDetail service={selectedService} services={services} setSelectedService={setSelectedService} setFlow={setFlow} bookingSource={bookingSource} user={user} userLocation={userLocation} setActiveChat={setActiveChat} />
+  }
+
+  if (flow === "booking") {
+    return (
+      <BookingCalendar
+        service={selectedService}
+        setFlow={setFlow}
+        selectedDate={selectedDate}
+        setSelectedDate={setSelectedDate}
+        selectedTime={selectedTime}
+        setSelectedTime={setSelectedTime}
+        bookingSource={bookingSource}
+      />
+    )
+  }
+
+  if (flow === "payment") {
+    return (
+      <PaymentScreen
+        service={selectedService}
+        selectedDate={selectedDate}
+        selectedTime={selectedTime}
+        setFlow={setFlow}
+        user={user}
+        createBooking={createBooking}
+        bookingSource={bookingSource}
+        setActiveChat={setActiveChat}
+      />
+    )
+  }
+
+  if (flow === "chats") {
+    return <ChatInbox user={user} setFlow={setFlow} setActiveChat={setActiveChat} homeFlow="home" />
+  }
+
+  if (flow === "chat") {
+    return (
+      <ChatWindow
+        user={user}
+        partnerId={activeChat?.partnerId}
+        partnerName={activeChat?.partnerName}
+        onBack={() => setFlow(activeChat?.from === 'inbox' ? "chats" : selectedService ? "service-detail" : "home")}
+      />
+    )
+  }
+
+  return <ClientOnboarding setFlow={setFlow} openRegistration={openRegistration} appName={appName} />
+}
+
+function RegistrationClosed({
+  setFlow,
+  backFlow,
+  appName = "Punto Encuentro",
+}: {
+  setFlow: (flow: string) => void
+  backFlow: string
+  appName?: string
+}) {
+  return (
+    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
+      <div className="w-full max-w-sm space-y-6">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-primary mb-2">{appName}</h1>
+          <p className="text-muted-foreground text-sm">El registro de nuevas cuentas está temporalmente cerrado.</p>
+        </div>
+        <Card>
+          <CardContent className="p-6 space-y-4">
+            <p className="text-sm text-gray-600 text-center">Si ya tienes cuenta, puedes iniciar sesión.</p>
+            <Button onClick={() => setFlow(backFlow)} className="w-full h-12">
+              Ir a iniciar sesión
+            </Button>
+            <Button variant="ghost" onClick={() => setFlow("onboarding")} className="w-full">
+              ← Volver
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  )
+}
+
+function ClientOnboarding({ setFlow, openRegistration = true, appName = "Punto Encuentro" }: { setFlow: (flow: string) => void; openRegistration?: boolean; appName?: string }) {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
       <div className="w-full max-w-sm space-y-8">
         <div className="text-center">
-          <h1 className="text-3xl font-bold text-primary mb-2">Punto Encuentro</h1>
+          <h1 className="text-3xl font-bold text-primary mb-2">{appName}</h1>
           <p className="text-muted-foreground">Encuentra el servicio perfecto</p>
         </div>
 
         <Card>
           <CardContent className="p-6 space-y-4">
-            <Button onClick={() => setFlow("register")} className="w-full h-12 text-base">
-              Registrarse
-            </Button>
+            {openRegistration ? (
+              <Button onClick={() => setFlow("register")} className="w-full h-12 text-base">
+                Registrarse
+              </Button>
+            ) : (
+              <p className="text-sm text-center text-muted-foreground py-2">Registro cerrado. Usa iniciar sesión si ya tienes cuenta.</p>
+            )}
 
             <Button onClick={() => setFlow("login")} variant="outline" className="w-full h-12 text-base">
               Iniciar sesión
@@ -905,17 +1348,21 @@ function ClientOnboarding({ setFlow }: { setFlow: (flow: string) => void }) {
   )
 }
 
-function ClientLogin({ setFlow, signIn, setAuthError, authError, setAuthSuccess, authSuccess }: {
+function ClientLogin({ setFlow, signIn, signInWithGoogle, setAuthError, authError, setAuthSuccess, authSuccess, openRegistration = true }: {
   setFlow: (flow: string) => void
   signIn: (email: string, password: string) => Promise<{ success: boolean, error?: string }>
+  signInWithGoogle: (defaultRole?: 'client' | 'provider' | 'admin') => Promise<{ success: boolean, error?: string, redirect?: boolean }>
   setAuthError: (error: string) => void
   authError: string
   setAuthSuccess: (message: string) => void
   authSuccess: string
+  openRegistration?: boolean
 }) {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
+  const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [googleLoading, setGoogleLoading] = useState(false)
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -926,15 +1373,33 @@ function ClientLogin({ setFlow, signIn, setAuthError, authError, setAuthSuccess,
     const result = await signIn(email, password)
 
     if (result.success) {
-      setAuthSuccess("¡Bienvenido! Iniciando sesión...")
-      setTimeout(() => {
-        setFlow("home")
-      }, 1500)
+      setFlow("home")
     } else {
       setAuthError(result.error || "Error al iniciar sesión")
     }
 
     setLoading(false)
+  }
+
+  const handleGoogleLogin = async () => {
+    setGoogleLoading(true)
+    setAuthError("")
+    setAuthSuccess("")
+
+    const result = await signInWithGoogle("client")
+
+    if (result.redirect) {
+      setAuthSuccess("Redirigiendo a Google...")
+      return
+    }
+
+    if (result.success) {
+      setFlow("home")
+    } else {
+      setAuthError(result.error || "Error al iniciar sesión con Google")
+    }
+
+    setGoogleLoading(false)
   }
 
   return (
@@ -972,7 +1437,10 @@ function ClientLogin({ setFlow, signIn, setAuthError, authError, setAuthSuccess,
 
             <form onSubmit={handleLogin} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="email" className="flex items-center gap-2">
+                  <AppIcon name="correo" className="h-4 w-4" />
+                  Email
+                </Label>
                 <Input
                   id="email"
                   type="email"
@@ -984,27 +1452,49 @@ function ClientLogin({ setFlow, signIn, setAuthError, authError, setAuthSuccess,
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="password">Contraseña</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
+                <Label htmlFor="password" className="flex items-center gap-2">
+                  <AppIcon name="seguridad" className="h-4 w-4" />
+                  Contraseña
+                </Label>
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPassword ? "text" : "password"}
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="pr-11"
+                    required
+                  />
+                  <button type="button" onClick={() => setShowPassword((value) => !value)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" aria-label={showPassword ? "Ocultar contraseña" : "Ver contraseña"}>
+                    {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                  </button>
+                </div>
               </div>
 
-              <Button type="submit" disabled={loading} className="w-full h-12 text-base">
+              <Button type="submit" disabled={loading || googleLoading} className="w-full h-12 text-base">
                 {loading ? "Iniciando sesión..." : "Iniciar sesión"}
               </Button>
             </form>
 
-            <div className="text-center">
-              <Button variant="link" onClick={() => setFlow("register")} className="text-sm text-muted-foreground">
-                ¿No tienes cuenta? Regístrate
-              </Button>
+            <div className="relative my-2">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t border-gray-200" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-white px-2 text-muted-foreground">o</span>
+              </div>
             </div>
+
+            <GoogleSignInButton onClick={handleGoogleLogin} loading={googleLoading} disabled={loading} />
+
+            {openRegistration && (
+              <div className="text-center">
+                <Button variant="link" onClick={() => setFlow("register")} className="text-sm text-muted-foreground">
+                  ¿No tienes cuenta? Regístrate
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -1016,21 +1506,47 @@ function ClientLogin({ setFlow, signIn, setAuthError, authError, setAuthSuccess,
   )
 }
 
-function ClientRegister({ setFlow, signUp, setAuthError, authError, setAuthSuccess, authSuccess }: {
+function ClientRegister({ setFlow, signUp, signInWithGoogle, setAuthError, authError, setAuthSuccess, authSuccess, openRegistration = true }: {
   setFlow: (flow: string) => void
   signUp: (email: string, password: string) => Promise<{ success: boolean, error?: string }>
+  signInWithGoogle: (defaultRole?: 'client' | 'provider' | 'admin') => Promise<{ success: boolean, error?: string, redirect?: boolean, user?: any }>
   setAuthError: (error: string) => void
   authError: string
   setAuthSuccess: (message: string) => void
   authSuccess: string
+  openRegistration?: boolean
 }) {
   const [name, setName] = useState("")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
+  const [googleLoading, setGoogleLoading] = useState(false)
+  const [profileFile, setProfileFile] = useState<File | null>(null)
+  const [profilePreview, setProfilePreview] = useState("")
+
+  const handleProfileFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ""
+    if (!file) return
+    const error = validateProfilePhotoFile(file)
+    if (error) {
+      setAuthError(error)
+      return
+    }
+    setAuthError("")
+    setProfileFile(file)
+    setProfilePreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev)
+      return URL.createObjectURL(file)
+    })
+  }
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!profileFile) {
+      setAuthError("La foto de perfil es obligatoria")
+      return
+    }
     setLoading(true)
     setAuthError("")
     setAuthSuccess("")
@@ -1051,6 +1567,9 @@ function ClientRegister({ setFlow, signUp, setAuthError, authError, setAuthSucce
             await updateProfile(currentUser, { displayName: name })
           }
 
+          const { uploadImage } = await import("@/lib/uploadImage")
+          const profileImage = await uploadImage(profileFile, `profiles/${currentUser.uid}/profile`)
+
           // Guardar usuario en Firestore con rol de cliente
           const { doc, setDoc } = await import("firebase/firestore")
           const { db } = await import("@/lib/firebase")
@@ -1061,6 +1580,7 @@ function ClientRegister({ setFlow, signUp, setAuthError, authError, setAuthSucce
             role: 'client',
             permissions: [],
             isActive: true,
+            profileImage,
             createdAt: new Date(),
             updatedAt: new Date()
           })
@@ -1079,6 +1599,46 @@ function ClientRegister({ setFlow, signUp, setAuthError, authError, setAuthSucce
     }
 
     setLoading(false)
+  }
+
+  const handleGoogleRegister = async () => {
+    setGoogleLoading(true)
+    setAuthError("")
+    setAuthSuccess("")
+
+    const result = await signInWithGoogle("client")
+
+    if (result.redirect) {
+      setAuthSuccess("Redirigiendo a Google...")
+      return
+    }
+
+    if (result.success) {
+      if (profileFile && result.user?.uid) {
+        try {
+          const { uploadImage } = await import("@/lib/uploadImage")
+          const profileImage = await uploadImage(profileFile, `profiles/${result.user.uid}/profile`)
+          const { doc, setDoc } = await import("firebase/firestore")
+          const { db } = await import("@/lib/firebase")
+          await setDoc(doc(db, "users", result.user.uid), {
+            profileImage,
+            updatedAt: new Date(),
+          }, { merge: true })
+        } catch (error: any) {
+          console.error("Error subiendo foto de perfil:", error)
+        }
+      }
+      setAuthSuccess("¡Cuenta creada exitosamente! Bienvenido a Punto Encuentro.")
+      setTimeout(() => setFlow("home"), 2000)
+    } else {
+      setAuthError(result.error || "Error al registrarse con Google")
+    }
+
+    setGoogleLoading(false)
+  }
+
+  if (!openRegistration) {
+    return <RegistrationClosed setFlow={setFlow} backFlow="login" />
   }
 
   return (
@@ -1115,6 +1675,31 @@ function ClientRegister({ setFlow, signUp, setAuthError, authError, setAuthSucce
             )}
 
             <form onSubmit={handleRegister} className="space-y-4">
+              <div className="flex flex-col items-center gap-2">
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  id="client-register-photo"
+                  onChange={handleProfileFileChange}
+                />
+                <button
+                  type="button"
+                  onClick={() => document.getElementById("client-register-photo")?.click()}
+                  className="relative w-24 h-24 rounded-full overflow-hidden border-2 border-dashed border-primary/40 bg-primary/5 flex items-center justify-center"
+                >
+                  {profilePreview ? (
+                    <img src={profilePreview} alt="Foto de perfil" className="w-full h-full object-cover" />
+                  ) : (
+                    <AppIcon name="camara" className="h-8 w-8" />
+                  )}
+                </button>
+                <Label htmlFor="client-register-photo" className="text-sm">
+                  Foto de perfil <span className="text-red-500">*</span>
+                </Label>
+                <p className="text-xs text-muted-foreground text-center">Obligatoria para crear la cuenta</p>
+              </div>
+
               <div className="space-y-2">
                 <Label htmlFor="name">Nombre completo</Label>
                 <Input
@@ -1127,7 +1712,10 @@ function ClientRegister({ setFlow, signUp, setAuthError, authError, setAuthSucce
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="email" className="flex items-center gap-2">
+                  <AppIcon name="correo" className="h-4 w-4" />
+                  Email
+                </Label>
                 <Input
                   id="email"
                   type="email"
@@ -1139,7 +1727,10 @@ function ClientRegister({ setFlow, signUp, setAuthError, authError, setAuthSucce
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="password">Contraseña</Label>
+                <Label htmlFor="password" className="flex items-center gap-2">
+                  <AppIcon name="seguridad" className="h-4 w-4" />
+                  Contraseña
+                </Label>
                 <Input
                   id="password"
                   type="password"
@@ -1150,10 +1741,21 @@ function ClientRegister({ setFlow, signUp, setAuthError, authError, setAuthSucce
                 />
               </div>
 
-              <Button type="submit" disabled={loading} className="w-full h-12 text-base">
+              <Button type="submit" disabled={loading || googleLoading} className="w-full h-12 text-base">
                 {loading ? "Registrando..." : "Registrarse"}
               </Button>
             </form>
+
+            <div className="relative my-2">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t border-gray-200" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-white px-2 text-muted-foreground">o</span>
+              </div>
+            </div>
+
+            <GoogleSignInButton onClick={handleGoogleRegister} loading={googleLoading} disabled={loading} label="Registrarse con Google" />
 
             <div className="text-center">
               <Button variant="link" onClick={() => setFlow("login")} className="text-sm text-muted-foreground">
@@ -1181,7 +1783,8 @@ function ClientHome({
   user,
   setBookingSource,
   userLocation,
-  setActiveChat
+  setActiveChat,
+  registerHomeBackHandler,
 }: {
   setFlow: (flow: string) => void
   setSelectedService: (service: any) => void
@@ -1193,23 +1796,130 @@ function ClientHome({
   setBookingSource: (source: any) => void
   userLocation: { lat: number, lng: number } | null
   setActiveChat?: (chat: any) => void
+  registerHomeBackHandler?: (handler: (() => boolean) | null) => void
 }) {
   const { categories } = useCategories()
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
-  const [viewMode, setViewMode] = useState<"home" | "recommendations" | "nearby" | "category" | "all-categories">("home")
+  const [viewMode, setViewMode] = useState<"home" | "recommendations" | "nearby" | "category" | "all-categories" | "search">("home")
   const [selectedCategoryName, setSelectedCategoryName] = useState<string>("")
+  const [categoryBackTarget, setCategoryBackTarget] = useState<"home" | "all-categories">("home")
   const [isFilterOpen, setIsFilterOpen] = useState(false)
   const [maxPrice, setMaxPrice] = useState<number | "all">("all")
   const [onlyNearby, setOnlyNearby] = useState(false)
+  const [searchRadiusKm, setSearchRadiusKm] = useState(10)
+  const [isMapOpen, setIsMapOpen] = useState(false)
+  const [categoryOffset, setCategoryOffset] = useState(0)
+  const [nearbyOffset, setNearbyOffset] = useState(0)
   const { position: userPosition, loading, setPosition } = useGeolocation()
   const { logInteraction } = useAnalytics()
+  const [profileCity, setProfileCity] = useState('')
+  const viewerCityCandidates = [userPosition?.city, profileCity, userPosition?.address].filter(Boolean)
+
+  useEffect(() => {
+    const loadProfileCity = async () => {
+      if (!user?.uid) return
+      try {
+        const { getDoc, doc } = await import('firebase/firestore')
+        const { db } = await import('@/lib/firebase')
+        const userDoc = await getDoc(doc(db, 'users', user.uid))
+        if (userDoc.exists()) {
+          const data = userDoc.data()
+          if (data.city) setProfileCity(String(data.city))
+        }
+      } catch (error) {
+        console.error('Error loading client city:', error)
+      }
+    }
+
+    loadProfileCity()
+  }, [user])
+
+  const handleManualCityPrompt = async () => {
+    const city = prompt("Introduce tu ciudad manualmente:")
+    if (city) {
+      const normalizedCity = city.trim()
+      let cityCoordinates: { latitude: number; longitude: number } | null = null
+      try {
+        const response = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(`${normalizedCity}, Argentina`)}&format=json&limit=1&countrycodes=ar`, {
+          headers: { 'Accept-Language': 'es' }
+        })
+        const results = await response.json()
+        if (results?.[0]) {
+          cityCoordinates = {
+            latitude: Number(results[0].lat),
+            longitude: Number(results[0].lon)
+          }
+        }
+      } catch (error) {
+        console.error('Error resolving manual city:', error)
+      }
+
+      setPosition({
+        latitude: cityCoordinates?.latitude ?? Number.NaN,
+        longitude: cityCoordinates?.longitude ?? Number.NaN,
+        city: normalizedCity,
+        address: normalizedCity
+      })
+      setProfileCity(normalizedCity)
+
+      if (user?.uid) {
+        void setDoc(doc(db, 'users', user.uid), {
+          city: normalizedCity,
+          updatedAt: new Date()
+        }, { merge: true })
+      }
+    }
+  }
+
+  const handleStoryAction = (story: any) => {
+    if (story.ctaType === 'contact' && story.ctaTarget) {
+      openExternalUrl(story.ctaTarget)
+      return
+    }
+
+    const targetService = services.find((service) => service.id === story.ctaTarget) || services.find((service) => service.providerId === story.providerId)
+    if (!targetService) return
+
+    setSelectedService(targetService)
+    setBookingSource('stories')
+    setFlow(story.ctaType === 'booking' ? 'booking' : 'service-detail')
+  }
+
+  const handleStoryReply = async (story: any, message: string) => {
+    if (!user?.uid) return { success: false, error: 'Inicia sesión para responder historias.' }
+    if (!story.providerId || story.providerId === user.uid) return { success: false, error: 'No puedes responder tu propia historia.' }
+
+    const result = await sendChatMessage({
+      sender: user,
+      partnerId: story.providerId,
+      partnerName: story.providerName || 'Proveedor',
+      text: message,
+      story: {
+        id: story.id,
+        providerId: story.providerId,
+        providerName: story.providerName,
+        mediaUrl: story.mediaUrl,
+        mediaType: story.mediaType,
+        caption: story.caption,
+        serviceId: story.serviceId,
+        serviceName: story.serviceName,
+      },
+    })
+
+    if (result.success) {
+      setActiveChat?.({ partnerId: story.providerId, partnerName: story.providerName || 'Proveedor' })
+      setFlow('chat')
+    }
+    return result
+  }
 
   // Calcular distancia de cada servicio al usuario
   const calcularDistanciaServicio = (service: any): string | null => {
-    if (!userPosition || !service.latitude || !service.longitude) return null
+    const serviceCoordinates = getServiceCoordinates(service)
+    if (!userPosition || !Number.isFinite(userPosition.latitude) || !Number.isFinite(userPosition.longitude) || !serviceCoordinates) return null
     const dist = calcularDistanciaKm(
       userPosition.latitude, userPosition.longitude,
-      service.latitude, service.longitude
+      serviceCoordinates.lat, serviceCoordinates.lng
     )
     return formatearDistancia(dist)
   }
@@ -1217,58 +1927,177 @@ function ClientHome({
   // Las categorías dinámicas de la base de datos
   const allCategories = categories.map(cat => ({
     name: cat.name,
-    icon: <span>{cat.icon}</span>,
-    rawIcon: cat.icon,
+    icon: cat.icon,
     active: cat.active
   })).filter(c => c.active !== false)
 
-  // Mostrar solo las primeras 4 categorías en el home
-  const mainCategories = allCategories.slice(0, 4)
+  // Mostrar 3 categorías en el home y rotarlas
+  const visibleHomeCategories = useMemo(() => {
+    if (allCategories.length <= 3) return allCategories
+    return [0, 1, 2].map((i) => allCategories[(categoryOffset + i) % allCategories.length])
+  }, [allCategories, categoryOffset])
+
+  useEffect(() => {
+    if (allCategories.length <= 3) return
+    const timer = window.setInterval(() => {
+      setCategoryOffset((prev) => (prev + 1) % allCategories.length)
+    }, 4500)
+    return () => window.clearInterval(timer)
+  }, [allCategories.length])
 
   // Servicios con distancia calculada
+  const discoveryLocation = useMemo(() => {
+    if (userPosition && Number.isFinite(userPosition.latitude) && Number.isFinite(userPosition.longitude)) {
+      return { lat: userPosition.latitude, lng: userPosition.longitude }
+    }
+    return userLocation
+  }, [userPosition, userLocation])
+
   const servicesWithDistance = useMemo(() => {
-    return services.map(service => {
-      if (userLocation && service.lat && service.lng) {
-        const distance = getDistance(userLocation.lat, userLocation.lng, service.lat, service.lng)
-        return { ...service, distance }
+    return services.map((service) => {
+      const coordinates = getServiceCoordinates(service)
+      if (!discoveryLocation || !coordinates) return { ...service, distance: undefined }
+      return {
+        ...service,
+        distance: calcularDistanciaKm(discoveryLocation.lat, discoveryLocation.lng, coordinates.lat, coordinates.lng)
       }
-      return service
     })
-  }, [services, userLocation])
+  }, [services, discoveryLocation])
+
+  const currentCityKeys = useMemo(() => {
+    return [profileCity, userPosition?.city, userPosition?.address]
+      .filter(Boolean)
+      .map((city) => normalizeSearchText(String(city)).split(',')[0])
+      .filter(Boolean)
+  }, [profileCity, userPosition?.city, userPosition?.address])
+
+  const matchesCurrentCity = (service: any) => {
+    if (currentCityKeys.length === 0) return false
+    const serviceLocation = normalizeSearchText(`${service.city || ''} ${service.address || ''}`)
+    return currentCityKeys.some((city) => serviceLocation.includes(city))
+  }
 
   const nearbyServices = useMemo(() => {
-    if (!userLocation) return []
+    if (!discoveryLocation && currentCityKeys.length === 0) return []
     return servicesWithDistance
-      .filter(s => s.distance !== undefined && s.distance < 15) // Dentro de 15km
-      .sort((a, b) => (a.distance || 0) - (b.distance || 0))
-  }, [servicesWithDistance, userLocation])
+      .filter((service) => service.distance !== undefined ? service.distance <= 15 : matchesCurrentCity(service))
+      .sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity))
+  }, [servicesWithDistance, discoveryLocation, currentCityKeys])
 
   const recommendedServices = useMemo(() => {
-    // Si hay ubicación, excluir los que ya salen en "Cerca tuyo" para no repetir tanto? 
-    // O simplemente mostrar los que no están taaaan cerca pero tienen buen rating
     return servicesWithDistance
-      .sort((a, b) => (b.rating || 0) - (a.rating || 0))
-  }, [servicesWithDistance])
-
-  const filteredServices = searchTerm
-    ? searchServices(searchTerm)
-    : services.filter((service) => {
-        const matchesCategory = !selectedCategory || service.category === selectedCategory
-        const matchesPrice = maxPrice === "all" || Number(service.price) <= maxPrice
-        
-        let matchesNearby = true
-        if (onlyNearby && userPosition && service.latitude && service.longitude) {
-          const dist = calcularDistanciaKm(
-            userPosition.latitude, userPosition.longitude,
-            service.latitude, service.longitude
-          )
-          matchesNearby = dist <= 10 // Ejemplo: servicios a menos de 10km
-        } else if (onlyNearby) {
-          matchesNearby = false
-        }
-
-        return matchesCategory && matchesPrice && matchesNearby
+      .filter((service) => service.distance !== undefined ? service.distance <= 30 : matchesCurrentCity(service))
+      .sort((a, b) => {
+        const ratingDifference = (b.rating || 0) - (a.rating || 0)
+        if (ratingDifference !== 0) return ratingDifference
+        return (a.distance ?? Infinity) - (b.distance ?? Infinity)
       })
+  }, [servicesWithDistance, currentCityKeys])
+
+  const knownSearchCities = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          services
+            .map((service: any) => normalizeSearchText(String(service.city || "")))
+            .filter((city: string) => city.length >= 3)
+        )
+      ),
+    [services]
+  )
+
+  const filteredServices = useMemo(() => {
+    return services.filter((service) => {
+      if (searchTerm.trim() && !serviceMatchesSearch(service, searchTerm, knownSearchCities)) {
+        return false
+      }
+
+      const matchesCategory = !selectedCategory || serviceMatchesCategory(service, selectedCategory)
+      const matchesPrice = maxPrice === "all" || Number(service.price) <= maxPrice
+      if (!matchesCategory || !matchesPrice) return false
+
+      const isLocationSearch = Boolean(
+        searchTerm.trim() && serviceMatchesLocationSearch(service, searchTerm, knownSearchCities)
+      )
+      if (isLocationSearch) return true
+
+      if (onlyNearby && userPosition) {
+        const coords = getServiceCoordinates(service)
+        if (!coords) return false
+        const dist = calcularDistanciaKm(
+          userPosition.latitude,
+          userPosition.longitude,
+          coords.lat,
+          coords.lng
+        )
+        return dist <= searchRadiusKm
+      }
+
+      if (onlyNearby) return false
+
+      return true
+    })
+  }, [services, searchTerm, selectedCategory, maxPrice, onlyNearby, searchRadiusKm, userPosition, knownSearchCities])
+
+  const filteredServiceIds = useMemo(() => new Set(filteredServices.map((service) => service.id)), [filteredServices])
+  const homeRecommendedServices = useMemo(
+    () => recommendedServices.filter((service) => filteredServiceIds.has(service.id)),
+    [recommendedServices, filteredServiceIds]
+  )
+  const homeNearbyServices = useMemo(
+    () => nearbyServices.filter((service) => filteredServiceIds.has(service.id)),
+    [nearbyServices, filteredServiceIds]
+  )
+  const nearbyProviders = useMemo(() => {
+    // Pool amplio para rotar variedad: cerca + recomendados + resto con ubicación.
+    const byProvider = new Map<string, any>()
+    const consider = (list: any[]) => {
+      for (const service of list) {
+        const key = String(service.providerId || service.id)
+        if (!key || byProvider.has(key)) continue
+        if (!getServiceCoordinates(service) && !String(service.city || "").trim()) continue
+        byProvider.set(key, service)
+      }
+    }
+    consider(homeNearbyServices)
+    consider(homeRecommendedServices)
+    consider(filteredServices)
+
+    const list = Array.from(byProvider.values())
+    // Orden estable pero diverso: rating desc, luego distancia.
+    list.sort((a, b) => {
+      const ratingDiff = Number(b.rating || 0) - Number(a.rating || 0)
+      if (ratingDiff !== 0) return ratingDiff
+      return (a.distance ?? Infinity) - (b.distance ?? Infinity)
+    })
+    return list
+  }, [homeNearbyServices, homeRecommendedServices, filteredServices])
+
+  const visibleNearbyProviders = useMemo(() => {
+    if (nearbyProviders.length === 0) return []
+    if (nearbyProviders.length <= 3) {
+      // Con pocos, rotar el orden para no mostrar siempre el mismo primero.
+      const start = nearbyOffset % nearbyProviders.length
+      return Array.from({ length: nearbyProviders.length }, (_, i) =>
+        nearbyProviders[(start + i) % nearbyProviders.length]
+      )
+    }
+    return [0, 1, 2].map((i) => nearbyProviders[(nearbyOffset + i) % nearbyProviders.length])
+  }, [nearbyProviders, nearbyOffset])
+
+  useEffect(() => {
+    if (viewMode !== "home" || nearbyProviders.length <= 1) return
+    const timer = window.setInterval(() => {
+      setNearbyOffset((prev) => (prev + 1) % nearbyProviders.length)
+    }, 4500)
+    return () => window.clearInterval(timer)
+  }, [nearbyProviders.length, viewMode])
+
+  const searchResults = useMemo(() => {
+    const term = searchTerm.trim()
+    if (!term) return []
+    return rankServicesForSearch(services as any[], term)
+  }, [services, searchTerm])
 
   const generateCalendar = () => {
     const today = new Date()
@@ -1288,7 +2117,7 @@ function ClientHome({
     return days
   }
 
-  const handleServiceClick = (service: any, source?: 'anuncio' | 'recomendados' | 'cerca_tuyo' | 'rubro' | 'buscador') => {
+  const handleServiceClick = (service: any, source?: 'anuncio' | 'recomendados' | 'cerca_tuyo' | 'rubro' | 'buscador' | 'stories') => {
     setSelectedService(service)
     logInteraction('perfil_proveedor')
     // Determinar origen automáticamente si no se provee
@@ -1312,8 +2141,9 @@ function ClientHome({
     setViewMode("nearby")
   }
 
-  const handleCategoryClick = (categoryName: string) => {
+  const handleCategoryClick = (categoryName: string, from: "home" | "all-categories" = "home") => {
     setSelectedCategoryName(categoryName)
+    setCategoryBackTarget(from)
     setViewMode("category")
     logInteraction('categorias')
   }
@@ -1323,16 +2153,176 @@ function ClientHome({
     setSelectedCategory(null)
   }
 
+  const handleBackFromCategory = () => {
+    setViewMode(categoryBackTarget)
+    setSelectedCategory(null)
+  }
+
   const handleVerMasCategorias = () => {
     setViewMode("all-categories")
   }
 
+  const handleOpenSearch = (term = searchTerm) => {
+    const nextTerm = term.trim()
+    if (nextTerm) {
+      setSearchTerm(nextTerm)
+      logInteraction('buscador')
+    }
+    setViewMode("search")
+  }
+
+  useEffect(() => {
+    const applyBotHomeAction = () => {
+      const action = consumeBotHomeAction()
+      if (!action) return
+      if (action.type === "search") {
+        const parts = [action.term, action.city].map((value) => String(value || "").trim()).filter(Boolean)
+        handleOpenSearch(parts.join(" "))
+        return
+      }
+      if (action.type === "nearby") {
+        setIsMapOpen(false)
+        setViewMode("nearby")
+        return
+      }
+      if (action.type === "map") {
+        setViewMode("home")
+        setIsMapOpen(true)
+      }
+    }
+
+    applyBotHomeAction()
+    window.addEventListener(BOT_HOME_EVENT, applyBotHomeAction)
+    return () => window.removeEventListener(BOT_HOME_EVENT, applyBotHomeAction)
+  }, [])
+
+  // Botón atrás del celular: cerrar mapa/filtros o volver desde subpantallas
+  useEffect(() => {
+    if (!registerHomeBackHandler) return
+
+    registerHomeBackHandler(() => {
+      if (isMapOpen) {
+        setIsMapOpen(false)
+        return true
+      }
+      if (isFilterOpen) {
+        setIsFilterOpen(false)
+        return true
+      }
+      if (viewMode === "category") {
+        setViewMode(categoryBackTarget)
+        setSelectedCategory(null)
+        return true
+      }
+      if (viewMode === "recommendations" || viewMode === "nearby" || viewMode === "all-categories" || viewMode === "search") {
+        setViewMode("home")
+        setSelectedCategory(null)
+        return true
+      }
+      return false
+    })
+
+    return () => registerHomeBackHandler(null)
+  }, [registerHomeBackHandler, viewMode, categoryBackTarget, isMapOpen, isFilterOpen])
 
 
+
+
+  if (viewMode === "search") {
+    return (
+      <div className="min-h-screen bg-gray-50 pb-24">
+        <div className="bg-white shadow-sm p-4 space-y-3">
+          <div className="flex items-center">
+            <button onClick={handleBackToHome} className="mr-3" type="button">
+              <ArrowLeft className="h-6 w-6" />
+            </button>
+            <h1 className="text-xl font-bold text-primary">Búsqueda</h1>
+          </div>
+          <form
+            className="flex gap-2"
+            onSubmit={(event) => {
+              event.preventDefault()
+              handleOpenSearch(searchTerm)
+            }}
+          >
+            <div className="relative flex-1">
+              <Input
+                autoFocus
+                placeholder="Nombre, rubro, servicio o palabra..."
+                className="pl-4 pr-4 h-12 bg-gray-50 border-none rounded-xl"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+            <Button type="submit" className="h-12 w-12 rounded-xl" aria-label="Buscar">
+              <Search className="h-5 w-5" />
+            </Button>
+          </form>
+          {searchTerm.trim() && (
+            <p className="text-xs text-muted-foreground">
+              {searchResults.length} resultado{searchResults.length === 1 ? "" : "s"} para “{searchTerm.trim()}”
+            </p>
+          )}
+        </div>
+        <div className="p-4">
+          {!searchTerm.trim() ? (
+            <div className="text-center text-gray-500 py-16">
+              <Search className="h-10 w-10 mx-auto mb-3 opacity-30" />
+              <p className="font-medium">¿Qué estás buscando?</p>
+              <p className="text-sm mt-1">Probá con un nombre, rubro, servicio o ciudad.</p>
+            </div>
+          ) : searchResults.length > 0 ? (
+            <div className="grid grid-cols-1 gap-4">
+              {searchResults.map((service) => (
+                <Card
+                  key={service.id}
+                  className="cursor-pointer hover:shadow-md transition-shadow overflow-hidden"
+                  onClick={() => handleServiceClick(service, "buscador")}
+                >
+                  <div className="relative w-full h-44">
+                    <img src={service.image || "/placeholder.svg"} alt={service.name} className="w-full h-full object-cover" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
+                    <div className="absolute bottom-0 left-0 right-0 p-4 text-white">
+                      <div className="flex flex-col gap-1 mb-1">
+                        <span className="text-base font-medium">{service.providerName || service.businessName || "Proveedor"}</span>
+                        <span className="text-xs bg-white/20 backdrop-blur-sm px-2 py-0.5 rounded self-start">{service.category}</span>
+                      </div>
+                      <p className="text-sm opacity-90">{service.name}</p>
+                      {calcularDistanciaServicio(service) && (
+                        <p className="text-xs text-green-300 mt-1 flex items-center gap-1">
+                          <MapPin className="h-3 w-3" />
+                          {calcularDistanciaServicio(service)}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center text-gray-500 py-16">
+              <p className="font-medium">No encontramos resultados</p>
+              <p className="text-sm mt-1">Probá con otra palabra, el rubro o el nombre del comercio.</p>
+            </div>
+          )}
+        </div>
+        <MainBottomNav
+          active="inicio"
+          onHome={() => setFlow("home")}
+          onMyService={() => setFlow("mi-servicio")}
+          onAgenda={() => setFlow("agenda")}
+          onProfile={() => setFlow("profile")}
+          user={user}
+          setFlow={setFlow}
+          zClass="z-40"
+        />
+      </div>
+    )
+  }
 
   if (viewMode === "recommendations") {
     return (
-      <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-gray-50 pb-32">
         <div className="bg-white shadow-sm p-4 flex items-center">
           <button onClick={handleBackToHome} className="mr-3">
             <ArrowLeft className="h-6 w-6" />
@@ -1341,7 +2331,7 @@ function ClientHome({
         </div>
         <div className="p-4">
           <div className="grid grid-cols-1 gap-4">
-            {services.map((service) => (
+            {recommendedServices.map((service) => (
               <Card
                 key={service.id}
                 className="cursor-pointer hover:shadow-md transition-shadow overflow-hidden"
@@ -1385,28 +2375,16 @@ function ClientHome({
             ))}
           </div>
         </div>
-        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 pb-safe">
-          <div className="flex justify-around py-3">
-            <button onClick={() => setFlow("home")} className="flex flex-col items-center gap-1">
-              <div className="text-primary">
-                <Home className="h-6 w-6" />
-              </div>
-              <span className="text-[10px] font-medium text-primary">Inicio</span>
-            </button>
-            <button onClick={() => setFlow("agenda")} className="flex flex-col items-center gap-1">
-              <div className="text-gray-400">
-                <Calendar className="h-6 w-6" />
-              </div>
-              <span className="text-[10px] font-medium text-gray-400">Agenda</span>
-            </button>
-            <button onClick={() => setFlow("profile")} className="flex flex-col items-center gap-1">
-              <div className="text-gray-400">
-                <User className="h-6 w-6" />
-              </div>
-              <span className="text-[10px] font-medium text-gray-400">Perfil</span>
-            </button>
-          </div>
-        </div>
+        <MainBottomNav
+          active="inicio"
+          onHome={() => setFlow("home")}
+          onMyService={() => setFlow("mi-servicio")}
+          onAgenda={() => setFlow("agenda")}
+          onProfile={() => setFlow("profile")}
+          user={user}
+          setFlow={setFlow}
+          zClass="z-40"
+        />
       </div>
     )
   }
@@ -1423,10 +2401,11 @@ function ClientHome({
         ) : Infinity,
         _distanciaTexto: calcularDistanciaServicio(service)
       }))
+      .filter((service) => service._distanciaKm <= 15)
       .sort((a, b) => a._distanciaKm - b._distanciaKm)
 
     return (
-      <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-gray-50 pb-32">
         <div className="bg-white shadow-sm p-4 flex items-center">
           <button onClick={handleBackToHome} className="mr-3">
             <ArrowLeft className="h-6 w-6" />
@@ -1485,92 +2464,71 @@ function ClientHome({
               ))}
           </div>
         </div>
-        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 pb-safe">
-          <div className="flex justify-around py-3">
-            <button onClick={() => setFlow("home")} className="flex flex-col items-center gap-1">
-              <div className="text-primary">
-                <Home className="h-6 w-6" />
-              </div>
-              <span className="text-[10px] font-medium text-primary">Inicio</span>
-            </button>
-            <button onClick={() => setFlow("agenda")} className="flex flex-col items-center gap-1">
-              <div className="text-gray-400">
-                <Calendar className="h-6 w-6" />
-              </div>
-              <span className="text-[10px] font-medium text-gray-400">Agenda</span>
-            </button>
-            <button onClick={() => setFlow("profile")} className="flex flex-col items-center gap-1">
-              <div className="text-gray-400">
-                <User className="h-6 w-6" />
-              </div>
-              <span className="text-[10px] font-medium text-gray-400">Perfil</span>
-            </button>
-          </div>
-        </div>
+        <MainBottomNav
+          active="inicio"
+          onHome={() => setFlow("home")}
+          onMyService={() => setFlow("mi-servicio")}
+          onAgenda={() => setFlow("agenda")}
+          onProfile={() => setFlow("profile")}
+          user={user}
+          setFlow={setFlow}
+          zClass="z-40"
+        />
       </div>
     )
   }
 
   if (viewMode === "all-categories") {
     return (
-      <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-gray-50 pb-32">
         <div className="bg-white shadow-sm p-4 flex items-center">
           <button onClick={handleBackToHome} className="mr-3">
             <ArrowLeft className="h-6 w-6" />
           </button>
           <h1 className="text-xl font-bold text-primary">Todas las Categorías</h1>
         </div>
-        <div className="p-4">
+        <div className="p-4 pb-8">
           <div className="grid grid-cols-3 gap-4">
             {allCategories.map((category) => (
               <div
                 key={category.name}
                 className="flex flex-col items-center p-4 bg-white rounded-lg shadow-sm cursor-pointer hover:shadow-md transition-shadow"
-                onClick={() => handleCategoryClick(category.name)}
+                onClick={() => handleCategoryClick(category.name, "all-categories")}
               >
-                <div className="w-16 h-16 bg-gray-200 rounded-2xl flex items-center justify-center mb-3">
-                  <span className="text-2xl">{category.icon}</span>
+                <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center mb-3 overflow-hidden p-1.5 shadow-sm">
+                  <CategoryIcon name={category.name} icon={category.icon} className="w-full h-full" />
                 </div>
                 <span className="text-sm font-medium text-center">{category.name}</span>
               </div>
             ))}
           </div>
         </div>
-        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 pb-safe z-40">
-          <div className="flex justify-around py-3">
-            <button onClick={() => setFlow("home")} className="flex flex-col items-center gap-1">
-              <div className="text-primary">
-                <Home className="h-6 w-6" />
-              </div>
-              <span className="text-[10px] font-medium text-primary">Inicio</span>
-            </button>
-            <button onClick={() => setFlow("agenda")} className="flex flex-col items-center gap-1">
-              <div className="text-gray-400">
-                <Calendar className="h-6 w-6" />
-              </div>
-              <span className="text-[10px] font-medium text-gray-400">Agenda</span>
-            </button>
-            <button onClick={() => setFlow("profile")} className="flex flex-col items-center gap-1">
-              <div className="text-gray-400">
-                <User className="h-6 w-6" />
-              </div>
-              <span className="text-[10px] font-medium text-gray-400">Perfil</span>
-            </button>
-          </div>
-        </div>
+        <MainBottomNav
+          active="inicio"
+          onHome={() => setFlow("home")}
+          onMyService={() => setFlow("mi-servicio")}
+          onAgenda={() => setFlow("agenda")}
+          onProfile={() => setFlow("profile")}
+          user={user}
+          setFlow={setFlow}
+          zClass="z-40"
+        />
       </div>
     )
   }
 
   if (viewMode === "category") {
     const categoryServices = services.filter(
-      (service) => service.category?.toLowerCase() === selectedCategoryName.toLowerCase(),
+      (service) => serviceMatchesCategory(service, selectedCategoryName),
     )
 
     return (
-      <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-gray-50 pb-32">
         <div className="bg-white shadow-sm p-4 flex items-center">
-          <button onClick={handleBackToHome} className="mr-3">
+          <button
+            onClick={handleBackFromCategory}
+            className="mr-3"
+          >
             <ArrowLeft className="h-6 w-6" />
           </button>
           <h1 className="text-xl font-bold text-primary">{selectedCategoryName}</h1>
@@ -1621,35 +2579,23 @@ function ClientHome({
             </div>
           )}
         </div>
-        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 pb-safe">
-          <div className="flex justify-around py-3">
-            <button onClick={() => setFlow("home")} className="flex flex-col items-center gap-1">
-              <div className="text-primary">
-                <Home className="h-6 w-6" />
-              </div>
-              <span className="text-[10px] font-medium text-primary">Inicio</span>
-            </button>
-            <button onClick={() => setFlow("agenda")} className="flex flex-col items-center gap-1">
-              <div className="text-gray-400">
-                <Calendar className="h-6 w-6" />
-              </div>
-              <span className="text-[10px] font-medium text-gray-400">Agenda</span>
-            </button>
-            <button onClick={() => setFlow("profile")} className="flex flex-col items-center gap-1">
-              <div className="text-gray-400">
-                <User className="h-6 w-6" />
-              </div>
-              <span className="text-[10px] font-medium text-gray-400">Perfil</span>
-            </button>
-          </div>
-        </div>
+        <MainBottomNav
+          active="inicio"
+          onHome={() => setFlow("home")}
+          onMyService={() => setFlow("mi-servicio")}
+          onAgenda={() => setFlow("agenda")}
+          onProfile={() => setFlow("profile")}
+          user={user}
+          setFlow={setFlow}
+          zClass="z-40"
+        />
       </div>
     )
   }
 
   return (
     <>
-      <div className="min-h-screen bg-gray-50 pb-20">
+      <div className="min-h-screen bg-gray-50 pb-32">
         <div className="bg-primary pt-8 pb-6 px-4 rounded-b-[2rem] shadow-lg">
           <div className="text-center mb-4">
           <h1 className="text-white text-xl font-bold italic tracking-tight">
@@ -1659,17 +2605,7 @@ function ClientHome({
             <div className="flex flex-col items-center gap-1">
               <div 
                 className="flex items-center justify-center gap-1 text-white/90 text-[10px] font-medium mt-1 bg-white/10 backdrop-blur-sm self-center mx-auto w-fit px-3 py-1 rounded-full border border-white/20 cursor-pointer active:scale-95 transition-all"
-                onClick={() => {
-                  const city = prompt("Introduce tu ciudad manualmente:");
-                  if (city) {
-                    setPosition({
-                      latitude: -34.6037, // Centro genérico si es manual
-                      longitude: -58.3816,
-                      city: city,
-                      address: city
-                    });
-                  }
-                }}
+                onClick={handleManualCityPrompt}
               >
                 <MapPin className="h-2.5 w-2.5" />
                 <span>{userPosition.address}</span>
@@ -1679,17 +2615,7 @@ function ClientHome({
           ) : (
             <div 
               className="flex items-center justify-center gap-1 text-white/60 text-[10px] mt-1 italic cursor-pointer"
-              onClick={() => {
-                const city = prompt("Introduce tu ciudad manualmente:");
-                if (city) {
-                  setPosition({
-                    latitude: -34.6037,
-                    longitude: -58.3816,
-                    city: city,
-                    address: city
-                  });
-                }
-              }}
+              onClick={handleManualCityPrompt}
             >
               {loading ? (
                 <>
@@ -1704,18 +2630,26 @@ function ClientHome({
         </div>
         
         <div className="flex gap-2">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-5 w-5" />
+          <form
+            className="relative flex-1 flex gap-2"
+            onSubmit={(event) => {
+              event.preventDefault()
+              handleOpenSearch(searchTerm)
+            }}
+          >
             <Input
-              placeholder="¿Qué estás buscando?"
-              className="pl-10 h-12 bg-white border-none rounded-xl shadow-sm italic text-gray-400"
+              placeholder="Nombre, rubro, servicio o ciudad..."
+              className="flex-1 h-12 bg-white border-none rounded-xl shadow-sm italic text-gray-500 pl-4"
               value={searchTerm}
-              onChange={(e) => {
-                setSearchTerm(e.target.value)
-                if (e.target.value.length === 3) logInteraction('buscador')
+              onChange={(e) => setSearchTerm(e.target.value)}
+              onFocus={() => {
+                if (viewMode === "home") setViewMode("search")
               }}
             />
-          </div>
+            <Button type="submit" className="h-12 w-12 rounded-xl shadow-sm shrink-0" aria-label="Buscar">
+              <Search className="h-5 w-5" />
+            </Button>
+          </form>
           <Button 
             variant="outline" 
             size="icon" 
@@ -1728,45 +2662,52 @@ function ClientHome({
       </div>
 
       <div className="p-4 space-y-8">
+        <StoriesShelf
+          cityCandidates={viewerCityCandidates}
+          onStoryAction={handleStoryAction}
+          onStoryReply={handleStoryReply}
+          onConfigureLocation={handleManualCityPrompt}
+        />
+
         <div>
-          <h2 className="text-xl font-bold mb-4">Categorías</h2>
-          <div className="flex gap-6 overflow-x-auto pb-4 scrollbar-hide">
-            {mainCategories.map((category, index) => (
+          <div className="flex justify-between items-end mb-4">
+            <h2 className="text-xl font-bold">Categorías</h2>
+            <button
+              type="button"
+              onClick={handleVerMasCategorias}
+              className="text-sm text-gray-400 font-bold tracking-wide uppercase"
+            >
+              Ver más
+            </button>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            {visibleHomeCategories.map((category, index) => (
               <div
-                key={category.name}
-                className="flex flex-col items-center gap-2 cursor-pointer min-w-fit"
-                onClick={() => handleCategoryClick(category.name)}
+                key={`${category.name}-${index}`}
+                className="flex flex-col items-center gap-2 cursor-pointer"
+                onClick={() => handleCategoryClick(category.name, "home")}
               >
-                <div className={`w-20 h-20 rounded-full flex items-center justify-center border-2 transition-all ${index === 0 ? "bg-primary border-primary text-white" : "bg-white border-gray-100 text-primary"}`}>
-                  <span className="text-3xl">{category.rawIcon}</span>
+                <div className={`w-20 h-20 rounded-full flex items-center justify-center border-2 overflow-hidden p-2 bg-white transition-all ${index === 0 ? "border-primary" : "border-gray-100"}`}>
+                  <CategoryIcon name={category.name} icon={category.icon} className="w-full h-full" />
                 </div>
-                <span className="text-sm font-medium text-gray-700">{category.name}</span>
+                <span className="text-sm font-medium text-gray-700 text-center leading-tight">{category.name}</span>
               </div>
             ))}
-            <div
-              className="flex flex-col items-center gap-2 cursor-pointer min-w-fit"
-              onClick={handleVerMasCategorias}
-            >
-              <div className="w-20 h-20 bg-white border-2 border-gray-100 rounded-full flex items-center justify-center text-primary">
-                <Plus className="h-8 w-8" />
-              </div>
-              <span className="text-sm font-medium text-gray-700">Más</span>
-            </div>
           </div>
         </div>
 
         <div>
           <div className="flex justify-between items-end mb-4">
             <h2 className="text-xl font-bold">Recomendados</h2>
-            {filteredServices.length > 0 && (
+            {homeRecommendedServices.length > 0 && (
               <button onClick={handleVerMas} className="text-sm text-gray-400 font-medium">
                 Ver más
               </button>
             )}
           </div>
-          {filteredServices.length > 0 ? (
+          {homeRecommendedServices.length > 0 ? (
             <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide">
-              {filteredServices.slice(0, 4).map((service) => (
+              {homeRecommendedServices.slice(0, 4).map((service) => (
                 <Card
                   key={service.id}
                   className="cursor-pointer hover:shadow-md transition-shadow flex-shrink-0 w-44 h-64 rounded-2xl overflow-hidden border-none relative"
@@ -1816,9 +2757,9 @@ function ClientHome({
 
         <div className="pb-8">
           <h2 className="text-xl font-bold mb-4">Cerca tuyo</h2>
-          {filteredServices.length > 0 ? (
+          {visibleNearbyProviders.length > 0 ? (
             <div className="space-y-4">
-              {filteredServices.slice(0, 3).map((service) => (
+              {visibleNearbyProviders.map((service) => (
                 <Card
                   key={service.id}
                   className="cursor-pointer hover:shadow-sm transition-shadow border-none bg-white rounded-2xl overflow-hidden shadow-sm"
@@ -1906,6 +2847,7 @@ function ClientHome({
                 onClick={() => {
                   setMaxPrice("all");
                   setOnlyNearby(false);
+                  setSearchRadiusKm(10);
                 }}
                 className="text-primary font-bold text-sm"
               >
@@ -1933,22 +2875,46 @@ function ClientHome({
               </div>
 
               {/* Filtro de Cercanía */}
-              <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl">
-                <div className="flex items-center gap-3">
-                  <div className={`p-2 rounded-lg ${onlyNearby ? "bg-primary text-white" : "bg-white text-gray-400"}`}>
-                    <MapPin className="h-5 w-5" />
+              <div className="p-4 bg-gray-50 rounded-2xl space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className={`p-2 rounded-lg ${onlyNearby ? "bg-primary text-white" : "bg-white text-gray-400"}`}>
+                      <MapPin className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <p className="font-bold text-sm">Cerca de mí</p>
+                      <p className="text-[10px] text-gray-400">
+                        {onlyNearby ? `Radio de ${searchRadiusKm} km` : "Sin límite de distancia"}
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-bold text-sm">Cerca de mí</p>
-                    <p className="text-[10px] text-gray-400">Radio de 10km</p>
-                  </div>
+                  <button
+                    onClick={() => setOnlyNearby(!onlyNearby)}
+                    className={`w-12 h-6 rounded-full transition-all relative ${onlyNearby ? "bg-primary" : "bg-gray-200"}`}
+                  >
+                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${onlyNearby ? "right-1" : "left-1"}`} />
+                  </button>
                 </div>
-                <button
-                  onClick={() => setOnlyNearby(!onlyNearby)}
-                  className={`w-12 h-6 rounded-full transition-all relative ${onlyNearby ? "bg-primary" : "bg-gray-200"}`}
-                >
-                  <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${onlyNearby ? "right-1" : "left-1"}`} />
-                </button>
+
+                {onlyNearby && (
+                  <div>
+                    <Label className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3 block">
+                      Radio de búsqueda
+                    </Label>
+                    <div className="grid grid-cols-4 gap-2">
+                      {[5, 10, 20, 50].map((km) => (
+                        <button
+                          key={km}
+                          type="button"
+                          onClick={() => setSearchRadiusKm(km)}
+                          className={`py-2 rounded-xl text-xs font-bold transition-all ${searchRadiusKm === km ? "bg-primary text-white" : "bg-white text-gray-400 border border-gray-100"}`}
+                        >
+                          {km} km
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1962,36 +2928,160 @@ function ClientHome({
         </div>
       )}
 
-      {/* Footer Navigation */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 pb-safe z-40">
-        <div className="flex justify-around py-3">
-          <button onClick={() => setFlow("home")} className="flex flex-col items-center gap-1">
-            <div className="text-primary">
-              <Home className="h-6 w-6" />
-            </div>
-            <span className="text-[10px] font-medium text-primary">Inicio</span>
-          </button>
-          <button onClick={() => setFlow("agenda")} className="flex flex-col items-center gap-1">
-            <div className="text-gray-400">
-              <Calendar className="h-6 w-6" />
-            </div>
-            <span className="text-[10px] font-medium text-gray-400">Agenda</span>
-          </button>
-          <button onClick={() => setFlow("profile")} className="flex flex-col items-center gap-1">
-            <div className="text-gray-400">
-              <User className="h-6 w-6" />
-            </div>
-            <span className="text-[10px] font-medium text-gray-400">Perfil</span>
-          </button>
+      {/* Botón flotante "Servicios cerca de mí" — arrastrable y con X para ocultar */}
+      <DraggableFloat
+        id="cerca-de-mi"
+        defaultLeft={() => 24}
+        defaultBottom={120}
+        zIndex={400}
+        onPress={() => setIsMapOpen(true)}
+        restoreLabel="Cerca de mí"
+        restoreIcon={<AppIcon name="ubicacion" className="h-4 w-4" />}
+      >
+        <div
+          className="flex items-center justify-center gap-2 bg-primary text-white rounded-full px-4 py-3 shadow-xl border border-white/20"
+          style={{ boxShadow: '0 8px 30px rgb(var(--primary) / 0.3)' }}
+        >
+          <span className="bg-white rounded-full p-0.5 flex items-center justify-center">
+            <AppIcon name="ubicacion" className="h-5 w-5" />
+          </span>
+          <span className="text-xs font-black tracking-wide uppercase">Cerca de mí</span>
         </div>
-      </div>
+      </DraggableFloat>
+
+      {/* Vista de Mapa en Pantalla Completa */}
+      {isMapOpen && (
+        <NearByMap
+          onClose={() => setIsMapOpen(false)}
+          userLocation={userPosition}
+          services={services}
+          categories={categories}
+          radiusKm={onlyNearby ? searchRadiusKm : 15}
+          onServiceSelect={(service) => handleServiceClick(service, 'cerca_tuyo')}
+        />
+      )}
+
+      {/* Footer Navigation */}
+      <MainBottomNav
+          active="inicio"
+          onHome={() => setFlow("home")}
+          onMyService={() => setFlow("mi-servicio")}
+          onAgenda={() => setFlow("agenda")}
+          onProfile={() => setFlow("profile")}
+          user={user}
+          setFlow={setFlow}
+          zClass="z-40"
+        />
       </>
   )
 }
 
-function ServiceDetail({ service, setFlow, bookingSource }: { service: any; setFlow: (flow: string) => void; bookingSource: string }) {
+const CONTACT_REFERRAL_MESSAGE = "Hola, vengo de Punto Encuentro"
+
+function buildWhatsAppUrl(value: string, message = CONTACT_REFERRAL_MESSAGE) {
+  const digits = value.replace(/\D/g, "")
+  if (!digits) return null
+  const text = encodeURIComponent(message)
+  return `https://wa.me/${digits}?text=${text}`
+}
+
+function buildInstagramUrl(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+  const handle = trimmed.replace(/^@/, "")
+  return `https://instagram.com/${handle}`
+}
+
+function buildFacebookUrl(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+  const handle = trimmed.replace(/^@/, "")
+  return `https://facebook.com/${handle}`
+}
+
+function buildWebsiteUrl(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+  return `https://${trimmed}`
+}
+
+function openExternalUrl(url: string) {
+  window.open(url, "_blank", "noopener,noreferrer")
+}
+
+function openEmailClient(email: string, message = CONTACT_REFERRAL_MESSAGE) {
+  const subject = encodeURIComponent("Consulta desde Punto Encuentro")
+  const body = encodeURIComponent(message)
+  window.location.href = `mailto:${email}?subject=${subject}&body=${body}`
+}
+
+function openPhoneDialer(phone: string) {
+  window.location.href = `tel:${phone.replace(/\s/g, "")}`
+}
+
+function ServiceDetail({ service, services = [], setSelectedService, setFlow, bookingSource, user, setActiveChat }: { service: any; services?: any[]; setSelectedService?: (service: any) => void; setFlow: (flow: string) => void; bookingSource: string; user?: any; userLocation?: { lat: number, lng: number } | null; setActiveChat?: (chat: any) => void }) {
   const { position: userPosition } = useGeolocation()
+  const { isFavorite, toggleFavorite } = useFavorites(user?.uid)
   const [providerProfile, setProviderProfile] = useState<any>(null)
+  const serviceImages = useMemo(() => {
+    const images = Array.isArray(service?.images) ? service.images.filter(Boolean) : []
+    if (service?.image && !images.includes(service.image)) images.unshift(service.image)
+    return images.length > 0 ? images : ['/placeholder.svg']
+  }, [service])
+  const [selectedImage, setSelectedImage] = useState(serviceImages[0])
+  const [lightboxOpen, setLightboxOpen] = useState(false)
+  const [lightboxIndex, setLightboxIndex] = useState(0)
+
+  useEffect(() => {
+    setSelectedImage(serviceImages[0])
+  }, [serviceImages])
+
+  const canPreviewImage = (url?: string) => !!url && !url.toLowerCase().includes("placeholder")
+
+  const openLightbox = (url: string) => {
+    if (!canPreviewImage(url)) return
+    const index = serviceImages.findIndex((imageUrl: string) => imageUrl === url)
+    setLightboxIndex(index >= 0 ? index : 0)
+    setLightboxOpen(true)
+  }
+
+  const showLightboxPrev = () => {
+    setLightboxIndex((current) => {
+      const nextIndex = (current - 1 + serviceImages.length) % serviceImages.length
+      setSelectedImage(serviceImages[nextIndex])
+      return nextIndex
+    })
+  }
+
+  const showLightboxNext = () => {
+    setLightboxIndex((current) => {
+      const nextIndex = (current + 1) % serviceImages.length
+      setSelectedImage(serviceImages[nextIndex])
+      return nextIndex
+    })
+  }
+
+  useEffect(() => {
+    if (!lightboxOpen) return
+
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setLightboxOpen(false)
+      if (event.key === "ArrowLeft" && serviceImages.length > 1) showLightboxPrev()
+      if (event.key === "ArrowRight" && serviceImages.length > 1) showLightboxNext()
+    }
+
+    window.addEventListener("keydown", onKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener("keydown", onKeyDown)
+    }
+  }, [lightboxOpen, serviceImages.length])
 
   // Cargar perfil real del proveedor desde Firestore
   useEffect(() => {
@@ -2045,12 +3135,133 @@ function ServiceDetail({ service, setFlow, bookingSource }: { service: any; setF
     ? calcularDistanciaKm(userPosition.latitude, userPosition.longitude, service.latitude, service.longitude)
     : null
   const distText = dist !== null ? formatearDistancia(dist) : null
-  const providerCity = providerProfile?.city || ''
-  const providerPhone = providerProfile?.phone || ''
+  const providerCity = service.city || providerProfile?.city || ''
+  const providerPhone = (service.phone || providerProfile?.phone || '').trim()
   const providerEmail = providerProfile?.email || service.providerEmail || ''
+  const dedicatedWhatsapp = (service.whatsapp || providerProfile?.whatsapp || '').trim()
+  const providerInstagram = service.instagram || providerProfile?.instagram || ''
+  const providerFacebook = service.facebook || providerProfile?.facebook || ''
+  const providerWebsite = service.website || providerProfile?.website || ''
+  const providerAddress = service.address || providerProfile?.address || ''
+  const whatsappSource = dedicatedWhatsapp || providerPhone
+  const contactMessage = service?.name
+    ? `${CONTACT_REFERRAL_MESSAGE}. Me interesa: ${service.name}`
+    : CONTACT_REFERRAL_MESSAGE
+  const whatsappUrl = buildWhatsAppUrl(whatsappSource, contactMessage)
+  const instagramUrl = providerInstagram ? buildInstagramUrl(providerInstagram) : null
+  const facebookUrl = providerFacebook ? buildFacebookUrl(providerFacebook) : null
+  const websiteUrl = providerWebsite ? buildWebsiteUrl(providerWebsite) : null
+  const mapsUrl = (service.latitude && service.longitude)
+    ? `https://www.google.com/maps?q=${service.latitude},${service.longitude}`
+    : providerAddress
+      ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(providerAddress)}`
+      : null
+  const canOpenInAppChat = Boolean(service.providerId && user?.uid !== service.providerId)
+  const hasContactInfo = !!(
+    providerPhone ||
+    providerEmail ||
+    whatsappUrl ||
+    instagramUrl ||
+    facebookUrl ||
+    websiteUrl ||
+    mapsUrl ||
+    canOpenInAppChat
+  )
+  const websiteLabel = providerWebsite
+    ? providerWebsite.replace(/^https?:\/\//i, "").replace(/\/$/, "")
+    : ""
+  const instagramLabel = providerInstagram
+    ? (providerInstagram.startsWith("http") ? `@${providerInstagram.split("/").filter(Boolean).pop()}` : (providerInstagram.startsWith("@") ? providerInstagram : `@${providerInstagram}`))
+    : ""
+  const facebookLabel = providerFacebook
+    ? (providerFacebook.startsWith("http") ? providerFacebook.replace(/^https?:\/\/(www\.)?facebook\.com\//i, "").replace(/\/$/, "") : providerFacebook.replace(/^@/, ""))
+    : ""
   const providerAvatar = providerProfile?.profileImage || `/placeholder.svg`
-  const coverImg = providerProfile?.coverImage || service.image || '/placeholder.svg'
+  const coverImg = selectedImage || serviceImages[0]
   const businessHours = providerProfile?.businessHours || null
+  const viewerCityCandidates = [userPosition?.city, userPosition?.address].filter(Boolean)
+
+  const openInAppChat = async () => {
+    if (!service.providerId) return
+    if (!user?.uid) {
+      alert("Iniciá sesión para chatear con el proveedor desde la app.")
+      setFlow("login")
+      return
+    }
+    if (user.uid === service.providerId) {
+      alert("No podés abrirte un chat con tu propio servicio.")
+      return
+    }
+
+    const ensured = await ensureChatDocument({
+      sender: user,
+      partnerId: service.providerId,
+      partnerName: providerName,
+    })
+    if (!ensured.success) {
+      alert(ensured.error || "No se pudo abrir el chat.")
+      return
+    }
+
+    setActiveChat?.({
+      partnerId: service.providerId,
+      partnerName: providerName,
+      from: "service-detail",
+    })
+    setFlow("chat")
+  }
+
+  const openSocialWithReferral = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(contactMessage)
+    } catch {
+      // Si el portapapeles falla, igual abrimos el enlace
+    }
+    openExternalUrl(url)
+  }
+
+  const handleStoryAction = (story: any) => {
+    if (story.ctaType === 'contact' && story.ctaTarget) {
+      openExternalUrl(story.ctaTarget)
+      return
+    }
+
+    const targetService = services.find((item: any) => item.id === story.ctaTarget) || service
+    if (!targetService) return
+
+    setSelectedService?.(targetService)
+    if (story.ctaType === 'booking') {
+      setFlow('booking')
+      return
+    }
+
+    setFlow('service-detail')
+  }
+
+  const handleStoryReply = async (story: any, message: string) => {
+    if (!user?.uid) return { success: false, error: 'Inicia sesión para responder historias.' }
+    const result = await sendChatMessage({
+      sender: user,
+      partnerId: story.providerId,
+      partnerName: story.providerName || providerName,
+      text: message,
+      story: {
+        id: story.id,
+        providerId: story.providerId,
+        providerName: story.providerName,
+        mediaUrl: story.mediaUrl,
+        mediaType: story.mediaType,
+        caption: story.caption,
+        serviceId: story.serviceId,
+        serviceName: story.serviceName,
+      },
+    })
+    if (result.success) {
+      setActiveChat?.({ partnerId: story.providerId, partnerName: story.providerName || providerName })
+      setFlow('chat')
+    }
+    return result
+  }
 
   // Formatear horarios para mostrar un resumen
   const getHoursSummary = () => {
@@ -2080,12 +3291,20 @@ function ServiceDetail({ service, setFlow, bookingSource }: { service: any; setF
     <div className="min-h-screen bg-gray-50 pb-36">
       {/* Cover Image con flecha y badge categoría */}
       <div className="relative">
-        <img 
-          src={coverImg} 
-          alt={service.name} 
-          className="w-full h-56 object-cover"
-        />
-        <div className="absolute inset-0 bg-gradient-to-b from-black/30 to-transparent" />
+        <button
+          type="button"
+          onClick={() => openLightbox(coverImg)}
+          disabled={!canPreviewImage(coverImg)}
+          className="block w-full p-0 border-0 bg-transparent disabled:cursor-default"
+          aria-label="Ver imagen en tamaño grande"
+        >
+          <img 
+            src={coverImg} 
+            alt={service.name} 
+            className="w-full h-56 object-cover"
+          />
+        </button>
+        <div className="absolute inset-0 bg-gradient-to-b from-black/30 to-transparent pointer-events-none" />
         
         {/* Back button */}
         <button 
@@ -2095,8 +3314,23 @@ function ServiceDetail({ service, setFlow, bookingSource }: { service: any; setF
           <ArrowLeft className="h-5 w-5 text-gray-700" />
         </button>
 
+        <button
+          type="button"
+          onClick={() => toggleFavorite(service.id)}
+          className="absolute top-10 right-4 w-9 h-9 rounded-full bg-white/90 backdrop-blur-sm flex items-center justify-center shadow-md"
+          aria-label={isFavorite(service.id) ? "Quitar de favoritos" : "Guardar en favoritos"}
+        >
+          <AppIcon name="favoritos" active={isFavorite(service.id)} className="h-5 w-5" />
+        </button>
+
         {/* Category badge */}
-        <div className="absolute top-10 right-4 bg-white/90 backdrop-blur-sm rounded-full px-4 py-1.5 shadow-md">
+        {canPreviewImage(coverImg) && (
+          <div className="absolute bottom-3 left-4 bg-black/55 text-white text-[11px] font-medium rounded-full px-3 py-1 pointer-events-none">
+            Tocá para ampliar
+          </div>
+        )}
+
+        <div className="absolute bottom-3 right-4 bg-white/90 backdrop-blur-sm rounded-full px-4 py-1.5 shadow-md">
           <span className="text-sm font-semibold text-gray-700">{service.category}</span>
         </div>
 
@@ -2112,8 +3346,26 @@ function ServiceDetail({ service, setFlow, bookingSource }: { service: any; setF
         </div>
       </div>
 
+      {serviceImages.length > 1 && (
+        <div className="px-4 mt-16 flex gap-2 overflow-x-auto pb-1">
+          {serviceImages.map((imageUrl: string, index: number) => (
+            <button
+              key={`${imageUrl}-${index}`}
+              type="button"
+              onClick={() => {
+                setSelectedImage(imageUrl)
+                openLightbox(imageUrl)
+              }}
+              className={`w-16 h-16 rounded-xl overflow-hidden flex-shrink-0 border-2 ${selectedImage === imageUrl ? 'border-primary' : 'border-transparent'}`}
+            >
+              <img src={imageUrl} alt={`Vista ${index + 1}`} className="w-full h-full object-cover" />
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Nombre, ciudad, rating */}
-      <div className="text-center mt-14 px-4">
+      <div className={`text-center px-4 ${serviceImages.length > 1 ? 'mt-4' : 'mt-14'}`}>
         <h2 className="text-xl font-bold text-gray-800">{providerName}</h2>
         <div className="flex flex-wrap items-center justify-center gap-2 mt-1">
           {providerCity && (
@@ -2138,35 +3390,186 @@ function ServiceDetail({ service, setFlow, bookingSource }: { service: any; setF
         </div>
       </div>
 
+      <div className="px-4 mt-6">
+        <StoriesShelf
+          cityCandidates={viewerCityCandidates}
+          onStoryAction={handleStoryAction}
+          onStoryReply={handleStoryReply}
+        />
+      </div>
+
       {/* Contacto */}
-      <div className="px-6 mt-6">
-        <h3 className="text-sm font-bold text-gray-800 mb-3">Contacto</h3>
-        <div className="space-y-2.5">
-          {providerPhone && (
-            <div className="flex items-center gap-3 text-sm text-gray-600">
-              <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                <Phone className="h-3.5 w-3.5 text-primary" />
-              </div>
-              <span>{providerPhone}</span>
+      <div className="px-4 mt-6 space-y-3">
+        {whatsappUrl && (
+          <div className="flex items-center gap-3 rounded-2xl bg-white px-3.5 py-3.5 shadow-[0_8px_24px_rgba(15,23,42,0.06)] border border-slate-100">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#25D366]">
+              <WhatsAppIcon className="h-6 w-6 text-white" />
             </div>
-          )}
-          {providerEmail && (
-            <div className="flex items-center gap-3 text-sm text-gray-600">
-              <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                <Mail className="h-3.5 w-3.5 text-primary" />
-              </div>
-              <span className="truncate">{providerEmail}</span>
+            <div className="min-w-0 flex-1">
+              <p className="text-base font-bold text-slate-900">WhatsApp</p>
+              <p className="text-xs text-slate-500">Chateá directo con nosotros</p>
+              <p className="mt-0.5 text-sm font-semibold text-[#1faa59] truncate">{whatsappSource}</p>
             </div>
-          )}
+            <button
+              type="button"
+              onClick={() => openExternalUrl(whatsappUrl)}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-[#25D366] px-4 py-2.5 text-sm font-bold text-white shadow-sm active:scale-[0.98]"
+            >
+              <WhatsAppIcon className="h-3.5 w-3.5 text-white" />
+              Chatear
+            </button>
+          </div>
+        )}
+
+        {hasContactInfo ? (
+          <div className="grid grid-cols-3 gap-2.5">
+            {providerPhone && (
+              <button
+                type="button"
+                onClick={() => openPhoneDialer(providerPhone)}
+                className="flex min-h-[132px] flex-col items-center rounded-2xl bg-white px-2 py-3 text-center shadow-[0_8px_24px_rgba(15,23,42,0.05)] border border-slate-100 active:scale-[0.98]"
+              >
+                <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-teal-50 text-teal-700">
+                  <Phone className="h-5 w-5" />
+                </div>
+                <p className="text-[13px] font-bold text-slate-900">Llamar</p>
+                <p className="mt-1 line-clamp-2 break-all px-0.5 text-[11px] font-medium leading-tight text-teal-700">
+                  {providerPhone}
+                </p>
+                <span className="mt-auto flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-teal-700 shadow-sm">
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </span>
+              </button>
+            )}
+            {providerEmail && (
+              <button
+                type="button"
+                onClick={() => openEmailClient(providerEmail, contactMessage)}
+                className="flex min-h-[132px] flex-col items-center rounded-2xl bg-white px-2 py-3 text-center shadow-[0_8px_24px_rgba(15,23,42,0.05)] border border-slate-100 active:scale-[0.98]"
+              >
+                <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-teal-50 text-teal-700">
+                  <Mail className="h-5 w-5" />
+                </div>
+                <p className="text-[13px] font-bold text-slate-900">Email</p>
+                <p className="mt-1 line-clamp-2 break-all px-0.5 text-[11px] font-medium leading-tight text-teal-700">
+                  {providerEmail}
+                </p>
+                <span className="mt-auto flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-teal-700 shadow-sm">
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </span>
+              </button>
+            )}
+            {instagramUrl && (
+              <button
+                type="button"
+                onClick={() => openSocialWithReferral(instagramUrl)}
+                className="flex min-h-[132px] flex-col items-center rounded-2xl bg-white px-2 py-3 text-center shadow-[0_8px_24px_rgba(15,23,42,0.05)] border border-slate-100 active:scale-[0.98]"
+              >
+                <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-teal-50 text-teal-700">
+                  <Instagram className="h-5 w-5" />
+                </div>
+                <p className="text-[13px] font-bold text-slate-900">Instagram</p>
+                <p className="mt-1 line-clamp-2 break-all px-0.5 text-[11px] font-medium leading-tight text-teal-700">
+                  {instagramLabel}
+                </p>
+                <span className="mt-auto flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-teal-700 shadow-sm">
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </span>
+              </button>
+            )}
+            {facebookUrl && (
+              <button
+                type="button"
+                onClick={() => openSocialWithReferral(facebookUrl)}
+                className="flex min-h-[132px] flex-col items-center rounded-2xl bg-white px-2 py-3 text-center shadow-[0_8px_24px_rgba(15,23,42,0.05)] border border-slate-100 active:scale-[0.98]"
+              >
+                <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-teal-50 text-teal-700">
+                  <Facebook className="h-5 w-5" />
+                </div>
+                <p className="text-[13px] font-bold text-slate-900">Facebook</p>
+                <p className="mt-1 line-clamp-2 break-all px-0.5 text-[11px] font-medium leading-tight text-teal-700">
+                  {facebookLabel}
+                </p>
+                <span className="mt-auto flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-teal-700 shadow-sm">
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </span>
+              </button>
+            )}
+            {websiteUrl && (
+              <button
+                type="button"
+                onClick={() => openExternalUrl(websiteUrl)}
+                className="flex min-h-[132px] flex-col items-center rounded-2xl bg-white px-2 py-3 text-center shadow-[0_8px_24px_rgba(15,23,42,0.05)] border border-slate-100 active:scale-[0.98]"
+              >
+                <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-teal-50 text-teal-700">
+                  <Globe className="h-5 w-5" />
+                </div>
+                <p className="text-[13px] font-bold text-slate-900">Sitio web</p>
+                <p className="mt-1 line-clamp-2 break-all px-0.5 text-[11px] font-medium leading-tight text-teal-700">
+                  {websiteLabel}
+                </p>
+                <span className="mt-auto flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-teal-700 shadow-sm">
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </span>
+              </button>
+            )}
+            {mapsUrl && (
+              <button
+                type="button"
+                onClick={() => openExternalUrl(mapsUrl)}
+                className="flex min-h-[132px] flex-col items-center rounded-2xl bg-white px-2 py-3 text-center shadow-[0_8px_24px_rgba(15,23,42,0.05)] border border-slate-100 active:scale-[0.98]"
+              >
+                <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-teal-50 text-teal-700">
+                  <MapPin className="h-5 w-5" />
+                </div>
+                <p className="text-[13px] font-bold text-slate-900">Ubicación</p>
+                <p className="mt-1 line-clamp-2 px-0.5 text-[11px] font-medium leading-tight text-teal-700">
+                  Ver en mapa
+                </p>
+                <span className="mt-auto flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-teal-700 shadow-sm">
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </span>
+              </button>
+            )}
+            {canOpenInAppChat && (
+              <button
+                type="button"
+                onClick={() => void openInAppChat()}
+                className="flex min-h-[132px] flex-col items-center rounded-2xl bg-white px-2 py-3 text-center shadow-[0_8px_24px_rgba(15,23,42,0.05)] border border-slate-100 active:scale-[0.98]"
+              >
+                <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-teal-50 text-teal-700 overflow-hidden">
+                  <AppIcon name="chat" className="h-6 w-6" />
+                </div>
+                <p className="text-[13px] font-bold text-slate-900">Mensaje</p>
+                <p className="mt-1 line-clamp-2 px-0.5 text-[11px] font-medium leading-tight text-teal-700">
+                  Chat en la app
+                </p>
+                <span className="mt-auto flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-teal-700 shadow-sm">
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </span>
+              </button>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-400 px-1">El proveedor aún no cargó datos de contacto.</p>
+        )}
+
+        {/* Sobre el servicio */}
+        <div className="flex items-start gap-3 rounded-2xl bg-white px-3.5 py-3.5 shadow-[0_8px_24px_rgba(15,23,42,0.05)] border border-slate-100">
+          <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-teal-50 text-teal-700">
+            <Info className="h-5 w-5" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-slate-900">Sobre el servicio</p>
+            <p className="mt-1 text-sm leading-relaxed text-slate-500">
+              {service.description || "Este proveedor aún no ha agregado una descripción de su servicio."}
+            </p>
+          </div>
         </div>
       </div>
 
-      {/* Sobre el servicio */}
-      <div className="px-6 mt-6">
-        <h3 className="text-sm font-bold text-gray-800 mb-2">Sobre el servicio</h3>
-        <p className="text-sm text-gray-500 leading-relaxed">
-          {service.description || 'Este proveedor aún no ha agregado una descripción de su servicio.'}
-        </p>
+      <div className="px-4 mt-6">
+        <ServiceReviews serviceId={service.id} user={user} setFlow={setFlow} />
       </div>
 
       {/* Horarios */}
@@ -2193,35 +3596,190 @@ function ServiceDetail({ service, setFlow, bookingSource }: { service: any; setF
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 py-4 pb-safe z-40">
         <div className="flex items-center justify-between">
           <div>
-            <span className="text-xs text-gray-400">Desde</span>
-            <p className="text-xl font-black text-gray-800">${Number(service.price).toLocaleString('es-AR')}</p>
+            <span className="text-xs text-gray-400">{Number(service.price) > 0 ? 'Desde' : 'Precio'}</span>
+            <p className="text-xl font-black text-gray-800">{Number(service.price) > 0 ? `$${Number(service.price).toLocaleString('es-AR')}` : 'Consultar'}</p>
           </div>
           <Button 
             onClick={() => setFlow("booking")} 
             className="h-11 px-8 rounded-xl text-white font-semibold"
             style={{ backgroundColor: '#FF7F50' }}
           >
-            Agendar Turner
+            Agendar Turno
           </Button>
         </div>
       </div>
+
+      {lightboxOpen && canPreviewImage(serviceImages[lightboxIndex]) && (
+        <div
+          className="fixed inset-0 z-[80] bg-black/92 flex items-center justify-center p-4"
+          onClick={() => setLightboxOpen(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Imagen ampliada"
+        >
+          <button
+            type="button"
+            onClick={() => setLightboxOpen(false)}
+            className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/15 text-white flex items-center justify-center"
+            aria-label="Cerrar imagen"
+          >
+            <X className="h-5 w-5" />
+          </button>
+
+          {serviceImages.length > 1 && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation()
+                showLightboxPrev()
+              }}
+              className="absolute left-3 w-10 h-10 rounded-full bg-white/15 text-white flex items-center justify-center"
+              aria-label="Imagen anterior"
+            >
+              <ChevronLeft className="h-6 w-6" />
+            </button>
+          )}
+
+          <img
+            src={serviceImages[lightboxIndex]}
+            alt={`${service.name} ${lightboxIndex + 1}`}
+            className="max-w-full max-h-[85vh] object-contain rounded-lg"
+            onClick={(event) => event.stopPropagation()}
+          />
+
+          {serviceImages.length > 1 && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation()
+                showLightboxNext()
+              }}
+              className="absolute right-3 w-10 h-10 rounded-full bg-white/15 text-white flex items-center justify-center"
+              aria-label="Imagen siguiente"
+            >
+              <ChevronRight className="h-6 w-6" />
+            </button>
+          )}
+
+          {serviceImages.length > 1 && (
+            <p className="absolute bottom-5 text-white/80 text-sm">
+              {lightboxIndex + 1} / {serviceImages.length}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   )
 }
 
-function ServiceReviews({ serviceId }: { serviceId: string }) {
-  const { reviews, loading } = useReviews(serviceId)
+function ServiceReviews({
+  serviceId,
+  user,
+  setFlow,
+}: {
+  serviceId: string
+  user?: any
+  setFlow?: (flow: string) => void
+}) {
+  const { reviews, loading, addReview, hasUserReviewed } = useReviews(serviceId)
+  const [score, setScore] = useState(5)
+  const [comment, setComment] = useState("")
+  const [error, setError] = useState("")
+  const [success, setSuccess] = useState("")
+  const [submitting, setSubmitting] = useState(false)
+  const alreadyReviewed = hasUserReviewed(user?.uid)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!user?.uid) {
+      setError("Inicia sesión para dejar una reseña.")
+      return
+    }
+    if (!comment.trim()) {
+      setError("Escribe un comentario sobre tu experiencia.")
+      return
+    }
+
+    setSubmitting(true)
+    setError("")
+    setSuccess("")
+    const result = await addReview({
+      serviceId,
+      clientId: user.uid,
+      clientName: user.displayName || user.email || "Cliente",
+      rating: score,
+      comment: comment.trim(),
+    })
+    setSubmitting(false)
+
+    if (result.success) {
+      setComment("")
+      setScore(5)
+      setSuccess("¡Gracias! Tu reseña ya está publicada.")
+    } else {
+      setError(result.error || "No pudimos guardar la reseña.")
+    }
+  }
 
   return (
     <Card className="bg-white">
-      <CardContent className="p-4">
-        <h3 className="font-semibold mb-4">Reseñas de vecinos</h3>
+      <CardContent className="p-4 space-y-5">
+        <h3 className="font-semibold">Reseñas de vecinos</h3>
+
+        {!user?.uid ? (
+          <div className="rounded-xl bg-gray-50 border border-gray-100 p-3 text-sm text-muted-foreground">
+            <p>Inicia sesión para dejar tu reseña.</p>
+            {setFlow && (
+              <Button variant="link" className="px-0 h-auto mt-1" onClick={() => setFlow("login")}>
+                Ir a iniciar sesión
+              </Button>
+            )}
+          </div>
+        ) : alreadyReviewed ? (
+          <p className="text-sm text-green-700 bg-green-50 border border-green-100 rounded-xl px-3 py-2">
+            Ya dejaste tu reseña en este servicio. ¡Gracias!
+          </p>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-3 rounded-xl border border-gray-100 bg-gray-50/70 p-3">
+            <p className="text-sm font-medium text-gray-800">¿Qué te pareció este servicio?</p>
+            <div className="flex gap-1">
+              {[1, 2, 3, 4, 5].map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setScore(value)}
+                  className="p-1"
+                  aria-label={`${value} estrellas`}
+                >
+                  <Star className={`h-7 w-7 ${value <= score ? "fill-amber-400 text-amber-400" : "text-gray-200"}`} />
+                </button>
+              ))}
+            </div>
+            <textarea
+              rows={3}
+              value={comment}
+              onChange={(event) => setComment(event.target.value)}
+              placeholder="Contá tu experiencia..."
+              maxLength={500}
+              className="w-full p-3 border border-input rounded-xl resize-none bg-white text-sm"
+            />
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs text-muted-foreground">{comment.length}/500</span>
+              <Button type="submit" size="sm" disabled={submitting} className="rounded-xl">
+                {submitting ? "Publicando..." : "Publicar reseña"}
+              </Button>
+            </div>
+            {error && <p className="text-sm text-red-600">{error}</p>}
+            {success && <p className="text-sm text-green-700">{success}</p>}
+          </form>
+        )}
+
         {loading ? (
           <div className="flex justify-center py-4">
             <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full"></div>
           </div>
         ) : reviews.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-4">Aún no hay reseñas para este servicio.</p>
+          <p className="text-sm text-muted-foreground text-center py-2">Aún no hay reseñas para este servicio.</p>
         ) : (
           <div className="space-y-4">
             {reviews.map((review) => (
@@ -2267,8 +3825,8 @@ function BookingCalendar({
 }) {
   const [currentMonth, setCurrentMonth] = useState(new Date())
   const { logInteraction } = useAnalytics()
-
-  const availableTimes = ["10:00", "11:30", "15:00", "16:30", "18:00"]
+  const { bookings } = useBookings()
+  const availableTimes = getAvailableSlots(selectedDate, bookings, service?.id, service?.providerId)
 
   const getDaysInMonth = (date: Date) => {
     const year = date.getFullYear()
@@ -2401,6 +3959,9 @@ function BookingCalendar({
           <Card>
             <CardContent className="p-4">
               <h3 className="font-semibold mb-3">Horarios disponibles</h3>
+              {availableTimes.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No hay horarios libres ese día. Probá otra fecha o consultá al proveedor.</p>
+              ) : (
               <div className="grid grid-cols-3 gap-2">
                 {availableTimes.map((time) => (
                   <Button
@@ -2413,6 +3974,7 @@ function BookingCalendar({
                   </Button>
                 ))}
               </div>
+              )}
             </CardContent>
           </Card>
         )}
@@ -2438,19 +4000,29 @@ function PaymentScreen({
   user,
   createBooking,
   bookingSource,
+  setActiveChat,
 }: {
   service: any
   selectedDate: string
   selectedTime: string
   setFlow: (flow: string) => void
   user: any
-  createBooking: (bookingData: any) => Promise<{success: boolean, error?: string}>
+  createBooking: (bookingData: any) => Promise<{success: boolean, error?: string, id?: string}>
   bookingSource: string
+  setActiveChat: (chat: any) => void
 }) {
   const [selectedPayment, setSelectedPayment] = useState<string>("")
   const [showTransferDetails, setShowTransferDetails] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [isSuccess, setIsSuccess] = useState(false)
   const [providerBankDetails, setProviderBankDetails] = useState<{cbu?: string, alias?: string, accountHolder?: string} | null>(null)
+  const [mpConnected, setMpConnected] = useState(false)
+  const [waitingMp, setWaitingMp] = useState(false)
+  const [mpError, setMpError] = useState("")
+  const [bookedPayLater, setBookedPayLater] = useState(false)
+  const { settings: appSettings } = useAppSettings()
+  const bookingPrice = parseMoney(service?.price) ?? 0
+  const canPayMp = mpConnected && bookingPrice > 0
   
   // Obtener datos bancarios reales del proveedor
   useEffect(() => {
@@ -2467,6 +4039,7 @@ function PaymentScreen({
               alias: data.alias,
               accountHolder: data.accountHolder
             })
+            setMpConnected(Boolean(data.mpConnected))
           }
         } catch (error) {
           console.error("Error fetching provider details:", error)
@@ -2495,8 +4068,12 @@ function PaymentScreen({
     }
   }
 
-  const handleConfirmPayment = async () => {
-    if (!selectedPayment || !user || !service) {
+  const handleConfirmPayment = async (payNow = true) => {
+    if (payNow && !selectedPayment) {
+      alert("Elegí un método de pago o reservá para pagar después")
+      return
+    }
+    if (!user || !service) {
       alert("Por favor completa todos los campos")
       return
     }
@@ -2504,6 +4081,12 @@ function PaymentScreen({
     setLoading(true)
 
     try {
+      const method = payNow
+        ? (selectedPayment as 'cash' | 'mercadopago' | 'transfer')
+        : 'later'
+
+      if (!payNow) setBookedPayLater(true)
+
       const bookingData = {
         serviceId: service.id,
         serviceName: service.name,
@@ -2514,26 +4097,68 @@ function PaymentScreen({
         providerName: service.providerName || 'Proveedor',
         date: selectedDate,
         time: selectedTime,
-        price: typeof service.price === 'string' ? parseFloat(service.price.replace('$', '')) : service.price,
-        status: 'pending' as const,
-        paymentMethod: selectedPayment as 'cash' | 'mercadopago' | 'transfer',
-        paymentStatus: selectedPayment === 'cash' ? 'pending' as const : 'paid' as const,
+        price: parseMoney(service.price) ?? 0,
+        status: (appSettings.autoAcceptBookings ? 'confirmed' : 'pending') as 'pending' | 'confirmed',
+        paymentMethod: method,
+        paymentStatus: 'pending' as const,
         source: bookingSource,
       }
 
       const result = await createBooking(bookingData)
 
-      if (result.success) {
-        setIsSuccess(true)
-      } else {
+      if (!result.success || !result.id) {
         alert("Error al confirmar el turno. Por favor intenta nuevamente.")
+        return
       }
+
+      if (payNow && selectedPayment === "mercadopago") {
+        setWaitingMp(true)
+        const checkout = await createMercadoPagoCheckout(result.id)
+        if (checkout.alreadyPaid) {
+          setIsSuccess(true)
+          setWaitingMp(false)
+          return
+        }
+        if (checkout.initPoint) openMercadoPagoUrl(checkout.initPoint)
+        const { doc, onSnapshot } = await import("firebase/firestore")
+        const { db } = await import("@/lib/firebase")
+        const stop = onSnapshot(doc(db, "bookings", result.id), (snap) => {
+          if (snap.data()?.paymentStatus === "paid") {
+            stop()
+            setWaitingMp(false)
+            setIsSuccess(true)
+          }
+        })
+        return
+      }
+
+      setIsSuccess(true)
     } catch (error: any) {
       console.error('Error creating booking:', error)
-      alert("Error al confirmar el turno. Por favor intenta nuevamente.")
+      setWaitingMp(false)
+      setMpError(callableErrorMessage(error))
+      alert(callableErrorMessage(error) || "Error al confirmar el turno. Por favor intenta nuevamente.")
     } finally {
       setLoading(false)
     }
+  }
+
+  if (waitingMp) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
+        <div className="w-16 h-16 rounded-full bg-sky-100 flex items-center justify-center mb-5">
+          <AppIcon name="datosPago" className="h-8 w-8" />
+        </div>
+        <h2 className="text-2xl font-bold text-gray-900 mb-2">Pagá en Mercado Pago</h2>
+        <p className="text-gray-600 mb-6 max-w-sm">
+          Te abrimos Mercado Pago para que el dinero vaya directo al comercio. Cuando el pago se acredite, esta reserva se confirma sola.
+        </p>
+        {mpError && <p className="text-sm text-red-600 mb-4">{mpError}</p>}
+        <Button variant="ghost" className="text-gray-500" onClick={() => setFlow("home")}>
+          Volver al inicio
+        </Button>
+      </div>
+    )
   }
 
   if (isSuccess) {
@@ -2545,6 +4170,9 @@ function PaymentScreen({
         <h2 className="text-2xl font-bold text-gray-900 mb-2">¡Reserva Confirmada!</h2>
         <p className="text-gray-600 mb-8 max-w-sm">
           Tu turno para <span className="font-bold text-primary">{service.name}</span> ha sido registrado exitosamente.
+          {bookedPayLater ? (
+            <span className="block mt-2 text-sm">Podés pagarlo después desde tu perfil cuando quieras.</span>
+          ) : null}
         </p>
 
         <div className="w-full max-w-sm space-y-3">
@@ -2581,7 +4209,7 @@ function PaymentScreen({
           <Button variant="ghost" size="sm" onClick={() => setFlow("booking")}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <h1 className="text-xl font-bold">Pago</h1>
+          <h1 className="text-xl font-bold">Confirmar reserva</h1>
         </div>
       </div>
 
@@ -2602,7 +4230,7 @@ function PaymentScreen({
               </p>
               <p>
                 <span className="font-medium">Precio:</span>{" "}
-                <span className="text-primary font-bold">{service.price}</span>
+                <span className="text-primary font-bold">{formatMoney(service.price)}</span>
               </p>
             </div>
           </CardContent>
@@ -2611,7 +4239,8 @@ function PaymentScreen({
         {/* Payment Methods */}
         <Card>
           <CardContent className="p-4">
-            <h3 className="font-semibold mb-3">Método de pago</h3>
+            <h3 className="font-semibold mb-1">¿Cómo querés pagar?</h3>
+            <p className="text-sm text-muted-foreground mb-3">Podés pagar ahora o reservar y pagar después.</p>
             <div className="space-y-3">
               <Button
                 variant={selectedPayment === "cash" ? "default" : "outline"}
@@ -2623,12 +4252,27 @@ function PaymentScreen({
               </Button>
 
               <Button
-                variant={selectedPayment === "mercadopago" ? "default" : "outline"}
-                className="w-full justify-start h-12"
+                variant="outline"
+                className={`h-16 w-full justify-start rounded-2xl border-2 px-3 transition-all ${
+                  selectedPayment === "mercadopago"
+                    ? "border-[#009EE3] bg-sky-50 text-[#007EB5] shadow-[0_6px_18px_rgba(0,158,227,0.14)] hover:bg-sky-50"
+                    : "border-slate-200 bg-white text-slate-700 hover:border-sky-300 hover:bg-sky-50/50"
+                }`}
                 onClick={() => handlePaymentSelect("mercadopago")}
+                disabled={!canPayMp}
               >
-                <CreditCard className="h-4 w-4 mr-3" />
-                MercadoPago
+                <span className="mr-3 flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white p-1 shadow-sm ring-1 ring-sky-100">
+                  <AppIcon name="datosPago" className="h-full w-full rounded-lg" />
+                </span>
+                <span className="min-w-0 flex-1 text-left">
+                  <span className="block font-black">Mercado Pago</span>
+                  {canPayMp && <span className="block text-[11px] font-normal opacity-75">Pago seguro directo al comercio</span>}
+                  {!mpConnected && <span className="block text-[11px] font-normal opacity-70">El comercio todavía no conectó su cuenta</span>}
+                  {mpConnected && bookingPrice <= 0 && <span className="block text-[11px] font-normal opacity-70">Este servicio no tiene precio para cobrar</span>}
+                </span>
+                {selectedPayment === "mercadopago" && (
+                  <span className="ml-2 flex h-6 w-6 items-center justify-center rounded-full bg-[#009EE3] text-sm font-black text-white">✓</span>
+                )}
               </Button>
 
               <Button
@@ -2661,7 +4305,7 @@ function PaymentScreen({
                   </p>
                 )}
                 <p className="text-sm border-t pt-2 mt-2 border-gray-200">
-                  <span className="font-medium">Monto:</span> {service.price}
+                  <span className="font-medium">Monto:</span> {formatMoney(service.price)}
                 </p>
               </div>
               <Button variant="outline" className="w-full mt-3 bg-transparent">
@@ -2672,36 +4316,189 @@ function PaymentScreen({
         )}
 
         {/* Confirm Payment */}
-        <Button
-          onClick={handleConfirmPayment}
-          disabled={!selectedPayment || loading}
-          className="w-full h-12 text-base"
-          variant="orange"
-        >
-          {loading ? "Confirmando..." : "Confirmar pago"}
-        </Button>
+        <div className="space-y-2">
+          <Button
+            onClick={() => void handleConfirmPayment(true)}
+            disabled={!selectedPayment || loading}
+            className="w-full h-12 text-base"
+            variant="orange"
+          >
+            {loading
+              ? "Confirmando..."
+              : selectedPayment === "mercadopago"
+                ? "Reservar y pagar ahora"
+                : "Confirmar reserva"}
+          </Button>
+          {bookingPrice > 0 && (
+            <Button
+              onClick={() => void handleConfirmPayment(false)}
+              disabled={loading}
+              variant="outline"
+              className="w-full h-12 text-base bg-white"
+            >
+              Reservar y pagar después
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   )
 }
 
-function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow: (flow: string) => void; user: any; logout: () => Promise<{ success: boolean }>; onSwitchToProvider: () => Promise<{ success: boolean }> }) {
-  const { getBookingsByClient } = useBookings()
-  const [switchingRole, setSwitchingRole] = useState(false)
-  const [showConfirmSwitch, setShowConfirmSwitch] = useState(false)
-  const [roleAlert, setRoleAlert] = useState<"success" | "error" | null>(null)
-  const [roleAlertMessage, setRoleAlertMessage] = useState("")
+function canEditClientBooking(booking: any) {
+  if (!booking || booking.status === "cancelled" || booking.status === "completed") return false
+  const when = new Date(`${booking.date}T${booking.time || "23:59"}`)
+  return Number.isNaN(when.getTime()) || when.getTime() > Date.now()
+}
+
+function ClientBookingDetail({
+  booking,
+  onClose,
+}: {
+  booking: any
+  onClose: () => void
+}) {
+  const { cancelBooking, updateBooking } = useBookings()
+  const [editing, setEditing] = useState(false)
+  const [date, setDate] = useState(booking.date || "")
+  const [time, setTime] = useState(booking.time || "")
+  const [saving, setSaving] = useState(false)
+  const [paying, setPaying] = useState(false)
+  const editable = canEditClientBooking(booking)
+  const canPay = isUnpaidBooking(booking)
+
+  const statusLabel =
+    booking.status === "confirmed" ? "Confirmada" :
+    booking.status === "pending" ? "Pendiente" :
+    booking.status === "cancelled" ? "Cancelada" :
+    booking.status === "completed" ? "Completada" : booking.status
+
+  const handlePay = async () => {
+    setPaying(true)
+    try {
+      const checkout = await createMercadoPagoCheckout(booking.id)
+      if (checkout.alreadyPaid) {
+        onClose()
+        return
+      }
+      if (checkout.initPoint) openMercadoPagoUrl(checkout.initPoint)
+    } catch (error) {
+      alert(callableErrorMessage(error) || "No se pudo abrir el pago")
+    } finally {
+      setPaying(false)
+    }
+  }
+
+  const handleCancel = async () => {
+    if (!confirm("¿Cancelar esta reserva?")) return
+    setSaving(true)
+    const result = await cancelBooking(booking.id)
+    setSaving(false)
+    if (result.success) onClose()
+    else alert("No se pudo cancelar la reserva")
+  }
+
+  const handleSave = async () => {
+    if (!date || !time) {
+      alert("Elegí fecha y hora")
+      return
+    }
+    setSaving(true)
+    const result = await updateBooking(booking.id, { date, time })
+    setSaving(false)
+    if (result.success) {
+      setEditing(false)
+      onClose()
+    } else {
+      alert("No se pudo actualizar la reserva")
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[100] bg-black/60 flex items-end sm:items-center justify-center p-4" onClick={onClose}>
+      <Card className="w-full max-w-md rounded-3xl" onClick={(event) => event.stopPropagation()}>
+        <CardContent className="p-6 space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="text-xl font-bold text-gray-900">{booking.serviceName || "Reserva"}</h3>
+              <p className="text-sm text-muted-foreground mt-0.5">{booking.providerName || "Proveedor"}</p>
+            </div>
+            <button type="button" onClick={onClose} className="p-1 text-gray-400"><X className="h-5 w-5" /></button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <span className={`inline-flex text-xs px-2 py-1 rounded ${
+              booking.status === "confirmed" ? "bg-green-100 text-green-800" :
+              booking.status === "pending" ? "bg-yellow-100 text-yellow-800" :
+              booking.status === "cancelled" ? "bg-red-100 text-red-800" :
+              "bg-blue-100 text-blue-800"
+            }`}>{statusLabel}</span>
+            <span className={`inline-flex text-xs px-2 py-1 rounded ${
+              booking.paymentStatus === "paid" ? "bg-emerald-100 text-emerald-800" : "bg-orange-100 text-orange-800"
+            }`}>
+              {paymentStatusLabel(booking.paymentStatus)} · {paymentMethodLabel(booking.paymentMethod)}
+            </span>
+          </div>
+
+          {editing ? (
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <Label htmlFor="edit-booking-date">Fecha</Label>
+                <Input id="edit-booking-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="edit-booking-time">Hora</Label>
+                <Input id="edit-booking-time" type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" className="flex-1" onClick={() => setEditing(false)}>Cancelar</Button>
+                <Button className="flex-1" disabled={saving} onClick={handleSave}>{saving ? "Guardando..." : "Guardar"}</Button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="rounded-2xl bg-gray-50 p-4 space-y-1 text-sm">
+                <p><span className="text-muted-foreground">Fecha:</span> {booking.date || "Sin fecha"}</p>
+                <p><span className="text-muted-foreground">Hora:</span> {booking.time || "Sin hora"}</p>
+                <p><span className="text-muted-foreground">Precio:</span> {formatMoney(booking.price)}</p>
+                {booking.paymentRequested && canPay && (
+                  <p className="text-orange-600 font-medium pt-1">El proveedor te pidió el pago</p>
+                )}
+              </div>
+              {canPay && (
+                <Button className="w-full" disabled={paying} onClick={() => void handlePay()}>
+                  {paying ? "Abriendo Mercado Pago..." : "Pagar ahora"}
+                </Button>
+              )}
+              {editable ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <Button variant="outline" onClick={() => setEditing(true)}>Editar</Button>
+                  <Button variant="destructive" disabled={saving} onClick={handleCancel}>{saving ? "..." : "Cancelar turno"}</Button>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground text-center">Esta reserva ya no se puede modificar.</p>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+function ClientProfile({ setFlow, user, logout }: { setFlow: (flow: string) => void; user: any; logout: () => Promise<{ success: boolean }>; onSwitchToProvider?: () => Promise<{ success: boolean }>; services?: any[]; setSelectedService?: (service: any) => void }) {
   const [loading, setLoading] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [profileData, setProfileData] = useState({
     name: user?.displayName || "",
     email: user?.email || "",
     phone: "",
+    city: "",
     address: "",
     profileImage: "/placeholder.svg"
   })
   const [uploadingImage, setUploadingImage] = useState(false)
   const [success, setSuccess] = useState("")
+  const photoMissing = !hasValidProfilePhoto(profileData.profileImage)
 
   // Cargar datos del perfil desde Firestore al montar
   useEffect(() => {
@@ -2713,14 +4510,17 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
         const userDoc = await getDoc(doc(db, 'users', user.uid))
         if (userDoc.exists()) {
           const data = userDoc.data()
-          setProfileData(prev => ({
-            ...prev,
-            name: data.name || data.displayName || user?.displayName || "",
-            email: data.email || user?.email || "",
-            phone: data.phone || "",
-            address: data.address || "",
-            profileImage: data.profileImage || "/placeholder.svg"
-          }))
+            setProfileData(prev => ({
+              ...prev,
+              name: data.name || data.displayName || user?.displayName || "",
+              email: data.email || user?.email || "",
+              phone: data.phone || "",
+              city: data.city || "",
+              address: data.address || "",
+              profileImage: hasValidProfilePhoto(data.profileImage)
+                ? data.profileImage
+                : (hasValidProfilePhoto(user?.photoURL) ? user.photoURL : "/placeholder.svg")
+            }))
         }
       } catch (error) {
         console.error('Error cargando perfil:', error)
@@ -2745,6 +4545,11 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
   }
 
   const handleSave = async () => {
+    if (!hasValidProfilePhoto(profileData.profileImage)) {
+      setSuccess("")
+      alert("La foto de perfil es obligatoria. Subí una imagen para continuar.")
+      return
+    }
     setLoading(true)
     try {
       const { doc, setDoc } = await import("firebase/firestore")
@@ -2825,7 +4630,7 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
     <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
       <div className="bg-white shadow-sm p-4">
         <div className="flex items-center gap-3 mb-4">
-          <Button variant="ghost" size="sm" onClick={() => setFlow("home")}>
+          <Button variant="ghost" size="sm" onClick={() => { if (!photoMissing) setFlow("home") }} disabled={photoMissing}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <h1 className="text-xl font-bold text-primary">Mi Perfil</h1>
@@ -2882,13 +4687,49 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
                       onClick={() => document.getElementById('client-profile-upload')?.click()}
                       disabled={uploadingImage}
                     >
-                      {uploadingImage ? '⏳' : '📷'}
+                      {uploadingImage ? '⏳' : <AppIcon name="camara" className="h-4 w-4" />}
                     </Button>
                   </div>
                 )}
               </div>
-              {isEditing ? (
-                <div className="space-y-3 mt-4">
+              <h2 className="text-xl font-semibold">
+                {profileData.name || user?.displayName || 'Usuario'}
+              </h2>
+              <p className="text-muted-foreground">
+                {profileData.email || user?.email || 'Sin email'}
+              </p>
+              {profileData.phone && !isEditing && (
+                <p className="text-sm text-muted-foreground mt-1">
+                  📞 {profileData.phone}
+                </p>
+              )}
+              {photoMissing && (
+                <p className="text-sm text-red-600 font-medium mt-2">La foto de perfil es obligatoria. Tocá Editar perfil para subirla.</p>
+              )}
+
+              {!isEditing && (
+                <div className="mt-4 space-y-2">
+                  <Button
+                    variant="outline"
+                    className="w-full bg-transparent"
+                    onClick={() => setIsEditing(true)}
+                  >
+                    Editar perfil
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    className="w-full text-red-600 hover:text-red-700 hover:bg-red-50"
+                    onClick={handleLogout}
+                    disabled={loading}
+                  >
+                    <AppIcon name="cerrarSesion" className="h-4 w-4 mr-2" />
+                    {loading ? "Cerrando sesión..." : "Cerrar sesión"}
+                  </Button>
+                </div>
+              )}
+
+              {isEditing && (
+                <div className="space-y-3 mt-4 text-left">
                   <div className="space-y-2">
                     <Label htmlFor="client-name">Nombre</Label>
                     <Input
@@ -2898,7 +4739,10 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="client-email">Email</Label>
+                    <Label htmlFor="client-email" className="flex items-center gap-2">
+                      <AppIcon name="correo" className="h-4 w-4" />
+                      Email
+                    </Label>
                     <Input
                       id="client-email"
                       type="email"
@@ -2907,7 +4751,10 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="client-phone">Teléfono</Label>
+                    <Label htmlFor="client-phone" className="flex items-center gap-2">
+                      <AppIcon name="telefono" className="h-4 w-4" />
+                      Teléfono
+                    </Label>
                     <Input
                       id="client-phone"
                       value={profileData.phone}
@@ -2916,7 +4763,19 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="client-address">Dirección</Label>
+                    <Label htmlFor="client-city">Ciudad</Label>
+                    <Input
+                      id="client-city"
+                      value={profileData.city}
+                      onChange={(e) => handleInputChange("city", e.target.value)}
+                      placeholder="Ej: Rosario"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="client-address" className="flex items-center gap-2">
+                      <AppIcon name="ubicacion" className="h-4 w-4" />
+                      Dirección
+                    </Label>
                     <Input
                       id="client-address"
                       value={profileData.address}
@@ -2925,193 +4784,47 @@ function ClientProfile({ setFlow, user, logout, onSwitchToProvider }: { setFlow:
                     />
                   </div>
                   <div className="flex gap-3 pt-2">
-                    <Button variant="outline" onClick={() => setIsEditing(false)} className="flex-1">
+                    <Button variant="outline" onClick={() => setIsEditing(false)} className="flex-1" disabled={photoMissing && loading}>
                       Cancelar
                     </Button>
-                    <Button onClick={handleSave} disabled={loading} className="flex-1">
+                    <Button onClick={handleSave} disabled={loading || photoMissing} className="flex-1">
                       {loading ? "Guardando..." : "Guardar"}
                     </Button>
                   </div>
-                </div>
-              ) : (
-                <>
-                  <h2 className="text-xl font-semibold">
-                    {profileData.name || user?.displayName || 'Usuario'}
-                  </h2>
-                  <p className="text-muted-foreground">
-                    {profileData.email || user?.email || 'Sin email'}
-                  </p>
-                  {profileData.phone && (
-                    <p className="text-sm text-muted-foreground mt-1">
-                      📞 {profileData.phone}
-                    </p>
-                  )}
-                  <Button
-                    variant="outline"
-                    className="w-full bg-transparent mt-4"
-                    onClick={() => setIsEditing(true)}
-                  >
-                    Editar perfil
-                  </Button>
                   <Button
                     variant="ghost"
-                    className="w-full text-red-600 hover:text-red-700 hover:bg-red-50 mt-2"
+                    className="w-full text-red-600 hover:text-red-700 hover:bg-red-50"
                     onClick={handleLogout}
                     disabled={loading}
                   >
-                    <LogOut className="h-4 w-4 mr-2" />
+                    <AppIcon name="cerrarSesion" className="h-4 w-4 mr-2" />
                     {loading ? "Cerrando sesión..." : "Cerrar sesión"}
                   </Button>
-                </>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-white">
-          <CardContent className="p-4 space-y-3">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold">Mis reservas</h3>
-              <Button variant="ghost" size="sm" onClick={() => setFlow("agenda")}>
-                Ver todas
-              </Button>
-            </div>
-            <div className="space-y-2">
-              {user ? (
-                (() => {
-                  const userBookings = getBookingsByClient(user.uid) || []
-                  return userBookings.length > 0 ? (
-                    userBookings.slice(0, 3).map((booking) => (
-                      <div key={booking.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                        <Clock className="h-4 w-4 text-muted-foreground" />
-                        <div className="flex-1">
-                          <p className="font-medium">{booking.serviceName || 'Servicio'}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {booking.date || 'Fecha no disponible'} - {booking.time || 'Hora no disponible'}
-                          </p>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className={`text-xs px-2 py-1 rounded ${booking.status === 'confirmed' ? 'bg-green-100 text-green-800' :
-                              booking.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-                                booking.status === 'cancelled' ? 'bg-red-100 text-red-800' :
-                                  'bg-blue-100 text-blue-800'
-                              }`}>
-                              {booking.status === 'confirmed' ? 'Confirmada' :
-                                booking.status === 'pending' ? 'Pendiente' :
-                                  booking.status === 'cancelled' ? 'Cancelada' :
-                                    booking.status === 'completed' ? 'Completada' :
-                                      'Desconocido'}
-                            </span>
-                            <span className="text-xs text-muted-foreground">
-                              ${booking.price || 0}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="text-center py-4 text-muted-foreground">
-                      <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                      <p className="text-sm">No tienes reservas aún</p>
-                      <p className="text-xs">¡Explora servicios y haz tu primera reserva!</p>
-                    </div>
-                  )
-                })()
-              ) : (
-                <div className="text-center py-4 text-muted-foreground">
-                  <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                  <p className="text-sm">Inicia sesión para ver tus reservas</p>
                 </div>
               )}
             </div>
           </CardContent>
         </Card>
 
-        {roleAlert && (
-          <div className="p-0">
-            <CustomAlert
-              type={roleAlert}
-              title={roleAlert === "success" ? "¡Listo!" : "Error"}
-              message={roleAlertMessage}
-              onClose={() => { setRoleAlert(null); setRoleAlertMessage("") }}
-            />
-          </div>
-        )}
-
-        <Card className="bg-white">
-          <CardContent className="p-4">
-            <h3 className="font-semibold mb-2">Cambiar de rol</h3>
-            <p className="text-sm text-muted-foreground mb-3">
-              ¿Quieres ofrecer tus servicios? Cambia a modo Proveedor para publicar y gestionar tus ofertas.
-            </p>
-            <Button
-              variant="outline"
-              className="w-full"
-              onClick={() => setShowConfirmSwitch(true)}
-              disabled={switchingRole}
-            >
-              <Building2 className="h-4 w-4 mr-2" />
-              {switchingRole ? "Cambiando..." : "Quiero ser Proveedor"}
-            </Button>
-          </CardContent>
-        </Card>
-
-        <AlertDialog open={showConfirmSwitch} onOpenChange={setShowConfirmSwitch}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>¿Cambiar a modo Proveedor?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Tendrás acceso al panel para publicar y gestionar tus servicios, ver reservas y tu agenda. Podrás volver a modo Cliente cuando quieras desde tu perfil.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancelar</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={async () => {
-                  setShowConfirmSwitch(false)
-                  setSwitchingRole(true)
-                  setRoleAlert(null)
-                  const result = await onSwitchToProvider()
-                  setSwitchingRole(false)
-                  if (!result.success) {
-                    setRoleAlert("error")
-                    setRoleAlertMessage("Falló la actualización. Intente más tarde.")
-                  }
-                }}
-              >
-                Sí, cambiar
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-
+        <div className="flex justify-center"><HelpLink /></div>
+        <p className="text-xs text-muted-foreground text-center px-2">
+          Para ofrecer un servicio usá la pestaña <button type="button" className="underline font-medium text-primary" onClick={() => setFlow("mi-servicio")}>Mi servicio</button>. Tus reservas están en Agenda.
+        </p>
       </div>
 
-      {/* Espacio extra para que el scroll no quede tapado por el footer */}
       <div className="h-24"></div>
 
       {/* Footer Navigation */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 pb-safe z-40">
-        <div className="flex justify-around py-3">
-          <button onClick={() => setFlow("home")} className="flex flex-col items-center gap-1">
-            <div className="text-gray-400">
-              <Home className="h-6 w-6" />
-            </div>
-            <span className="text-[10px] font-medium text-gray-400">Inicio</span>
-          </button>
-          <button onClick={() => setFlow("agenda")} className="flex flex-col items-center gap-1">
-            <div className="text-gray-400">
-              <Calendar className="h-6 w-6" />
-            </div>
-            <span className="text-[10px] font-medium text-gray-400">Agenda</span>
-          </button>
-          <button onClick={() => setFlow("profile")} className="flex flex-col items-center gap-1">
-            <div className="text-primary">
-              <User className="h-6 w-6" />
-            </div>
-            <span className="text-[10px] font-medium text-primary">Perfil</span>
-          </button>
-        </div>
-      </div>
+      <MainBottomNav
+          active="perfil"
+          onHome={() => setFlow("home")}
+          onMyService={() => setFlow("mi-servicio")}
+          onAgenda={() => setFlow("agenda")}
+          onProfile={() => setFlow("profile")}
+          user={user}
+          setFlow={setFlow}
+          zClass="z-40"
+        />
     </div>
   )
 }
@@ -3128,6 +4841,9 @@ function ClientAgenda({ setFlow, user, setActiveChat, onBack }: { setFlow: (flow
   const [ratingBooking, setRatingBooking] = useState<any>(null)
   const [ratingScore, setRatingScore] = useState(5)
   const [ratingComment, setRatingComment] = useState("")
+  const [ratingError, setRatingError] = useState("")
+  const [submittingRating, setSubmittingRating] = useState(false)
+  const [selectedBooking, setSelectedBooking] = useState<any>(null)
 
   // Obtener reservas del cliente
   const clientBookings = getBookingsByClient(user?.uid) || []
@@ -3222,6 +4938,48 @@ function ClientAgenda({ setFlow, user, setActiveChat, onBack }: { setFlow: (flow
     })
   }
 
+  const canReviewBooking = (booking: any) => {
+    if (booking.reviewed || booking.status === 'cancelled') return false
+    if (booking.status === 'completed') return true
+    const appointmentDate = new Date(`${booking.date}T${booking.time || '23:59'}`)
+    return !Number.isNaN(appointmentDate.getTime()) && appointmentDate.getTime() <= Date.now()
+  }
+
+  const openRatingModal = (booking: any) => {
+    setRatingBooking(booking)
+    setRatingScore(5)
+    setRatingComment("")
+    setRatingError("")
+    setShowRateModal(true)
+  }
+
+  const handleSubmitRating = async () => {
+    if (!ratingBooking || !user?.uid) return
+    if (!ratingComment.trim()) {
+      setRatingError("Escribe un comentario sobre tu experiencia.")
+      return
+    }
+
+    setSubmittingRating(true)
+    setRatingError("")
+    const result = await addReview({
+      serviceId: ratingBooking.serviceId,
+      clientId: user.uid,
+      clientName: user.displayName || user.email || 'Cliente',
+      rating: ratingScore,
+      comment: ratingComment.trim()
+    }, ratingBooking.id)
+    setSubmittingRating(false)
+
+    if (result.success) {
+      setShowRateModal(false)
+      setRatingBooking(null)
+      await fetchBookings()
+    } else {
+      setRatingError(result.error || "No pudimos guardar la reseña.")
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[#f7fdfd] pb-24">
       <div className="p-4 flex items-center justify-between sticky top-0 bg-[#f7fdfd] z-10">
@@ -3294,7 +5052,7 @@ function ClientAgenda({ setFlow, user, setActiveChat, onBack }: { setFlow: (flow
             (selectedDate ? selectedDateBookings : clientBookings.filter(b => new Date(b.date) >= new Date()))
               .slice(0, 5)
               .map((booking) => (
-              <Card key={booking.id} className="border-none shadow-sm bg-white rounded-2xl overflow-hidden">
+              <Card key={booking.id} className="border-none shadow-sm bg-white rounded-2xl overflow-hidden cursor-pointer" onClick={() => setSelectedBooking(booking)}>
                 <CardContent className="p-4">
                   <div className="flex items-center gap-4">
                     <div className="w-14 h-14 rounded-full bg-gray-100 flex-shrink-0 overflow-hidden relative">
@@ -3319,6 +5077,14 @@ function ClientAgenda({ setFlow, user, setActiveChat, onBack }: { setFlow: (flow
                       </div>
                     </div>
                   </div>
+                  {canReviewBooking(booking) && (
+                    <Button type="button" variant="outline" className="w-full mt-4 text-amber-600 border-amber-200" onClick={(event) => { event.stopPropagation(); openRatingModal(booking) }}>
+                      <Star className="h-4 w-4 mr-2" /> Calificar y escribir reseña
+                    </Button>
+                  )}
+                  {booking.reviewed && (
+                    <p className="text-xs text-green-600 font-medium mt-3 text-center">✓ Ya calificaste este servicio</p>
+                  )}
                 </CardContent>
               </Card>
             ))
@@ -3330,47 +5096,75 @@ function ClientAgenda({ setFlow, user, setActiveChat, onBack }: { setFlow: (flow
         </div>
       </div>
 
-      {/* Footer Navigation */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 pb-safe z-20">
-        <div className="flex justify-around py-3">
-          <button onClick={() => setFlow("home")} className="flex flex-col items-center gap-1">
-            <div className="text-gray-400">
-              <Home className="h-6 w-6" />
-            </div>
-            <span className="text-[10px] font-medium text-gray-400">Inicio</span>
-          </button>
-          <button onClick={() => setFlow("agenda")} className="flex flex-col items-center gap-1">
-            <div className="text-primary">
-              <Calendar className="h-6 w-6" />
-            </div>
-            <span className="text-[10px] font-medium text-primary">Agenda</span>
-          </button>
-          <button onClick={() => setFlow("profile")} className="flex flex-col items-center gap-1">
-            <div className="text-gray-400">
-              <User className="h-6 w-6" />
-            </div>
-            <span className="text-[10px] font-medium text-gray-400">Perfil</span>
-          </button>
+      {selectedBooking && (
+        <ClientBookingDetail booking={selectedBooking} onClose={() => setSelectedBooking(null)} />
+      )}
+
+      {showRateModal && ratingBooking && (
+        <div className="fixed inset-0 z-[100] bg-black/60 flex items-end sm:items-center justify-center p-4">
+          <Card className="w-full max-w-md rounded-3xl">
+            <CardContent className="p-6 space-y-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-xl font-bold">Calificar servicio</h3>
+                  <p className="text-sm text-muted-foreground mt-1">{ratingBooking.serviceName}</p>
+                </div>
+                <button type="button" onClick={() => setShowRateModal(false)} className="p-1 text-gray-400"><X className="h-5 w-5" /></button>
+              </div>
+              <div className="flex justify-center gap-2">
+                {[1, 2, 3, 4, 5].map((score) => (
+                  <button key={score} type="button" onClick={() => setRatingScore(score)} className="p-1" aria-label={`${score} estrellas`}>
+                    <Star className={`h-9 w-9 ${score <= ratingScore ? 'fill-amber-400 text-amber-400' : 'text-gray-200'}`} />
+                  </button>
+                ))}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="rating-comment">Tu reseña</Label>
+                <textarea id="rating-comment" rows={4} value={ratingComment} onChange={(event) => setRatingComment(event.target.value)} placeholder="¿Cómo fue tu experiencia?" maxLength={500} className="w-full p-3 border border-input rounded-xl resize-none" />
+                <p className="text-xs text-muted-foreground text-right">{ratingComment.length}/500</p>
+              </div>
+              {ratingError && <p className="text-sm text-red-600">{ratingError}</p>}
+              <Button type="button" className="w-full" disabled={submittingRating} onClick={handleSubmitRating}>
+                {submittingRating ? 'Publicando...' : 'Publicar reseña'}
+              </Button>
+            </CardContent>
+          </Card>
         </div>
-      </div>
+      )}
+
+      {/* Footer Navigation */}
+      <MainBottomNav
+          active="agenda"
+          onHome={() => setFlow("home")}
+          onMyService={() => setFlow("mi-servicio")}
+          onAgenda={() => setFlow("agenda")}
+          onProfile={() => setFlow("profile")}
+          user={user}
+          setFlow={setFlow}
+          zClass="z-20"
+        />
     </div>
   )
 }
 
-function ProviderOnboarding({ setFlow }: { setFlow: (flow: string) => void }) {
+function ProviderOnboarding({ setFlow, openRegistration = true, appName = "Punto Encuentro" }: { setFlow: (flow: string) => void; openRegistration?: boolean; appName?: string }) {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
       <div className="w-full max-w-sm space-y-8">
         <div className="text-center">
-          <h1 className="text-3xl font-bold text-primary mb-2">Punto Encuentro</h1>
+          <h1 className="text-3xl font-bold text-primary mb-2">{appName}</h1>
           <p className="text-muted-foreground">Ofrece tus servicios</p>
         </div>
 
         <Card>
           <CardContent className="p-6 space-y-4">
-            <Button onClick={() => setFlow("register")} className="w-full h-12 text-base">
-              Registrarse como proveedor
-            </Button>
+            {openRegistration ? (
+              <Button onClick={() => setFlow("register")} className="w-full h-12 text-base">
+                Registrarse como proveedor
+              </Button>
+            ) : (
+              <p className="text-sm text-center text-muted-foreground py-2">Registro cerrado. Usa iniciar sesión si ya tienes cuenta.</p>
+            )}
 
             <Button onClick={() => setFlow("login")} variant="outline" className="w-full h-12 text-base">
               Iniciar sesión
@@ -3389,20 +5183,26 @@ function ProviderOnboarding({ setFlow }: { setFlow: (flow: string) => void }) {
 function ProviderLogin({
   setFlow,
   signIn,
+  signInWithGoogle,
   setAuthError,
   authError,
   setAuthSuccess,
-  authSuccess
+  authSuccess,
+  openRegistration = true,
 }: {
   setFlow: (flow: string) => void
   signIn: (email: string, password: string) => Promise<{ success: boolean, error?: string }>
+  signInWithGoogle: (defaultRole?: 'client' | 'provider' | 'admin') => Promise<{ success: boolean, error?: string, redirect?: boolean }>
   setAuthError: (error: string) => void
   authError: string
   setAuthSuccess: (message: string) => void
   authSuccess: string
+  openRegistration?: boolean
 }) {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
+  const [showPassword, setShowPassword] = useState(false)
+  const [googleLoading, setGoogleLoading] = useState(false)
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -3410,13 +5210,40 @@ function ProviderLogin({
 
     const result = await signIn(email, password)
     if (result.success) {
-      setAuthSuccess("¡Inicio de sesión exitoso!")
-      setTimeout(() => {
-        setFlow("dashboard")
-      }, 1500)
+      // Preferir rol real de Firestore (signIn ya escribió localStorage); fallback proveedor.
+      const saved = localStorage.getItem("userType")
+      if (saved !== "client" && saved !== "provider") {
+        localStorage.setItem("userType", "provider")
+      }
+      localStorage.setItem("providerIntent", "1")
+      localStorage.setItem("userType", "provider")
+      setFlow("home")
     } else {
       setAuthError(result.error || "Error al iniciar sesión")
     }
+  }
+
+  const handleGoogleLogin = async () => {
+    setGoogleLoading(true)
+    setAuthError("")
+    setAuthSuccess("")
+
+    const result = await signInWithGoogle("provider")
+
+    if (result.redirect) {
+      setAuthSuccess("Redirigiendo a Google...")
+      return
+    }
+
+    if (result.success) {
+      localStorage.setItem("providerIntent", "1")
+      localStorage.setItem("userType", "provider")
+      setFlow("home")
+    } else {
+      setAuthError(result.error || "Error al iniciar sesión con Google")
+    }
+
+    setGoogleLoading(false)
   }
 
   return (
@@ -3454,7 +5281,10 @@ function ProviderLogin({
           <CardContent className="p-6 space-y-4">
             <form onSubmit={handleLogin} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="provider-email">Email</Label>
+                <Label htmlFor="provider-email" className="flex items-center gap-2">
+                  <AppIcon name="correo" className="h-4 w-4" />
+                  Email
+                </Label>
                 <Input
                   id="provider-email"
                   type="email"
@@ -3466,27 +5296,49 @@ function ProviderLogin({
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="provider-password">Contraseña</Label>
-                <Input
-                  id="provider-password"
-                  type="password"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
+                <Label htmlFor="provider-password" className="flex items-center gap-2">
+                  <AppIcon name="seguridad" className="h-4 w-4" />
+                  Contraseña
+                </Label>
+                <div className="relative">
+                  <Input
+                    id="provider-password"
+                    type={showPassword ? "text" : "password"}
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="pr-11"
+                    required
+                  />
+                  <button type="button" onClick={() => setShowPassword((value) => !value)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" aria-label={showPassword ? "Ocultar contraseña" : "Ver contraseña"}>
+                    {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                  </button>
+                </div>
               </div>
 
-              <Button type="submit" className="w-full h-12 text-base">
+              <Button type="submit" disabled={googleLoading} className="w-full h-12 text-base">
                 Iniciar sesión
               </Button>
             </form>
 
-            <div className="text-center">
-              <Button variant="link" onClick={() => setFlow("register")} className="text-sm text-muted-foreground">
-                ¿No tienes cuenta? Regístrate
-              </Button>
+            <div className="relative my-2">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t border-gray-200" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-white px-2 text-muted-foreground">o</span>
+              </div>
             </div>
+
+            <GoogleSignInButton onClick={handleGoogleLogin} loading={googleLoading} />
+
+            {openRegistration && (
+              <div className="text-center">
+                <Button variant="link" onClick={() => setFlow("register")} className="text-sm text-muted-foreground">
+                  ¿No tienes cuenta? Regístrate
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -3501,6 +5353,7 @@ function ProviderLogin({
 function ProviderRegister({
   setFlow,
   signUp,
+  signInWithGoogle,
   setAuthError,
   authError,
   setAuthSuccess,
@@ -3508,6 +5361,7 @@ function ProviderRegister({
 }: {
   setFlow: (flow: string) => void
   signUp: (email: string, password: string) => Promise<{ success: boolean, error?: string }>
+  signInWithGoogle: (defaultRole?: 'client' | 'provider' | 'admin') => Promise<{ success: boolean, error?: string, redirect?: boolean, user?: any }>
   setAuthError: (error: string) => void
   authError: string
   setAuthSuccess: (message: string) => void
@@ -3519,11 +5373,40 @@ function ProviderRegister({
     phone: "",
     password: "",
   })
+  const [googleLoading, setGoogleLoading] = useState(false)
+  const [profileFile, setProfileFile] = useState<File | null>(null)
+  const [profilePreview, setProfilePreview] = useState("")
+
+  const handleInputChange = (field: keyof typeof formData, value: string) => {
+    setFormData((prev) => ({ ...prev, [field]: value }))
+  }
+
+  const handleProfileFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ""
+    if (!file) return
+    const error = validateProfilePhotoFile(file)
+    if (error) {
+      setAuthError(error)
+      return
+    }
+    setAuthError("")
+    setProfileFile(file)
+    setProfilePreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev)
+      return URL.createObjectURL(file)
+    })
+  }
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
     setAuthError("")
     setAuthSuccess("")
+
+    if (!profileFile) {
+      setAuthError("La foto de perfil es obligatoria")
+      return
+    }
 
     try {
       const result = await signUp(formData.email, formData.password)
@@ -3541,38 +5424,117 @@ function ProviderRegister({
             await updateProfile(currentUser, { displayName: formData.businessName })
           }
 
-          // Guardar usuario en Firestore con rol de proveedor
-          const { doc, setDoc } = await import("firebase/firestore")
-          const { db } = await import("@/lib/firebase")
+          const { uploadImage } = await import("@/lib/uploadImage")
+          const profileImage = await uploadImage(profileFile, `profiles/${currentUser.uid}/profile`)
 
-          await setDoc(doc(db, 'users', currentUser.uid), {
-            email: formData.email,
-            displayName: formData.businessName,
-            phone: formData.phone,
-            role: 'provider',
-            permissions: [],
-            isActive: true,
-            isVerified: false, // Requiere verificación del admin
-            createdAt: new Date(),
-            updatedAt: new Date()
-          })
+          // Guardar perfil proveedor. No escribir isVerified/permissions/isActive en update:
+          // las reglas de Firestore bloquean esos campos (solo admin / create inicial).
+          const { doc, getDoc, setDoc } = await import("firebase/firestore")
+          const { db } = await import("@/lib/firebase")
+          const userRef = doc(db, 'users', currentUser.uid)
+          const existing = await getDoc(userRef)
+
+          if (!existing.exists()) {
+            await setDoc(userRef, {
+              email: formData.email,
+              displayName: formData.businessName,
+              phone: formData.phone,
+              role: 'provider',
+              permissions: [],
+              isActive: true,
+              isVerified: false,
+              profileImage,
+              createdAt: new Date(),
+              updatedAt: new Date()
+            })
+          } else {
+            await setDoc(userRef, {
+              email: formData.email,
+              displayName: formData.businessName,
+              phone: formData.phone,
+              role: 'provider',
+              profileImage,
+              updatedAt: new Date()
+            }, { merge: true })
+          }
+
+          // Guardar en localStorage INMEDIATAMENTE para que la sincronización
+          // de page.tsx sepa que es proveedor y no dependa de la re-lectura de Firestore
+          localStorage.setItem("userType", "provider")
+          localStorage.setItem("providerIntent", "1")
         }
 
         setAuthSuccess("¡Registro exitoso! Bienvenido a Punto Encuentro")
+        localStorage.setItem("providerOnboarding", "1")
+        localStorage.setItem("providerIntent", "1")
         setTimeout(() => {
-          setFlow("dashboard")
+          setFlow("profile")
         }, 2000)
       } else {
         setAuthError(result.error || "Error al registrarse")
       }
     } catch (error: any) {
       console.error('Error en registro:', error)
-      setAuthError(error.message || "Error al registrarse")
+      const msg = error?.message || "Error al registrarse"
+      if (String(msg).toLowerCase().includes('permission') || error?.code === 'storage/unauthorized') {
+        setAuthError("No hay permisos para subir la foto o guardar el perfil. Pedile al admin que despliegue las reglas de Storage/Firestore.")
+      } else {
+        setAuthError(msg)
+      }
     }
   }
 
-  const handleInputChange = (field: string, value: string) => {
-    setFormData((prev) => ({ ...prev, [field]: value }))
+  const handleGoogleRegister = async () => {
+    setGoogleLoading(true)
+    setAuthError("")
+    setAuthSuccess("")
+
+    const result = await signInWithGoogle("provider")
+
+    if (result.redirect) {
+      setAuthSuccess("Redirigiendo a Google...")
+      return
+    }
+
+    if (result.success) {
+      // Forzar rol proveedor sin tocar campos reservados (isVerified, permissions, etc.).
+      if (result.user?.uid) {
+        try {
+          const { doc, setDoc } = await import("firebase/firestore")
+          const { db } = await import("@/lib/firebase")
+          await setDoc(doc(db, "users", result.user.uid), {
+            role: "provider",
+            updatedAt: new Date(),
+          }, { merge: true })
+        } catch (error) {
+          console.error("Error fijando rol proveedor:", error)
+        }
+      }
+      localStorage.setItem("userType", "provider")
+      localStorage.setItem("providerOnboarding", "1")
+      localStorage.setItem("providerIntent", "1")
+      if (profileFile && result.user?.uid) {
+        try {
+          const { uploadImage } = await import("@/lib/uploadImage")
+          const profileImage = await uploadImage(profileFile, `profiles/${result.user.uid}/profile`)
+          const { doc, setDoc } = await import("firebase/firestore")
+          const { db } = await import("@/lib/firebase")
+          await setDoc(doc(db, "users", result.user.uid), {
+            profileImage,
+            role: "provider",
+            updatedAt: new Date(),
+          }, { merge: true })
+        } catch (error: any) {
+          console.error("Error subiendo foto de perfil:", error)
+        }
+      }
+      setAuthSuccess("¡Registro exitoso! Bienvenido a Punto Encuentro")
+      setTimeout(() => setFlow("profile"), 2000)
+    } else {
+      setAuthError(result.error || "Error al registrarse con Google")
+    }
+
+    setGoogleLoading(false)
   }
 
   return (
@@ -3609,6 +5571,31 @@ function ProviderRegister({
         <Card>
           <CardContent className="p-6 space-y-4">
             <form onSubmit={handleRegister} className="space-y-4">
+              <div className="flex flex-col items-center gap-2">
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  id="provider-register-photo"
+                  onChange={handleProfileFileChange}
+                />
+                <button
+                  type="button"
+                  onClick={() => document.getElementById("provider-register-photo")?.click()}
+                  className="relative w-24 h-24 rounded-full overflow-hidden border-2 border-dashed border-primary/40 bg-primary/5 flex items-center justify-center"
+                >
+                  {profilePreview ? (
+                    <img src={profilePreview} alt="Foto de perfil" className="w-full h-full object-cover" />
+                  ) : (
+                    <AppIcon name="camara" className="h-8 w-8" />
+                  )}
+                </button>
+                <Label htmlFor="provider-register-photo" className="text-sm">
+                  Foto de perfil <span className="text-red-500">*</span>
+                </Label>
+                <p className="text-xs text-muted-foreground text-center">Obligatoria para crear la cuenta</p>
+              </div>
+
               <div className="space-y-2">
                 <Label htmlFor="business-name">Nombre del negocio</Label>
                 <Input
@@ -3621,7 +5608,10 @@ function ProviderRegister({
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="business-email">Email</Label>
+                <Label htmlFor="business-email" className="flex items-center gap-2">
+                  <AppIcon name="correo" className="h-4 w-4" />
+                  Email
+                </Label>
                 <Input
                   id="business-email"
                   type="email"
@@ -3633,7 +5623,10 @@ function ProviderRegister({
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="business-phone">Teléfono</Label>
+                <Label htmlFor="business-phone" className="flex items-center gap-2">
+                  <AppIcon name="telefono" className="h-4 w-4" />
+                  Teléfono
+                </Label>
                 <Input
                   id="business-phone"
                   placeholder="11 1234-5678"
@@ -3644,7 +5637,10 @@ function ProviderRegister({
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="business-password">Contraseña</Label>
+                <Label htmlFor="business-password" className="flex items-center gap-2">
+                  <AppIcon name="seguridad" className="h-4 w-4" />
+                  Contraseña
+                </Label>
                 <Input
                   id="business-password"
                   type="password"
@@ -3655,10 +5651,21 @@ function ProviderRegister({
                 />
               </div>
 
-              <Button type="submit" className="w-full h-12 text-base">
+              <Button type="submit" disabled={googleLoading} className="w-full h-12 text-base">
                 Registrarse
               </Button>
             </form>
+
+            <div className="relative my-2">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t border-gray-200" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-white px-2 text-muted-foreground">o</span>
+              </div>
+            </div>
+
+            <GoogleSignInButton onClick={handleGoogleRegister} loading={googleLoading} label="Registrarse con Google" />
 
             <div className="text-center">
               <Button variant="link" onClick={() => setFlow("login")} className="text-sm text-muted-foreground">
@@ -3676,263 +5683,211 @@ function ProviderRegister({
   )
 }
 
-function ProviderDashboard({ setFlow, user, services, logout }: { setFlow: (flow: string) => void; user: any; services: any[]; logout: () => Promise<{ success: boolean }> }) {
-  const { getBookingsByProvider } = useBookings()
+function MyServiceHub({
+  role,
+  setFlow,
+  user,
+  services,
+  setSelectedProviderService,
+  onBecomeProvider,
+}: {
+  role: "provider" | "client"
+  setFlow: (flow: string) => void
+  user: any
+  services: any[]
+  setSelectedProviderService?: (service: any) => void
+  onBecomeProvider?: () => Promise<{ success: boolean }>
+}) {
+  const { getBookingsByProvider, updateBooking } = useBookings()
+  const [converting, setConverting] = useState(false)
+  const [convertError, setConvertError] = useState("")
+  const myService = getCanonicalService(services, user?.uid)
+  const providerBookings = role === "provider" ? (getBookingsByProvider(user?.uid) || []) : []
+  const pendingRequests = providerBookings.filter((booking: any) => booking.status === "pending")
 
-  // Filtrar servicios del proveedor actual
-  const providerServices = (services || []).filter(service => service.providerId === user?.uid)
+  const openEdit = () => {
+    if (!myService || !setSelectedProviderService) return
+    setSelectedProviderService(myService)
+    setFlow("edit-service")
+  }
 
-  // Obtener reservas del proveedor
-  const providerBookings = getBookingsByProvider(user?.uid) || []
-
-  // Calcular estadísticas
-  const totalClients = new Set(providerBookings.map(booking => booking.clientId)).size
-  const totalRevenue = providerBookings
-    .filter(booking => booking.paymentStatus === 'paid')
-    .reduce((sum, booking) => sum + booking.price, 0)
-
-  // Próximas citas (próximos 7 días)
-  const upcomingAppointments = providerBookings
-    .filter(booking => {
-      const today = new Date()
-      today.setHours(0, 0, 0, 0)
-      const bookingDate = new Date(booking.date)
-      return bookingDate >= today && booking.status === 'confirmed'
-    })
-    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-    .slice(0, 3)
-
-  // Solicitudes pendientes
-  const pendingRequests = providerBookings.filter(b => b.status === 'pending')
-
-  const [isSubscribed, setIsSubscribed] = useState(false)
-  const [loading, setLoading] = useState(false)
-
-  const handleConfirmBooking = async (bookingId: string) => {
-    setLoading(true)
-    try {
-      await updateBooking(bookingId, { status: 'confirmed' })
-      alert('Reserva confirmada')
-    } catch (e) {
-      alert('Error al confirmar')
-    } finally {
-      setLoading(false)
+  const handleBecomeProvider = async () => {
+    if (!onBecomeProvider) return
+    setConverting(true)
+    setConvertError("")
+    const result = await onBecomeProvider()
+    setConverting(false)
+    if (!result.success) {
+      setConvertError("No se pudo activar el modo proveedor. Intentá de nuevo.")
     }
   }
 
-  const handleCancelBooking = async (bookingId: string) => {
-    if (!confirm('¿Rechazar esta reserva?')) return
-    setLoading(true)
-    try {
-      await updateBooking(bookingId, { status: 'cancelled' })
-      alert('Reserva rechazada')
-    } catch (e) {
-      alert('Error al rechazar')
-    } finally {
-      setLoading(false)
-    }
+  if (role === "client") {
+    return (
+      <div className="min-h-screen pb-24" style={{ backgroundColor: "oklch(0.98 0.01 200)" }}>
+        <div className="bg-white shadow-sm p-4">
+          <h1 className="text-xl font-bold text-primary">Mi servicio</h1>
+          <p className="text-sm text-muted-foreground mt-1">Publicá tu negocio en Punto Encuentro</p>
+        </div>
+        <div className="p-4 space-y-4">
+          <Card>
+            <CardContent className="p-5 space-y-3">
+              <div className="h-12 w-12 rounded-2xl bg-primary/10 flex items-center justify-center">
+                <AppIcon name="trabajo" className="h-7 w-7" />
+              </div>
+              <h2 className="text-lg font-bold text-gray-900">Convertite en proveedor</h2>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                Activá tu perfil comercial para publicar un servicio, recibir reservas y chatear con clientes.
+                Usás el mismo correo: un solo servicio por cuenta.
+              </p>
+              {convertError && <p className="text-sm text-red-600">{convertError}</p>}
+              <Button className="w-full h-12 rounded-xl font-bold" onClick={handleBecomeProvider} disabled={converting}>
+                {converting ? "Activando..." : "Quiero ofrecer un servicio"}
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+        <MainBottomNav
+          active="servicio"
+          onHome={() => setFlow("home")}
+          onMyService={() => setFlow("mi-servicio")}
+          onAgenda={() => setFlow("agenda")}
+          onProfile={() => setFlow("profile")}
+          user={user}
+          setFlow={setFlow}
+        />
+      </div>
+    )
   }
 
   return (
-    <div className="min-h-screen pb-24" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
-      {/* Header */}
+    <div className="min-h-screen pb-24" style={{ backgroundColor: "oklch(0.98 0.01 200)" }}>
       <div className="bg-white shadow-sm p-4">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-xl font-bold text-primary">Panel de Control</h1>
-          <div className="flex gap-2">
-            <Button variant="ghost" size="sm" onClick={() => setFlow("agenda")}>
-              Mis Reservas
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => setFlow("profile")}>
-              Perfil
-            </Button>
-            <Button variant="ghost" size="sm" onClick={async () => {
-              const result = await logout()
-              if (result.success) {
-                localStorage.removeItem('userType')
-                window.location.reload()
-              }
-            }} className="text-red-600 hover:text-red-700 hover:bg-red-50">
-              Salir
-            </Button>
-          </div>
-        </div>
+        <h1 className="text-xl font-bold text-primary">Mi servicio</h1>
+        <p className="text-sm text-muted-foreground mt-1">Gestión de tu publicación (1 por cuenta)</p>
       </div>
 
-      <div className="p-4 space-y-6">
-        {!isSubscribed && (
-          <Card className="border-primary/20 bg-gradient-to-r from-primary/5 to-primary/10">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-semibold text-primary">¡Mejora tu negocio con Premium!</h3>
-                  <p className="text-sm text-muted-foreground">Promociones ilimitadas, estadísticas y más</p>
+      <div className="p-4 space-y-4">
+        <StoriesLimitPromoBanner />
+
+        {!myService ? (
+          <Card className="border-primary/20">
+            <CardContent className="p-5 space-y-3 text-center">
+              <p className="font-semibold text-gray-900">Todavía no publicaste tu servicio</p>
+              <p className="text-sm text-muted-foreground">
+                Completá fotos, descripción, ubicación y datos de contacto del servicio. Todo lo comercial vive acá.
+              </p>
+              <Button className="w-full h-12 rounded-xl font-bold" onClick={() => setFlow("create-service")}>
+                <AppIcon name="agregarServicio" className="h-4 w-4 mr-2" />
+                Crear mi servicio
+              </Button>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardContent className="p-4 space-y-3">
+              <div className="flex gap-3">
+                <img
+                  src={myService.image || myService.images?.[0] || "/placeholder.svg"}
+                  alt={myService.name}
+                  className="h-20 w-20 rounded-xl object-cover bg-gray-100"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="font-bold text-gray-900 truncate">{myService.name}</p>
+                  <p className="text-sm text-muted-foreground truncate">{myService.category}</p>
+                  <p className="text-primary font-bold mt-1">${myService.price}</p>
                 </div>
-                <Button size="sm" onClick={() => setFlow("subscription")}>
-                  Ver planes
-                </Button>
               </div>
+              <Button className="w-full" onClick={openEdit}>
+                Editar servicio
+              </Button>
+              <p className="text-[11px] text-muted-foreground text-center">
+                Fotos, contacto, ubicación y precio se editan acá y se muestran en tu ficha pública.
+              </p>
             </CardContent>
           </Card>
         )}
 
-        {/* Pending Requests Alert */}
         {pendingRequests.length > 0 && (
           <Card className="border-yellow-200 bg-yellow-50">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" />
-                  <h3 className="font-bold text-yellow-900">Tienes {pendingRequests.length} solicitudes pendientes</h3>
-                </div>
-                <Button size="sm" className="bg-yellow-500 hover:bg-yellow-600 text-white" onClick={() => setFlow("agenda")}>
-                  Ver todas
-                </Button>
+            <CardContent className="p-4 flex items-center justify-between gap-3">
+              <div>
+                <p className="font-bold text-yellow-900">{pendingRequests.length} solicitudes pendientes</p>
+                <p className="text-sm text-yellow-800">Revisalas en la agenda</p>
               </div>
-              <div className="space-y-2">
-                {pendingRequests.slice(0, 2).map(req => (
-                  <div key={req.id} className="bg-white/50 p-3 rounded-lg flex items-center justify-between text-sm">
-                    <div>
-                      <p className="font-medium">{req.clientName}</p>
-                      <p className="text-muted-foreground">{req.serviceName} - {new Date(req.date).toLocaleDateString()} {req.time}</p>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button size="xs" className="bg-green-600 hover:bg-green-700 text-white" onClick={() => handleConfirmBooking(req.id)} disabled={loading}>Confirmar</Button>
-                      <Button size="xs" variant="outline" className="text-red-600 border-red-200" onClick={() => handleCancelBooking(req.id)} disabled={loading}>Rechazar</Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <Button size="sm" onClick={() => setFlow("agenda")}>Ver</Button>
             </CardContent>
           </Card>
         )}
 
-        {/* Stats Cards */}
-        <div className="grid grid-cols-2 gap-4">
-          <Card>
-            <CardContent className="p-4 text-center">
-              <Users className="h-6 w-6 text-primary mx-auto mb-2" />
-              <p className="text-2xl font-bold">{totalClients}</p>
-              <p className="text-sm text-muted-foreground">Clientes únicos</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-4 text-center">
-              <TrendingUp className="h-6 w-6 text-primary mx-auto mb-2" />
-              <p className="text-2xl font-bold">${totalRevenue.toLocaleString()}</p>
-              <p className="text-sm text-muted-foreground">Ingresos totales</p>
-            </CardContent>
-          </Card>
+        <div className="grid grid-cols-2 gap-3">
+          <Button variant="outline" className="h-auto py-3 flex-col gap-1" onClick={() => setFlow("stories")}>
+            <AppIcon name="estadisticas" className="h-5 w-5" />
+            <span className="text-xs font-semibold">Historias</span>
+          </Button>
+          <Button variant="outline" className="h-auto py-3 flex-col gap-1" onClick={() => setFlow("statistics")}>
+            <AppIcon name="estadisticas" className="h-5 w-5" />
+            <span className="text-xs font-semibold">Estadísticas</span>
+          </Button>
+          <Button variant="outline" className="h-auto py-3 flex-col gap-1" onClick={() => setFlow("agenda")}>
+            <AppIcon name="agenda" className="h-5 w-5" />
+            <span className="text-xs font-semibold">Reservas</span>
+          </Button>
+          <Button variant="outline" className="h-auto py-3 flex-col gap-1" onClick={openEdit} disabled={!myService}>
+            <AppIcon name="datosPago" className="h-5 w-5" />
+            <span className="text-xs font-semibold">Contacto / editar</span>
+          </Button>
         </div>
 
-        {/* Services */}
         <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold">Mis Servicios</h3>
-              <Button size="sm" variant="outline" onClick={() => setFlow("services")}>
-                <Plus className="h-4 w-4 mr-2" />
-                Gestionar servicios
-              </Button>
-            </div>
-            <div className="space-y-3">
-              {providerServices.length > 0 ? (
-                providerServices.slice(0, 3).map((service) => (
-                  <div key={service.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                    <div>
-                      <p className="font-medium">{service.name}</p>
-                      <p className="text-sm text-muted-foreground">{service.reviews || 0} reservas</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-bold text-primary">${service.price}</p>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="text-center py-4 text-muted-foreground">
-                  <p className="text-sm">No tienes servicios aún</p>
-                  <p className="text-xs">¡Crea tu primer servicio!</p>
-                </div>
-              )}
-            </div>
+          <CardContent className="p-4 space-y-3">
+            <h3 className="font-semibold text-gray-900">Mercado Pago</h3>
+            <p className="text-xs text-muted-foreground">Conectá tu cuenta para cobrar reservas desde tu servicio.</p>
+            <MercadoPagoConnect userId={user?.uid} />
           </CardContent>
         </Card>
 
-        {/* Upcoming Appointments */}
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold">Próximos Turnos</h3>
-              <Button size="sm" variant="outline" onClick={() => setFlow("agenda")}>
-                <Calendar className="h-4 w-4 mr-2" />
-                Gestionar reservas
-              </Button>
-            </div>
-            <div className="space-y-3">
-              {upcomingAppointments.length > 0 ? (
-                upcomingAppointments.map((appointment) => (
-                  <div key={appointment.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                    <Clock className="h-4 w-4 text-muted-foreground" />
-                    <div className="flex-1">
-                      <p className="font-medium">{appointment.clientName}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {new Date(appointment.date).toLocaleDateString('es-ES', {
-                          day: '2-digit',
-                          month: '2-digit'
-                        })} - {appointment.time}
-                      </p>
-                      <p className="text-xs text-muted-foreground">{appointment.serviceName}</p>
-                    </div>
-                    <div className="text-right">
-                      <span className={`text-xs px-2 py-1 rounded ${appointment.status === 'confirmed' ? 'bg-green-100 text-green-800' :
-                        appointment.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-                          'bg-gray-100 text-gray-800'
-                        }`}>
-                        {appointment.status === 'confirmed' ? 'Confirmado' :
-                          appointment.status === 'pending' ? 'Pendiente' :
-                            appointment.status}
-                      </span>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="text-center py-4 text-muted-foreground">
-                  <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                  <p className="text-sm">No tienes citas próximas</p>
-                  <p className="text-xs">Las próximas citas aparecerán aquí</p>
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+        {myService && (
+          <ProviderPaymentsPanel
+            bookings={providerBookings}
+            updateBooking={updateBooking}
+            compact
+          />
+        )}
       </div>
 
-      {/* Bottom Navigation */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 pb-safe z-40">
-        <div className="flex justify-around py-3">
-          <button className="flex flex-col items-center gap-1">
-            <Home className="h-6 w-6 text-primary" />
-            <span className="text-[10px] font-medium text-primary">Inicio</span>
-          </button>
-          <button onClick={() => setFlow("agenda")} className="flex flex-col items-center gap-1">
-            <Calendar className="h-6 w-6 text-gray-400" />
-            <span className="text-[10px] font-medium text-gray-400">Agenda</span>
-          </button>
-          <button onClick={() => setFlow("profile")} className="flex flex-col items-center gap-1">
-            <User className="h-6 w-6 text-gray-400" />
-            <span className="text-[10px] font-medium text-gray-400">Perfil</span>
-          </button>
-        </div>
-      </div>
+      <MainBottomNav
+          active="servicio"
+          onHome={() => setFlow("home")}
+          onMyService={() => setFlow("mi-servicio")}
+          onAgenda={() => setFlow("agenda")}
+          onProfile={() => setFlow("profile")}
+          user={user}
+          setFlow={setFlow}
+          zClass="z-40"
+        />
     </div>
+  )
+}
+
+function ProviderDashboard({ setFlow, user, services, logout }: { setFlow: (flow: string) => void; user: any; services: any[]; logout: () => Promise<{ success: boolean }> }) {
+  // Compat: el panel viejo redirige a Mi servicio / Inicio unificado.
+  useEffect(() => {
+    setFlow("mi-servicio")
+  }, [setFlow])
+  return (
+    <MyServiceHub
+      role="provider"
+      setFlow={setFlow}
+      user={user}
+      services={services}
+      setSelectedProviderService={() => {}}
+    />
   )
 }
 
 function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: { setFlow: (flow: string) => void; user: any; logout: () => Promise<{ success: boolean }>; onSwitchToClient: () => Promise<{ success: boolean }>; services: any[] }) {
   const { position: userPosition } = useGeolocation()
-  const { getBookingsByProvider } = useBookings()
-  const providerBookings = getBookingsByProvider(user?.uid) || []
   const providerServices = services.filter((s: any) => s.providerId === user?.uid)
 
   const [switchingRole, setSwitchingRole] = useState(false)
@@ -3946,6 +5901,7 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
     address: "",
     description: "",
     website: "",
+    whatsapp: "",
     instagram: "",
     facebook: "",
     businessHours: {
@@ -3969,16 +5925,14 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
   const [isEditing, setIsEditing] = useState(false)
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState("")
+  const photoMissing = !hasValidProfilePhoto(profileData.profileImage)
 
-  // Stats dinámicos (después de profileData)
-  const uniqueClients = new Set(providerBookings.map((b: any) => b.clientId)).size
-  const avgRating = providerServices.length > 0
-    ? (providerServices.reduce((sum: number, s: any) => sum + (s.rating || 0), 0) / providerServices.length).toFixed(1)
-    : '0'
-  const accountCreatedAt = profileData?.createdAt || user?.metadata?.creationTime
-  const experienceYears = accountCreatedAt
-    ? Math.max(0, Math.floor((Date.now() - new Date(accountCreatedAt).getTime()) / (1000 * 60 * 60 * 24 * 365)))
-    : 0
+  // Solo forzar edición en onboarding inicial; el tab Perfil siempre abre en vista.
+  useEffect(() => {
+    if (localStorage.getItem("providerOnboarding") === "1") {
+      setIsEditing(true)
+    }
+  }, [])
 
   // Cargar datos del perfil desde Firestore al montar
   useEffect(() => {
@@ -3998,9 +5952,12 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
             address: data.address || "",
             description: data.description || "",
             website: data.website || "",
+            whatsapp: data.whatsapp || "",
             instagram: data.instagram || "",
             facebook: data.facebook || "",
-            profileImage: data.profileImage || "/placeholder.svg",
+            profileImage: hasValidProfilePhoto(data.profileImage)
+              ? data.profileImage
+              : (hasValidProfilePhoto(user?.photoURL) ? user.photoURL : "/placeholder.svg"),
             coverImage: data.coverImage || "/placeholder.svg",
             city: data.city || "",
             cbu: data.cbu || "",
@@ -4018,6 +5975,10 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
   }, [user])
 
   const handleSave = async () => {
+    if (!hasValidProfilePhoto(profileData.profileImage)) {
+      alert("La foto de perfil es obligatoria. Subí una imagen para continuar.")
+      return
+    }
     setLoading(true)
     try {
       // Guardar en Firestore
@@ -4032,15 +5993,35 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
           await updateProfile(auth.currentUser!, { displayName: profileData.businessName })
         }
 
-        // Actualizar en Firestore
+        // Actualizar en Firestore (datos personales; no pisar contacto comercial del servicio)
         await setDoc(doc(db, 'users', user.uid), {
-          ...profileData,
+          businessName: profileData.businessName,
+          displayName: profileData.businessName,
+          email: profileData.email,
+          phone: profileData.phone,
+          address: profileData.address,
+          city: profileData.city,
+          profileImage: profileData.profileImage,
           updatedAt: new Date()
         }, { merge: true })
 
+        // Mantener el nombre en el servicio canónico
+        try {
+          await syncCanonicalServiceFromProfile(user.uid, profileData, providerServices)
+        } catch (syncError) {
+          console.error('Error sincronizando servicio:', syncError)
+        }
+
         setSuccess("¡Perfil actualizado exitosamente!")
         setIsEditing(false)
-        setTimeout(() => setSuccess(""), 3000)
+        const finishingOnboarding = localStorage.getItem("providerOnboarding") === "1"
+        if (finishingOnboarding) {
+          localStorage.removeItem("providerOnboarding")
+          setSuccess("¡Perfil listo! Ahora creá tu servicio.")
+          setTimeout(() => setFlow("create-service"), 500)
+        } else {
+          setTimeout(() => setSuccess(""), 3000)
+        }
       }
     } catch (error) {
       console.error("Error al guardar perfil:", error)
@@ -4067,13 +6048,6 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
 
   const handleInputChange = (field: string, value: string) => {
     setProfileData(prev => ({ ...prev, [field]: value }))
-  }
-
-  const handleHoursChange = (day: string, value: string) => {
-    setProfileData(prev => ({
-      ...prev,
-      businessHours: { ...prev.businessHours, [day]: value }
-    }))
   }
 
   const [uploadingImage, setUploadingImage] = useState<'profile' | 'cover' | null>(null)
@@ -4130,7 +6104,7 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
       <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
         <div className="bg-white shadow-sm p-4">
           <div className="flex items-center gap-3 mb-4">
-            <Button variant="ghost" size="sm" onClick={() => setIsEditing(false)}>
+            <Button variant="ghost" size="sm" onClick={() => { if (!photoMissing) setIsEditing(false) }} disabled={photoMissing}>
               <ArrowLeft className="h-5 w-5" />
             </Button>
             <h1 className="text-xl font-bold">Editar Perfil</h1>
@@ -4144,129 +6118,90 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
         )}
 
         <div className="p-4 space-y-6">
-          {/* Cover Image */}
           <Card>
-            <CardContent className="p-0">
-              <div className="relative h-32 bg-gradient-to-r from-primary/20 to-primary/10 rounded-t-lg">
-                <img src={profileData.coverImage} alt="Cover" className="w-full h-full object-cover rounded-t-lg" />
-                <div className="absolute inset-0 bg-black/20 rounded-t-lg" />
-                {uploadingImage === 'cover' && (
-                  <div className="absolute inset-0 bg-black/50 rounded-t-lg flex items-center justify-center">
-                    <div className="text-white text-center">
-                      <div className="animate-spin w-6 h-6 border-2 border-white border-t-transparent rounded-full mx-auto mb-2"></div>
-                      <p className="text-sm">Subiendo imagen...</p>
+            <CardContent className="p-6 space-y-4">
+              <div className="flex items-center gap-4">
+                <div className="relative">
+                  <img src={profileData.profileImage} alt="Profile" className="w-24 h-24 rounded-full border-4 border-white object-cover shadow" />
+                  {uploadingImage === 'profile' && (
+                    <div className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center">
+                      <div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"></div>
                     </div>
+                  )}
+                  <div className="absolute -bottom-2 -right-2">
+                    <input type="file" accept="image/*" onChange={(e) => handleImageUpload('profile', e)} className="hidden" id="profile-upload" />
+                    <Button size="sm" variant="secondary" className="w-8 h-8 rounded-full p-0" onClick={(e) => { e.stopPropagation(); document.getElementById('profile-upload')?.click() }} disabled={uploadingImage === 'profile'}>
+                      {uploadingImage === 'profile' ? '⏳' : <AppIcon name="camara" className="h-4 w-4" />}
+                    </Button>
                   </div>
-                )}
-                <div className="absolute top-2 right-2">
-                  <input type="file" accept="image/*" onChange={(e) => handleImageUpload('cover', e)} className="hidden" id="cover-upload" />
-                  <Button size="sm" variant="secondary" onClick={(e) => { e.stopPropagation(); document.getElementById('cover-upload')?.click() }} disabled={uploadingImage === 'cover'}>
-                    {uploadingImage === 'cover' ? 'Subiendo...' : 'Cambiar portada'}
-                  </Button>
+                </div>
+                <div className="flex-1">
+                  <h2 className="text-xl font-semibold">{profileData.businessName}</h2>
+                  <p className="text-muted-foreground">{profileData.email}</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Foto de perfil <span className="text-red-500">*</span>
+                  </p>
+                  {photoMissing && (
+                    <p className="text-sm text-red-600 font-medium">La foto de perfil es obligatoria</p>
+                  )}
                 </div>
               </div>
 
-              <div className="relative px-6 pb-6">
-                <div className="flex items-end -mt-12 gap-4">
-                  <div className="relative">
-                    <img src={profileData.profileImage} alt="Profile" className="w-24 h-24 rounded-full border-4 border-white object-cover" />
-                    {uploadingImage === 'profile' && (
-                      <div className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center">
-                        <div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"></div>
-                      </div>
-                    )}
-                    <div className="absolute -bottom-2 -right-2">
-                      <input type="file" accept="image/*" onChange={(e) => handleImageUpload('profile', e)} className="hidden" id="profile-upload" />
-                      <Button size="sm" variant="secondary" className="w-8 h-8 rounded-full p-0" onClick={(e) => { e.stopPropagation(); document.getElementById('profile-upload')?.click() }} disabled={uploadingImage === 'profile'}>
-                        {uploadingImage === 'profile' ? '⏳' : '📷'}
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="flex-1 pb-2">
-                    <h2 className="text-xl font-semibold">{profileData.businessName}</h2>
-                    <p className="text-muted-foreground">{profileData.email}</p>
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Business Information Form */}
-          <Card>
-            <CardContent className="p-6">
-              <h3 className="text-lg font-semibold mb-4">Información del Negocio</h3>
+              <h3 className="text-lg font-semibold pt-2">Datos personales</h3>
               <div className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="business-name">Nombre del Negocio</Label>
-                    <Input id="business-name" value={profileData.businessName} onChange={(e) => handleInputChange("businessName", e.target.value)} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="phone">Teléfono</Label>
-                    <Input id="phone" value={profileData.phone} onChange={(e) => handleInputChange("phone", e.target.value)} placeholder="11 1234-5678" />
-                  </div>
+                <div className="space-y-2">
+                  <Label htmlFor="business-name">Nombre</Label>
+                  <Input id="business-name" value={profileData.businessName} onChange={(e) => handleInputChange("businessName", e.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="provider-email" className="flex items-center gap-2">
+                    <AppIcon name="correo" className="h-4 w-4" />
+                    Email
+                  </Label>
+                  <Input id="provider-email" type="email" value={profileData.email} onChange={(e) => handleInputChange("email", e.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="phone" className="flex items-center gap-2">
+                    <AppIcon name="telefono" className="h-4 w-4" />
+                    Teléfono personal
+                  </Label>
+                  <Input id="phone" value={profileData.phone} onChange={(e) => handleInputChange("phone", e.target.value)} placeholder="11 1234-5678" />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="city">Ciudad / Localidad</Label>
                   <Input id="city" value={profileData.city} onChange={(e) => handleInputChange("city", e.target.value)} placeholder="Ej: Carmen de Areco" />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="address">Dirección</Label>
-                  <Input id="address" value={profileData.address} onChange={(e) => handleInputChange("address", e.target.value)} placeholder="Av. Corrientes 1234, CABA" />
+                  <Label htmlFor="address" className="flex items-center gap-2">
+                    <AppIcon name="ubicacion" className="h-4 w-4" />
+                    Dirección personal
+                  </Label>
+                  <Input id="address" value={profileData.address} onChange={(e) => handleInputChange("address", e.target.value)} placeholder="Calle, número" />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="description">Descripción</Label>
-                  <textarea id="description" className="w-full p-3 border border-gray-300 rounded-md resize-none" rows={3} value={profileData.description} onChange={(e) => handleInputChange("description", e.target.value)} placeholder="Describe tu negocio y servicios..." />
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="website">Sitio Web</Label>
-                    <Input id="website" value={profileData.website} onChange={(e) => handleInputChange("website", e.target.value)} placeholder="https://minegocio.com" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="instagram">Instagram</Label>
-                    <Input id="instagram" value={profileData.instagram} onChange={(e) => handleInputChange("instagram", e.target.value)} placeholder="@minegocio" />
-                  </div>
-                </div>
+                <p className="text-xs text-muted-foreground">
+                  WhatsApp, redes, Mercado Pago y datos del negocio se gestionan en <button type="button" className="underline font-medium text-primary" onClick={() => setFlow("mi-servicio")}>Mi servicio</button>.
+                </p>
               </div>
 
-              {/* Datos Bancarios */}
-              <div className="mt-8 pt-6 border-t border-gray-100">
-                <h4 className="text-md font-semibold mb-4 text-primary">Datos para recibir transferencias</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="accountHolder">Nombre del Titular</Label>
-                    <Input id="accountHolder" placeholder="Ej: Juan Pérez" value={profileData.accountHolder} onChange={(e) => handleInputChange("accountHolder", e.target.value)} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="cbu">CBU / CVU</Label>
-                    <Input id="cbu" placeholder="Ej: 0000003100012345678901" value={profileData.cbu} onChange={(e) => handleInputChange("cbu", e.target.value)} />
-                  </div>
-                  <div className="space-y-2 md:col-span-2 text-sm text-muted-foreground bg-gray-50 p-3 rounded">
-                    <span className="font-medium mr-2">O</span>
-                    <Label htmlFor="alias" className="mr-2">Alias:</Label>
-                    <Input id="alias" placeholder="Ej: mi.negocio.mp" value={profileData.alias} onChange={(e) => handleInputChange("alias", e.target.value)} className="inline-block w-auto max-w-[250px]" />
-                  </div>
-                </div>
-              </div>
-
-              {/* Horarios */}
-              <div className="mt-8 pt-6 border-t border-gray-100">
-                <h4 className="text-md font-semibold mb-4">Horarios de Atención</h4>
-                <div className="space-y-3">
-                  {Object.entries(profileData.businessHours).map(([day, hours]) => (
-                    <div key={day} className="flex items-center justify-between">
-                      <span className="capitalize font-medium">{day === 'monday' ? 'Lunes' : day === 'tuesday' ? 'Martes' : day === 'wednesday' ? 'Miércoles' : day === 'thursday' ? 'Jueves' : day === 'friday' ? 'Viernes' : day === 'saturday' ? 'Sábado' : 'Domingo'}</span>
-                      <Input value={hours} onChange={(e) => handleHoursChange(day, e.target.value)} className="w-32 text-right" />
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex gap-3 pt-6">
+              <div className="flex gap-3 pt-2">
                 <Button variant="outline" onClick={() => setIsEditing(false)} className="flex-1">Cancelar</Button>
-                <Button onClick={handleSave} disabled={loading} className="flex-1">{loading ? "Guardando..." : "Guardar Cambios"}</Button>
+                <Button onClick={handleSave} disabled={loading || photoMissing} className="flex-1">
+                  {loading
+                    ? "Guardando..."
+                    : localStorage.getItem("providerOnboarding") === "1"
+                      ? "Guardar y continuar"
+                      : "Guardar Cambios"}
+                </Button>
               </div>
+              <Button
+                variant="ghost"
+                className="w-full text-red-600 hover:text-red-700 hover:bg-red-50"
+                onClick={handleLogout}
+                disabled={loading}
+              >
+                <AppIcon name="cerrarSesion" className="h-4 w-4 mr-2" />
+                {loading ? "Cerrando sesión..." : "Cerrar sesión"}
+              </Button>
             </CardContent>
           </Card>
         </div>
@@ -4281,7 +6216,7 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
       <div className="relative">
         <div className="bg-primary pt-10 pb-16 px-4 rounded-b-[2.5rem]">
           <div className="flex items-center justify-between text-white">
-            <button onClick={() => setFlow("dashboard")} className="p-2">
+            <button onClick={() => { if (!photoMissing) setFlow("home") }} className="p-2" disabled={photoMissing}>
               <ArrowLeft className="h-6 w-6" />
             </button>
             <h1 className="text-lg font-semibold">Perfil</h1>
@@ -4312,70 +6247,61 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
             {profileData.city || userPosition?.address}
           </p>
         )}
+        {photoMissing && (
+          <p className="text-sm text-red-600 font-medium mt-2">
+            La foto de perfil es obligatoria. Tocá Editar perfil para subirla.
+          </p>
+        )}
       </div>
 
-      {/* Stats Row */}
-      <div className="flex justify-center gap-8 mt-5 px-6">
-        <div className="flex flex-col items-center">
-          <div className="flex items-center gap-1">
-            <Users className="h-4 w-4 text-primary" />
-            <span className="text-lg font-black text-gray-800">+{uniqueClients}</span>
-          </div>
-          <span className="text-[10px] text-gray-400 font-medium">Clientes</span>
-        </div>
-        <div className="flex flex-col items-center">
-          <div className="flex items-center gap-1">
-            <Star className="h-4 w-4 text-primary" />
-            <span className="text-lg font-black text-gray-800">{avgRating}</span>
-          </div>
-          <span className="text-[10px] text-gray-400 font-medium">Calificación</span>
-        </div>
-        <div className="flex flex-col items-center">
-          <div className="flex items-center gap-1">
-            <Clock className="h-4 w-4 text-primary" />
-            <span className="text-lg font-black text-gray-800">{experienceYears > 0 ? experienceYears : '<1'}</span>
-          </div>
-          <span className="text-[10px] text-gray-400 font-medium">{experienceYears === 1 ? 'año' : 'años'}</span>
-        </div>
+      {/* Acciones principales: visibles al abrir Perfil */}
+      <div className="px-6 mt-5 space-y-2">
+        <Button
+          onClick={() => setIsEditing(true)}
+          className="w-full h-11 rounded-xl text-white font-semibold"
+          style={{ backgroundColor: '#FF7F50' }}
+        >
+          Editar perfil
+        </Button>
+        <Button
+          variant="ghost"
+          className="w-full h-11 rounded-xl text-red-600 hover:text-red-700 hover:bg-red-50"
+          onClick={handleLogout}
+          disabled={loading}
+        >
+          <AppIcon name="cerrarSesion" className="h-4 w-4 mr-2" />
+          {loading ? "Cerrando sesión..." : "Cerrar sesión"}
+        </Button>
       </div>
+
+      <div className="mx-6 mt-4"><HelpLink /></div>
 
       {/* Info pills */}
       <div className="px-6 mt-6 space-y-3">
         {profileData.email && (
           <div className="flex items-center gap-3 text-sm text-gray-600">
-            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-              <Mail className="h-4 w-4 text-primary" />
+            <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center flex-shrink-0 overflow-hidden">
+              <AppIcon name="correo" className="h-6 w-6" />
             </div>
             <span className="truncate">{profileData.email}</span>
           </div>
         )}
         {profileData.phone && (
           <div className="flex items-center gap-3 text-sm text-gray-600">
-            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-              <Phone className="h-4 w-4 text-primary" />
+            <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center flex-shrink-0 overflow-hidden">
+              <AppIcon name="telefono" className="h-6 w-6" />
             </div>
             <span>{profileData.phone}</span>
           </div>
         )}
         {profileData.address && (
           <div className="flex items-center gap-3 text-sm text-gray-600">
-            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-              <MapPin className="h-4 w-4 text-primary" />
+            <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center flex-shrink-0 overflow-hidden">
+              <AppIcon name="ubicacion" className="h-6 w-6" />
             </div>
             <span>{profileData.address}</span>
           </div>
         )}
-      </div>
-
-      {/* Botón Editar Perfil */}
-      <div className="px-6 mt-6">
-        <Button 
-          onClick={() => setIsEditing(true)} 
-          className="w-full h-11 rounded-xl text-white font-semibold"
-          style={{ backgroundColor: '#FF7F50' }}
-        >
-          Editar perfil
-        </Button>
       </div>
 
       {success && (
@@ -4390,42 +6316,13 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
         </div>
       )}
 
-      {/* Sección Otros */}
       <div className="px-6 mt-6">
-        <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-3">Otros</h3>
         <Card className="border-none shadow-sm rounded-2xl overflow-hidden">
-          <CardContent className="p-0 divide-y divide-gray-50">
-            <button onClick={() => setFlow("services")} className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50 transition-colors">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-                  <Settings className="h-4 w-4 text-primary" />
-                </div>
-                <span className="text-sm font-medium text-gray-700">Mis servicios</span>
-              </div>
-              <ChevronRight className="h-4 w-4 text-gray-300" />
-            </button>
-            <button onClick={() => setFlow("statistics")} className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50 transition-colors">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-                  <TrendingUp className="h-4 w-4 text-primary" />
-                </div>
-                <span className="text-sm font-medium text-gray-700">Mis estadísticas</span>
-              </div>
-              <ChevronRight className="h-4 w-4 text-gray-300" />
-            </button>
-            <button onClick={() => setFlow("subscription")} className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50 transition-colors">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-                  <Star className="h-4 w-4 text-primary" />
-                </div>
-                <span className="text-sm font-medium text-gray-700">Mi suscripción</span>
-              </div>
-              <ChevronRight className="h-4 w-4 text-gray-300" />
-            </button>
+          <CardContent className="p-0">
             <button onClick={() => setShowConfirmSwitch(true)} disabled={switchingRole} className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50 transition-colors">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-                  <User className="h-4 w-4 text-primary" />
+                <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center overflow-hidden">
+                  <AppIcon name="usuarios" className="h-6 w-6" />
                 </div>
                 <span className="text-sm font-medium text-gray-700">{switchingRole ? "Cambiando..." : "Quiero ser Cliente"}</span>
               </div>
@@ -4433,13 +6330,9 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
             </button>
           </CardContent>
         </Card>
-      </div>
-
-      {/* Cerrar sesión */}
-      <div className="px-6 mt-4">
-        <button onClick={handleLogout} disabled={loading} className="w-full text-center text-sm text-red-400 font-medium py-3">
-          {loading ? "Cerrando sesión..." : "Cerrar sesión"}
-        </button>
+        <p className="text-xs text-muted-foreground mt-3 text-center">
+          Negocio, contacto público y pagos están en Mi servicio.
+        </p>
       </div>
 
       {/* Alert Dialog para cambio de rol */}
@@ -4471,22 +6364,16 @@ function ProviderProfile({ setFlow, user, logout, onSwitchToClient, services }: 
       </AlertDialog>
 
       {/* Bottom Navigation */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 pb-safe z-40">
-        <div className="flex justify-around py-3">
-          <button onClick={() => setFlow("dashboard")} className="flex flex-col items-center gap-1">
-            <Home className="h-6 w-6 text-gray-400" />
-            <span className="text-[10px] font-medium text-gray-400">Inicio</span>
-          </button>
-          <button onClick={() => setFlow("agenda")} className="flex flex-col items-center gap-1">
-            <Calendar className="h-6 w-6 text-gray-400" />
-            <span className="text-[10px] font-medium text-gray-400">Agenda</span>
-          </button>
-          <button className="flex flex-col items-center gap-1">
-            <User className="h-6 w-6 text-primary" />
-            <span className="text-[10px] font-medium text-primary">Perfil</span>
-          </button>
-        </div>
-      </div>
+      <MainBottomNav
+          active="perfil"
+          onHome={() => setFlow("home")}
+          onMyService={() => setFlow("mi-servicio")}
+          onAgenda={() => setFlow("agenda")}
+          onProfile={() => setFlow("profile")}
+          user={user}
+          setFlow={setFlow}
+          zClass="z-40"
+        />
     </div>
   )
 }
@@ -4617,7 +6504,7 @@ function ProviderAgenda({ setFlow, user, setActiveChat }: { setFlow: (flow: stri
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => setFlow("dashboard")}
+              onClick={() => setFlow("home")}
               className="rounded-full hover:bg-gray-100"
             >
               <ArrowLeft className="h-5 w-5" />
@@ -4627,13 +6514,25 @@ function ProviderAgenda({ setFlow, user, setActiveChat }: { setFlow: (flow: stri
               <p className="text-xs text-muted-foreground">Gestiona tus próximos turnos</p>
             </div>
           </div>
-          <div className="bg-primary/10 p-2 rounded-full">
-            <Calendar className="h-5 w-5 text-primary" />
+          <div className="bg-white p-1 rounded-full shadow-sm border border-gray-100">
+            <AppIcon name="agenda" className="h-6 w-6" />
           </div>
         </div>
       </div>
 
       <div className="max-w-4xl mx-auto p-4 space-y-6">
+        <ProviderPaymentsPanel
+          bookings={providerBookings}
+          updateBooking={updateBooking}
+          onChat={(booking) => {
+            setActiveChat({
+              partnerId: booking.clientId,
+              partnerName: booking.clientName || "Cliente",
+            })
+            setFlow("chat")
+          }}
+        />
+
         {/* Calendario Moderno */}
         <Card className="overflow-hidden border-none shadow-xl shadow-gray-200/50 bg-white/50 backdrop-blur-sm">
           <CardContent className="p-0">
@@ -4743,8 +6642,8 @@ function ProviderAgenda({ setFlow, user, setActiveChat }: { setFlow: (flow: stri
                           }`} />
                         <div className="flex-1 p-4 lg:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                           <div className="flex items-start gap-4">
-                            <div className="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
-                              <User className="h-6 w-6 text-primary" />
+                            <div className="w-12 h-12 rounded-2xl bg-white flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform overflow-hidden">
+                              <AppIcon name="usuarios" className="h-7 w-7" />
                             </div>
                             <div>
                               <div className="flex items-center gap-2 mb-1">
@@ -4814,6 +6713,45 @@ function ProviderAgenda({ setFlow, user, setActiveChat }: { setFlow: (flow: stri
                                   >
                                     Finalizar
                                   </Button>
+                                  {isUnpaidBooking(booking) && (
+                                    <>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={loading}
+                                        className="h-8 text-xs font-bold border-amber-300 text-amber-700 rounded-lg px-3"
+                                        onClick={async () => {
+                                          setLoading(true)
+                                          try {
+                                            await updateBooking(booking.id, {
+                                              paymentRequested: true,
+                                              paymentRequestedAt: new Date(),
+                                            })
+                                          } finally {
+                                            setLoading(false)
+                                          }
+                                        }}
+                                      >
+                                        Pedir pago
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        disabled={loading}
+                                        className="h-8 text-xs font-bold text-emerald-700 rounded-lg px-3"
+                                        onClick={async () => {
+                                          setLoading(true)
+                                          try {
+                                            await updateBooking(booking.id, { paymentStatus: 'paid' })
+                                          } finally {
+                                            setLoading(false)
+                                          }
+                                        }}
+                                      >
+                                        Cobrado
+                                      </Button>
+                                    </>
+                                  )}
                                   <Button
                                     variant="ghost"
                                     size="sm"
@@ -4944,6 +6882,16 @@ function ProviderAgenda({ setFlow, user, setActiveChat }: { setFlow: (flow: stri
           </div>
         </div>
       </div>
+      <MainBottomNav
+        active="agenda"
+        onHome={() => setFlow("home")}
+        onMyService={() => setFlow("mi-servicio")}
+        onAgenda={() => setFlow("agenda")}
+        onProfile={() => setFlow("profile")}
+        user={user}
+        setFlow={setFlow}
+        zClass="z-40"
+      />
     </div>
   )
 }
@@ -4992,19 +6940,25 @@ function ProviderServices({ setFlow, services, user, setSelectedProviderService 
     <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
       <div className="bg-white shadow-sm p-4">
         <div className="flex items-center gap-3 mb-4">
-          <Button variant="ghost" size="sm" onClick={() => setFlow("dashboard")}>
+          <Button variant="ghost" size="sm" onClick={() => setFlow("mi-servicio")}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <h1 className="text-xl font-bold">Gestión de Servicios</h1>
+          <h1 className="text-xl font-bold">Mi servicio</h1>
         </div>
       </div>
 
       <div className="p-4 space-y-4">
-        {/* Create Service Button */}
-        <Button onClick={() => setFlow("create-service")} className="w-full h-12 text-base">
-          <Plus className="h-4 w-4 mr-2" />
-          Crear nuevo servicio
-        </Button>
+        {/* Create Service Button: solo si aún no hay uno */}
+        {providerServices.length === 0 ? (
+          <Button onClick={() => setFlow("create-service")} className="w-full h-12 text-base">
+            <AppIcon name="agregarServicio" className="h-5 w-5 mr-2" />
+            Crear mi servicio
+          </Button>
+        ) : (
+          <p className="text-sm text-muted-foreground text-center px-2">
+            Solo se permite un servicio por correo. Editá el existente o eliminálo para crear otro.
+          </p>
+        )}
 
         {/* Services List */}
         <div className="space-y-3">
@@ -5055,8 +7009,8 @@ function ProviderServices({ setFlow, services, user, setSelectedProviderService 
           ) : (
             <Card>
               <CardContent className="p-8 text-center">
-                <div className="w-16 h-16 bg-gray-200 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Plus className="h-8 w-8 text-gray-500" />
+                <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center mx-auto mb-4 overflow-hidden shadow-sm">
+                  <AppIcon name="agregarServicio" className="h-10 w-10" />
                 </div>
                 <h3 className="text-lg font-semibold mb-2">No tienes servicios aún</h3>
                 <p className="text-sm text-muted-foreground mb-4">
@@ -5078,75 +7032,264 @@ function CreateService({
   setFlow,
   createService,
   user,
-  userLocation
+  userLocation,
+  services = [],
 }: {
   setFlow: (flow: string) => void
   createService: (serviceData: any) => Promise<{ success: boolean, error?: string }>
   user: any
   userLocation: { lat: number, lng: number } | null
+  services?: any[]
 }) {
+  const existingService = getCanonicalService(services, user?.uid)
+  useEffect(() => {
+    if (existingService?.id) {
+      setFlow("mi-servicio")
+    }
+  }, [existingService?.id, setFlow])
+
   const [formData, setFormData] = useState({
     name: "",
     description: "",
     price: "",
     duration: "",
     category: "",
-    latitude: null as number | null,
-    longitude: null as number | null,
+    address: "",
+    phone: "",
+    whatsapp: "",
+    instagram: "",
+    facebook: "",
+    website: "",
   })
-  const [imageFile, setImageFile] = useState<File | null>(null)
-  const [imagePreview, setImagePreview] = useState<string | null>(null)
-  const [locationStatus, setLocationStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
+  const [gpsCoords, setGpsCoords] = useState<{ lat: number, lng: number } | null>(null)
+  const [gpsStatus, setGpsStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
+  const [imageFiles, setImageFiles] = useState<File[]>([])
+  const [imagePreviews, setImagePreviews] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
 
+  const [providerProfile, setProviderProfile] = useState<{
+    businessName?: string
+    displayName?: string
+    city?: string
+    phone?: string
+    whatsapp?: string
+    instagram?: string
+    facebook?: string
+    website?: string
+  }>({})
+
   const { categories } = useCategories()
+
+  const handleImagesSelected = (files: FileList | null) => {
+    const selected = Array.from(files || [])
+    if (selected.length === 0) return
+    if (imageFiles.length + selected.length > 6) {
+      setError("Puedes subir hasta 6 imágenes por servicio.")
+      return
+    }
+    const invalidFile = selected.find((file) => !file.type.startsWith('image/') || file.size > 5 * 1024 * 1024)
+    if (invalidFile) {
+      setError("Cada archivo debe ser una imagen JPG/PNG de hasta 5 MB.")
+      return
+    }
+    setError("")
+    setImageFiles((current) => [...current, ...selected])
+    setImagePreviews((current) => [...current, ...selected.map((file) => URL.createObjectURL(file))])
+  }
+
+  const removeImage = (index: number) => {
+    URL.revokeObjectURL(imagePreviews[index])
+    setImageFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))
+    setImagePreviews((current) => current.filter((_, itemIndex) => itemIndex !== index))
+  }
+
+  // Pre-llenar dirección desde el perfil del proveedor
+  useEffect(() => {
+    const fetchAddressFromProfile = async () => {
+      if (!user?.uid) return
+      try {
+        const { doc, getDoc } = await import("firebase/firestore")
+        const { db } = await import("@/lib/firebase")
+        const userDoc = await getDoc(doc(db, 'users', user.uid))
+        if (userDoc.exists()) {
+          const data = userDoc.data()
+          let fullAddress = data.address || ""
+          if (data.city) {
+            fullAddress = fullAddress ? `${fullAddress}, ${data.city}` : data.city
+          }
+          setProviderProfile({
+            businessName: data.businessName,
+            displayName: data.displayName || data.name,
+            city: data.city || "",
+            phone: data.phone || "",
+            whatsapp: data.whatsapp || "",
+            instagram: data.instagram || "",
+            facebook: data.facebook || "",
+            website: data.website || "",
+          })
+          setFormData(prev => ({
+            ...prev,
+            address: fullAddress,
+            phone: prev.phone || data.phone || "",
+            whatsapp: prev.whatsapp || data.whatsapp || "",
+            instagram: prev.instagram || data.instagram || "",
+            facebook: prev.facebook || data.facebook || "",
+            website: prev.website || data.website || "",
+          }))
+        }
+      } catch (err) {
+        console.error("Error loading provider address:", err)
+      }
+    }
+    fetchAddressFromProfile()
+  }, [user])
+
+  // Obtener GPS nativo
+  const handleGetGPS = async () => {
+    setGpsStatus('loading')
+    try {
+      let lat: number, lon: number
+      if (Capacitor.isNativePlatform()) {
+        const permissions = await Geolocation.checkPermissions()
+        if (permissions.location !== 'granted') {
+          await Geolocation.requestPermissions()
+        }
+        const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 15000 })
+        lat = pos.coords.latitude
+        lon = pos.coords.longitude
+      } else {
+        const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 15000 })
+        })
+        lat = pos.coords.latitude
+        lon = pos.coords.longitude
+      }
+      setGpsCoords({ lat, lng: lon })
+      setGpsStatus('success')
+    } catch (err) {
+      console.error('Error obteniendo GPS:', err)
+      setGpsStatus('error')
+    }
+  }
+
+  // Geocodificar dirección como fallback
+  const geocodeAddress = async (address: string): Promise<{ lat: number, lng: number } | null> => {
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1&countrycodes=ar`,
+        {
+          headers: {
+            'Accept-Language': 'es',
+            'User-Agent': 'PuntoEncuentroApp/1.0'
+          }
+        }
+      )
+      const data = await response.json()
+      if (data && data.length > 0) {
+        return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) }
+      }
+    } catch (err) {
+      console.error("Error geocodificando:", err)
+    }
+    return null
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError("")
 
+    if (!formData.address.trim()) {
+      setError("La dirección del servicio es obligatoria.")
+      setLoading(false)
+      return
+    }
+
+    const parsedPrice = formData.price.trim()
+      ? Number(formData.price.replace(/[^0-9.,-]/g, '').replace(',', '.')) || 0
+      : 0
+    if (formData.price.trim() && parsedPrice < 0) {
+      setError("El precio no puede ser negativo.")
+      setLoading(false)
+      return
+    }
+
     try {
+      // Prioridad de coordenadas: 1) GPS capturado, 2) Geocodificación, 3) GPS del dispositivo al login
+      let finalLat: number | null = null
+      let finalLng: number | null = null
+
+      if (gpsCoords) {
+        // El proveedor ya presionó el botón GPS y funcionó
+        finalLat = gpsCoords.lat
+        finalLng = gpsCoords.lng
+      } else {
+        // Intentar geocodificar la dirección escrita
+        const geocoded = await geocodeAddress(formData.address)
+        if (geocoded) {
+          finalLat = geocoded.lat
+          finalLng = geocoded.lng
+        } else if (userLocation) {
+          // Último recurso: usar GPS del login
+          finalLat = userLocation.lat
+          finalLng = userLocation.lng
+        }
+        // Si no hay coordenadas de ningún lado, el servicio se crea igual solo con dirección de texto
+      }
+
+      const businessName = providerProfile.businessName || providerProfile.displayName || user?.displayName || ""
       const serviceData: any = {
         name: formData.name,
         description: formData.description,
-        price: parseInt(formData.price),
-        duration: formData.duration,
+        price: parsedPrice,
+        duration: formData.duration.trim(),
         category: formData.category,
+        address: formData.address,
+        city: providerProfile.city || "",
+        phone: formData.phone.trim(),
+        whatsapp: formData.whatsapp.trim(),
+        instagram: formData.instagram.trim(),
+        facebook: formData.facebook.trim(),
+        website: formData.website.trim(),
         providerId: user?.uid,
-        providerName: user?.displayName || "Proveedor",
+        providerName: businessName || "Proveedor",
+        businessName,
         rating: 0,
         reviews: 0,
-        image: imageUrl,
-        lat: userLocation?.lat || null,
-        lng: userLocation?.lng || null,
+        image: "",
+        lat: finalLat,
+        lng: finalLng,
+        latitude: finalLat,
+        longitude: finalLng,
         active: true
       }
-      // Subir imagen si fue seleccionada
-      if (imageFile) {
+
+      // Subir galería si fue seleccionada
+      if (imageFiles.length > 0) {
         try {
+          const uid = auth.currentUser?.uid
+          if (!uid || uid !== user?.uid) {
+            throw new Error("No se pudo validar tu sesión para subir fotos. Volvé a iniciar sesión.")
+          }
           const { uploadImage } = await import("@/lib/uploadImage")
-          const imageUrl = await uploadImage(imageFile, `services/${user?.uid}`)
-          serviceData.image = imageUrl
+          const imageUrls = await Promise.all(
+            imageFiles.map((file, index) => uploadImage(file, `services/${uid}/${Date.now()}-${index}`))
+          )
+          serviceData.images = imageUrls
+          serviceData.image = imageUrls[0]
         } catch (imgErr: any) {
           setError(imgErr.message || "Error al subir la imagen")
           setLoading(false)
           return
         }
       }
-      // Agregar ubicación si fue capturada
-      if (formData.latitude !== null && formData.longitude !== null) {
-        serviceData.latitude = formData.latitude
-        serviceData.longitude = formData.longitude
-      }
-
       const result = await createService(serviceData)
       if (result.success) {
         setSuccess("¡Servicio creado exitosamente!")
         setTimeout(() => {
-          setFlow("services")
+          setFlow("mi-servicio")
         }, 1500)
       } else {
         setError(result.error || "Error al crear el servicio")
@@ -5166,7 +7309,7 @@ function CreateService({
     <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
       <div className="bg-white shadow-sm p-4">
         <div className="flex items-center gap-3 mb-4">
-          <Button variant="ghost" size="sm" onClick={() => setFlow("services")}>
+          <Button variant="ghost" size="sm" onClick={() => setFlow("mi-servicio")}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <h1 className="text-xl font-bold">Crear Servicio</h1>
@@ -5195,42 +7338,27 @@ function CreateService({
         <Card>
           <CardContent className="p-6">
             <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Imagen del servicio */}
+              {/* Galería del servicio */}
               <div className="space-y-2">
-                <Label>Imagen del servicio</Label>
-                <div className="flex items-center gap-4">
-                  <div className="w-24 h-24 bg-gray-100 rounded-lg overflow-hidden flex items-center justify-center border-2 border-dashed border-gray-300">
-                    {imagePreview ? (
-                      <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
-                    ) : (
-                      <span className="text-3xl">📷</span>
-                    )}
+                <Label>Imágenes del servicio <span className="font-normal text-muted-foreground">(hasta 6)</span></Label>
+                {imagePreviews.length > 0 && (
+                  <div className="grid grid-cols-3 gap-2">
+                    {imagePreviews.map((preview, index) => (
+                      <div key={preview} className="relative aspect-square rounded-lg overflow-hidden bg-gray-100">
+                        <img src={preview} alt={`Imagen ${index + 1}`} className="w-full h-full object-cover" />
+                        <button type="button" onClick={() => removeImage(index)} className="absolute top-1 right-1 w-7 h-7 rounded-full bg-black/65 text-white flex items-center justify-center" aria-label="Quitar imagen">
+                          <X className="h-4 w-4" />
+                        </button>
+                        {index === 0 && <span className="absolute bottom-1 left-1 text-[10px] bg-white/90 px-2 py-0.5 rounded-full">Portada</span>}
+                      </div>
+                    ))}
                   </div>
-                  <div className="flex-1">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0]
-                        if (file) {
-                          setImageFile(file)
-                          setImagePreview(URL.createObjectURL(file))
-                        }
-                      }}
-                      className="hidden"
-                      id="create-service-image-upload"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="w-full"
-                      onClick={() => document.getElementById('create-service-image-upload')?.click()}
-                    >
-                      {imagePreview ? 'Cambiar imagen' : 'Seleccionar imagen'}
-                    </Button>
-                    <p className="text-xs text-muted-foreground mt-1">JPG, PNG. Máximo 5 MB</p>
-                  </div>
-                </div>
+                )}
+                <input type="file" accept="image/*" multiple onChange={(e) => { handleImagesSelected(e.target.files); e.target.value = '' }} className="hidden" id="create-service-image-upload" />
+                <Button type="button" variant="outline" className="w-full" disabled={imageFiles.length >= 6} onClick={() => document.getElementById('create-service-image-upload')?.click()}>
+                  <Plus className="h-4 w-4 mr-2" /> Agregar imágenes
+                </Button>
+                <p className="text-xs text-muted-foreground">JPG o PNG, máximo 5 MB cada una. La primera será la portada.</p>
               </div>
 
               <div className="space-y-2">
@@ -5257,44 +7385,24 @@ function CreateService({
                 />
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="service-image">Imagen del servicio</Label>
-                <div className="flex items-center gap-4">
-                  <Input
-                    id="service-image"
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => setImageFile(e.target.files?.[0] || null)}
-                    className="cursor-pointer"
-                  />
-                  {imageFile && (
-                    <p className="text-sm text-muted-foreground truncate max-w-[200px]">
-                      {imageFile.name}
-                    </p>
-                  )}
-                </div>
-              </div>
-
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="service-price">Precio</Label>
+                  <Label htmlFor="service-price">Precio <span className="font-normal text-muted-foreground">(opcional)</span></Label>
                   <Input
                     id="service-price"
                     placeholder="$5000"
                     value={formData.price}
                     onChange={(e) => handleInputChange("price", e.target.value)}
-                    required
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="service-duration">Duración</Label>
+                  <Label htmlFor="service-duration">Duración <span className="font-normal text-muted-foreground">(opcional)</span></Label>
                   <Input
                     id="service-duration"
                     placeholder="60 min"
                     value={formData.duration}
                     onChange={(e) => handleInputChange("duration", e.target.value)}
-                    required
                   />
                 </div>
               </div>
@@ -5312,76 +7420,82 @@ function CreateService({
                   <optgroup label="Categorías Base">
                     {categories.filter(c => c.isBase).map((category) => (
                       <option key={category.id} value={category.name}>
-                        {category.icon} {category.name}
+                        {categorySelectLabel(category.name, category.icon)}
                       </option>
                     ))}
                   </optgroup>
                   <optgroup label="Categorías Agregadas">
                     {categories.filter(c => !c.isBase).map((category) => (
                       <option key={category.id} value={category.name}>
-                        {category.icon} {category.name}
+                        {categorySelectLabel(category.name, category.icon)}
                       </option>
                     ))}
                   </optgroup>
                 </select>
               </div>
 
-              {/* Botón de ubicación */}
-              <div className="space-y-2">
-                <Label>Ubicación del servicio</Label>
+              {/* Dirección + GPS del servicio */}
+              <div className="space-y-3 rounded-xl border border-gray-100 bg-gray-50/80 p-3">
+                <p className="text-sm font-semibold">Contacto del servicio</p>
+                <div className="space-y-2">
+                  <Label htmlFor="create-svc-phone">Teléfono</Label>
+                  <Input id="create-svc-phone" value={formData.phone} onChange={(e) => handleInputChange("phone", e.target.value)} placeholder="Ej: 11 2345-6789" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="create-svc-whatsapp">WhatsApp</Label>
+                  <Input id="create-svc-whatsapp" value={formData.whatsapp} onChange={(e) => handleInputChange("whatsapp", e.target.value)} placeholder="Ej: 5491123456789" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="create-svc-instagram">Instagram</Label>
+                  <Input id="create-svc-instagram" value={formData.instagram} onChange={(e) => handleInputChange("instagram", e.target.value)} placeholder="@tu_cuenta" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="create-svc-facebook">Facebook</Label>
+                  <Input id="create-svc-facebook" value={formData.facebook} onChange={(e) => handleInputChange("facebook", e.target.value)} placeholder="facebook.com/tu-pagina" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="create-svc-website">Sitio web</Label>
+                  <Input id="create-svc-website" value={formData.website} onChange={(e) => handleInputChange("website", e.target.value)} placeholder="https://..." />
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <Label htmlFor="service-address">📍 Dirección del servicio</Label>
+                <Input
+                  id="service-address"
+                  placeholder="Ej: Av. Corrientes 1234, Buenos Aires"
+                  value={formData.address}
+                  onChange={(e) => handleInputChange("address", e.target.value)}
+                  required
+                />
+
                 <Button
                   type="button"
                   variant="outline"
-                  className={`w-full ${locationStatus === 'success' ? 'border-green-500 text-green-600' : ''}`}
-                  disabled={locationStatus === 'loading'}
-                  onClick={async () => {
-                    setLocationStatus('loading')
-                    try {
-                      let lat, lon;
-                      if (Capacitor.isNativePlatform()) {
-                        const permissions = await Geolocation.checkPermissions()
-                        if (permissions.location !== 'granted') {
-                          await Geolocation.requestPermissions()
-                        }
-                        const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 10000 })
-                        lat = pos.coords.latitude
-                        lon = pos.coords.longitude
-                      } else {
-                        const pos = await new Promise<any>((resolve, reject) => {
-                          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 })
-                        })
-                        lat = pos.coords.latitude
-                        lon = pos.coords.longitude
-                      }
-                      
-                      setFormData(prev => ({ ...prev, latitude: lat, longitude: lon }))
-                      setLocationStatus('success')
-                    } catch (err) {
-                      console.error('Error capturando ubicación:', err)
-                      setLocationStatus('error')
-                      const manualCity = prompt("No pudimos obtener tu GPS. Por seguridad, introduce el nombre de tu ciudad/barrio para continuar:");
-                      if (manualCity) {
-                        setFormData(prev => ({ ...prev, latitude: -34.6, longitude: -58.4 })) // Coordenadas genéricas
-                        setLocationStatus('success')
-                      }
-                    }
-                  }}
+                  className={`w-full ${gpsStatus === 'success' ? 'border-green-500 text-green-700 bg-green-50' : gpsStatus === 'error' ? 'border-orange-400 text-orange-600' : ''}`}
+                  disabled={gpsStatus === 'loading'}
+                  onClick={handleGetGPS}
                 >
-                  {locationStatus === 'loading' ? '⏳ Obteniendo GPS...' : 
-                   locationStatus === 'success' ? '✅ Ubicación guardada' : 
-                   '📍 Usar mi ubicación actual'}
+                  {gpsStatus === 'loading' ? '⏳ Obteniendo ubicación...' :
+                   gpsStatus === 'success' ? `✅ GPS capturado (${gpsCoords?.lat.toFixed(4)}, ${gpsCoords?.lng.toFixed(4)})` :
+                   gpsStatus === 'error' ? '⚠️ GPS falló — Reintentar' :
+                   '📍 Usar mi GPS actual (recomendado)'}
                 </Button>
-                {locationStatus === 'error' && (
-                  <p className="text-[10px] text-red-500 font-medium mt-1">Asegúrate de tener el GPS activado y dar permisos.</p>
-                )}
-                <p className="text-xs text-muted-foreground mt-2">Permite que los clientes vean si estás cerca de ellos.</p>
+
+                <p className="text-xs text-muted-foreground">
+                  {gpsStatus === 'success'
+                    ? "✅ Se usarán las coordenadas GPS para calcular la distancia con los clientes."
+                    : gpsStatus === 'error'
+                    ? "No pudimos obtener tu GPS. Igualmente se intentará calcular con la dirección que escribiste arriba."
+                    : "Escribe la dirección y/o presiona el botón de GPS para que los clientes vean qué tan cerca estás."}
+                </p>
               </div>
 
               <div className="flex gap-3 pt-4">
                 <Button type="submit" disabled={loading} className="flex-1">
                   {loading ? "Creando..." : "Crear servicio"}
                 </Button>
-                <Button type="button" variant="outline" onClick={() => setFlow("services")} className="flex-1">
+                <Button type="button" variant="outline" onClick={() => setFlow("mi-servicio")} className="flex-1">
                   Cancelar
                 </Button>
               </div>
@@ -5398,6 +7512,7 @@ function EditService({ setFlow, service, user, updateService, userLocation }: {
   service: any
   user: any
   updateService?: (id: string, data: any) => Promise<{success: boolean, error?: string}>
+  userLocation?: { lat: number, lng: number } | null
 }) {
   const { updateService: updateServiceHook } = useServices()
   const updateServiceFn = updateService || updateServiceHook
@@ -5408,17 +7523,63 @@ function EditService({ setFlow, service, user, updateService, userLocation }: {
     price: service?.price?.toString() || "",
     duration: (service as any)?.duration || "",
     category: service?.category || "",
-    latitude: service?.latitude || null,
-    longitude: service?.longitude || null,
+    address: service?.address || "",
+    phone: service?.phone || "",
+    whatsapp: service?.whatsapp || "",
+    instagram: service?.instagram || "",
+    facebook: service?.facebook || "",
+    website: service?.website || "",
   })
-  const [locationStatus, setLocationStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
-  const [imageFile, setImageFile] = useState<File | null>(null)
-  const [imagePreview, setImagePreview] = useState<string | null>(service?.image || null)
+  const [gpsCoords, setGpsCoords] = useState<{ lat: number, lng: number } | null>(
+    service?.latitude && service?.longitude
+      ? { lat: service.latitude, lng: service.longitude }
+      : null
+  )
+  const [gpsStatus, setGpsStatus] = useState<'idle' | 'loading' | 'success' | 'error'>(
+    service?.latitude && service?.longitude ? 'success' : 'idle'
+  )
+  const [existingImages, setExistingImages] = useState<string[]>(
+    Array.isArray(service?.images) && service.images.length > 0 ? service.images : service?.image ? [service.image] : []
+  )
+  const [newImageFiles, setNewImageFiles] = useState<File[]>([])
+  const [newImagePreviews, setNewImagePreviews] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
 
   const { categories } = useCategories()
+
+  // Completar dirección/contacto desde el perfil si el servicio aún no los tiene
+  useEffect(() => {
+    const fetchAddressFromProfile = async () => {
+      if (!user?.uid) return
+      if (service?.address && service?.phone && service?.whatsapp) return
+      try {
+        const { doc, getDoc } = await import("firebase/firestore")
+        const { db } = await import("@/lib/firebase")
+        const userDoc = await getDoc(doc(db, 'users', user.uid))
+        if (userDoc.exists()) {
+          const data = userDoc.data()
+          let fullAddress = data.address || ""
+          if (data.city) {
+            fullAddress = fullAddress ? `${fullAddress}, ${data.city}` : data.city
+          }
+          setFormData(prev => ({
+            ...prev,
+            address: prev.address || fullAddress,
+            phone: prev.phone || data.phone || "",
+            whatsapp: prev.whatsapp || data.whatsapp || "",
+            instagram: prev.instagram || data.instagram || "",
+            facebook: prev.facebook || data.facebook || "",
+            website: prev.website || data.website || "",
+          }))
+        }
+      } catch (err) {
+        console.error("Error loading provider address:", err)
+      }
+    }
+    fetchAddressFromProfile()
+  }, [user, service])
 
   // Cargar datos del servicio cuando cambie
   useEffect(() => {
@@ -5429,11 +7590,89 @@ function EditService({ setFlow, service, user, updateService, userLocation }: {
         price: service.price?.toString() || "",
         duration: (service as any)?.duration || "",
         category: service.category || "",
-        latitude: service.latitude || null,
-        longitude: service.longitude || null,
+        address: service.address || "",
+        phone: service.phone || "",
+        whatsapp: service.whatsapp || "",
+        instagram: service.instagram || "",
+        facebook: service.facebook || "",
+        website: service.website || "",
       })
+      if (service.latitude && service.longitude) {
+        setGpsCoords({ lat: service.latitude, lng: service.longitude })
+        setGpsStatus('success')
+      }
+      setExistingImages(Array.isArray(service.images) && service.images.length > 0 ? service.images : service.image ? [service.image] : [])
+      setNewImageFiles([])
+      setNewImagePreviews([])
     }
   }, [service])
+
+  const handleEditImagesSelected = (files: FileList | null) => {
+    const selected = Array.from(files || [])
+    if (selected.length === 0) return
+    if (existingImages.length + newImageFiles.length + selected.length > 6) {
+      setError("Puedes conservar hasta 6 imágenes por servicio.")
+      return
+    }
+    const invalidFile = selected.find((file) => !file.type.startsWith('image/') || file.size > 5 * 1024 * 1024)
+    if (invalidFile) {
+      setError("Cada archivo debe ser una imagen JPG/PNG de hasta 5 MB.")
+      return
+    }
+    setError("")
+    setNewImageFiles((current) => [...current, ...selected])
+    setNewImagePreviews((current) => [...current, ...selected.map((file) => URL.createObjectURL(file))])
+  }
+
+  // Obtener GPS nativo
+  const handleGetGPS = async () => {
+    setGpsStatus('loading')
+    try {
+      let lat: number, lon: number
+      if (Capacitor.isNativePlatform()) {
+        const permissions = await Geolocation.checkPermissions()
+        if (permissions.location !== 'granted') {
+          await Geolocation.requestPermissions()
+        }
+        const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 15000 })
+        lat = pos.coords.latitude
+        lon = pos.coords.longitude
+      } else {
+        const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 15000 })
+        })
+        lat = pos.coords.latitude
+        lon = pos.coords.longitude
+      }
+      setGpsCoords({ lat, lng: lon })
+      setGpsStatus('success')
+    } catch (err) {
+      console.error('Error obteniendo GPS:', err)
+      setGpsStatus('error')
+    }
+  }
+
+  // Geocodificar dirección como fallback
+  const geocodeAddress = async (address: string): Promise<{ lat: number, lng: number } | null> => {
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1&countrycodes=ar`,
+        {
+          headers: {
+            'Accept-Language': 'es',
+            'User-Agent': 'PuntoEncuentroApp/1.0'
+          }
+        }
+      )
+      const data = await response.json()
+      if (data && data.length > 0) {
+        return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) }
+      }
+    } catch (err) {
+      console.error("Error geocodificando:", err)
+    }
+    return null
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -5446,35 +7685,95 @@ function EditService({ setFlow, service, user, updateService, userLocation }: {
     setError("")
     setSuccess("")
 
+    if (!formData.address.trim()) {
+      setError("La dirección del servicio es obligatoria.")
+      setLoading(false)
+      return
+    }
+
     try {
+      // Prioridad: 1) GPS capturado, 2) Geocodificación, 3) coordenadas existentes, 4) GPS login
+      let finalLat: number | null = null
+      let finalLng: number | null = null
+
+      if (gpsCoords) {
+        finalLat = gpsCoords.lat
+        finalLng = gpsCoords.lng
+      } else {
+        const geocoded = await geocodeAddress(formData.address)
+        if (geocoded) {
+          finalLat = geocoded.lat
+          finalLng = geocoded.lng
+        } else if (userLocation) {
+          finalLat = userLocation.lat
+          finalLng = userLocation.lng
+        }
+      }
+
+      let businessName = service.businessName || service.providerName || ""
+      let city = service.city || ""
+      try {
+        const { doc, getDoc } = await import("firebase/firestore")
+        const { db } = await import("@/lib/firebase")
+        const userDoc = await getDoc(doc(db, "users", user.uid))
+        if (userDoc.exists()) {
+          const data = userDoc.data()
+          businessName = data.businessName || data.displayName || data.name || businessName
+          city = data.city || city
+        }
+      } catch (profileErr) {
+        console.error("Error loading provider profile for service update:", profileErr)
+      }
+
       const serviceData: any = {
         name: formData.name,
         description: formData.description,
-        price: parseInt(formData.price.replace('$', '').replace(/\./g, '')) || parseInt(formData.price),
-        duration: formData.duration,
+        price: formData.price.trim() ? Number(formData.price.replace(/[^0-9.,-]/g, '').replace(',', '.')) || 0 : 0,
+        duration: formData.duration.trim(),
         category: formData.category,
-        latitude: formData.latitude,
-        longitude: formData.longitude,
+        address: formData.address,
+        city,
+        phone: formData.phone.trim(),
+        whatsapp: formData.whatsapp.trim(),
+        instagram: formData.instagram.trim(),
+        facebook: formData.facebook.trim(),
+        website: formData.website.trim(),
+        providerName: businessName || service.providerName || "Proveedor",
+        businessName,
+        latitude: finalLat,
+        longitude: finalLng,
+        lat: finalLat,
+        lng: finalLng
       }
-      // Subir nueva imagen si fue seleccionada
-      if (imageFile) {
+
+      // Subir nuevas imágenes y conservar la galería elegida
+      if (newImageFiles.length > 0) {
         try {
+          const uid = auth.currentUser?.uid
+          if (!uid || uid !== service.providerId) {
+            throw new Error("Iniciá sesión con la cuenta propietaria del servicio para subir fotos.")
+          }
           const { uploadImage } = await import("@/lib/uploadImage")
-          const imageUrl = await uploadImage(imageFile, `services/${service.id}`)
-          serviceData.image = imageUrl
+          const uploadedImages = await Promise.all(
+            newImageFiles.map((file, index) => uploadImage(file, `services/${uid}/${Date.now()}-${index}`))
+          )
+          serviceData.images = [...existingImages, ...uploadedImages]
         } catch (imgErr: any) {
           setError(imgErr.message || "Error al subir la imagen")
           setLoading(false)
           return
         }
+      } else {
+        serviceData.images = existingImages
       }
+      serviceData.image = serviceData.images[0] || ""
 
       const result = await updateServiceFn(service.id, serviceData)
 
       if (result.success) {
         setSuccess("¡Servicio actualizado exitosamente!")
         setTimeout(() => {
-          setFlow("services")
+          setFlow("mi-servicio")
         }, 1500)
       } else {
         setError(result.error || "Error al actualizar el servicio")
@@ -5494,7 +7793,7 @@ function EditService({ setFlow, service, user, updateService, userLocation }: {
     <div className="min-h-screen" style={{ backgroundColor: 'oklch(0.98 0.01 200)' }}>
       <div className="bg-white shadow-sm p-4">
         <div className="flex items-center gap-3 mb-4">
-          <Button variant="ghost" size="sm" onClick={() => setFlow("services")}>
+          <Button variant="ghost" size="sm" onClick={() => setFlow("mi-servicio")}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <h1 className="text-xl font-bold">Editar Servicio</h1>
@@ -5505,42 +7804,36 @@ function EditService({ setFlow, service, user, updateService, userLocation }: {
         <Card>
           <CardContent className="p-6">
             <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Imagen del servicio */}
+              {/* Galería del servicio */}
               <div className="space-y-2">
-                <Label>Imagen del servicio</Label>
-                <div className="flex items-center gap-4">
-                  <div className="w-24 h-24 bg-gray-100 rounded-lg overflow-hidden flex items-center justify-center border-2 border-dashed border-gray-300">
-                    {imagePreview && imagePreview !== '/placeholder.svg' ? (
-                      <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
-                    ) : (
-                      <span className="text-3xl">📷</span>
-                    )}
+                <Label>Imágenes del servicio <span className="font-normal text-muted-foreground">(hasta 6)</span></Label>
+                {(existingImages.length > 0 || newImagePreviews.length > 0) && (
+                  <div className="grid grid-cols-3 gap-2">
+                    {[...existingImages, ...newImagePreviews].map((preview, index) => (
+                      <div key={`${preview}-${index}`} className="relative aspect-square rounded-lg overflow-hidden bg-gray-100">
+                        <img src={preview} alt={`Imagen ${index + 1}`} className="w-full h-full object-cover" />
+                        <button type="button" onClick={() => {
+                          if (index < existingImages.length) {
+                            setExistingImages((current) => current.filter((_, itemIndex) => itemIndex !== index))
+                          } else {
+                            const newIndex = index - existingImages.length
+                            URL.revokeObjectURL(newImagePreviews[newIndex])
+                            setNewImageFiles((current) => current.filter((_, itemIndex) => itemIndex !== newIndex))
+                            setNewImagePreviews((current) => current.filter((_, itemIndex) => itemIndex !== newIndex))
+                          }
+                        }} className="absolute top-1 right-1 w-7 h-7 rounded-full bg-black/65 text-white flex items-center justify-center" aria-label="Quitar imagen">
+                          <X className="h-4 w-4" />
+                        </button>
+                        {index === 0 && <span className="absolute bottom-1 left-1 text-[10px] bg-white/90 px-2 py-0.5 rounded-full">Portada</span>}
+                      </div>
+                    ))}
                   </div>
-                  <div className="flex-1">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0]
-                        if (file) {
-                          setImageFile(file)
-                          setImagePreview(URL.createObjectURL(file))
-                        }
-                      }}
-                      className="hidden"
-                      id="edit-service-image-upload"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="w-full"
-                      onClick={() => document.getElementById('edit-service-image-upload')?.click()}
-                    >
-                      {imagePreview && imagePreview !== '/placeholder.svg' ? 'Cambiar imagen' : 'Seleccionar imagen'}
-                    </Button>
-                    <p className="text-xs text-muted-foreground mt-1">JPG, PNG. Máximo 5 MB</p>
-                  </div>
-                </div>
+                )}
+                <input type="file" accept="image/*" multiple onChange={(e) => { handleEditImagesSelected(e.target.files); e.target.value = '' }} className="hidden" id="edit-service-image-upload" />
+                <Button type="button" variant="outline" className="w-full" disabled={existingImages.length + newImageFiles.length >= 6} onClick={() => document.getElementById('edit-service-image-upload')?.click()}>
+                  <Plus className="h-4 w-4 mr-2" /> Agregar imágenes
+                </Button>
+                <p className="text-xs text-muted-foreground">La primera imagen será la portada del servicio.</p>
               </div>
 
               <div className="space-y-2">
@@ -5567,22 +7860,20 @@ function EditService({ setFlow, service, user, updateService, userLocation }: {
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="edit-service-price">Precio</Label>
+                  <Label htmlFor="edit-service-price">Precio <span className="font-normal text-muted-foreground">(opcional)</span></Label>
                   <Input
                     id="edit-service-price"
                     value={formData.price}
                     onChange={(e) => handleInputChange("price", e.target.value)}
-                    required
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="edit-service-duration">Duración</Label>
+                  <Label htmlFor="edit-service-duration">Duración <span className="font-normal text-muted-foreground">(opcional)</span></Label>
                   <Input
                     id="edit-service-duration"
                     value={formData.duration}
                     onChange={(e) => handleInputChange("duration", e.target.value)}
-                    required
                   />
                 </div>
               </div>
@@ -5600,73 +7891,82 @@ function EditService({ setFlow, service, user, updateService, userLocation }: {
                   <optgroup label="Categorías Base">
                     {categories.filter(c => c.isBase).map((category) => (
                       <option key={category.id} value={category.name}>
-                        {category.icon} {category.name}
+                        {categorySelectLabel(category.name, category.icon)}
                       </option>
                     ))}
                   </optgroup>
                   <optgroup label="Categorías Agregadas">
                     {categories.filter(c => !c.isBase).map((category) => (
                       <option key={category.id} value={category.name}>
-                        {category.icon} {category.name}
+                        {categorySelectLabel(category.name, category.icon)}
                       </option>
                     ))}
                   </optgroup>
                 </select>
               </div>
 
-              {/* Botón de ubicación */}
-              <div className="space-y-2">
-                <Label>Ubicación del servicio</Label>
+              <div className="space-y-3 rounded-xl border border-gray-100 bg-gray-50/80 p-3">
+                <p className="text-sm font-semibold">Contacto del servicio</p>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-svc-phone">Teléfono</Label>
+                  <Input id="edit-svc-phone" value={formData.phone} onChange={(e) => handleInputChange("phone", e.target.value)} placeholder="Ej: 11 2345-6789" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-svc-whatsapp">WhatsApp</Label>
+                  <Input id="edit-svc-whatsapp" value={formData.whatsapp} onChange={(e) => handleInputChange("whatsapp", e.target.value)} placeholder="Ej: 5491123456789" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-svc-instagram">Instagram</Label>
+                  <Input id="edit-svc-instagram" value={formData.instagram} onChange={(e) => handleInputChange("instagram", e.target.value)} placeholder="@tu_cuenta" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-svc-facebook">Facebook</Label>
+                  <Input id="edit-svc-facebook" value={formData.facebook} onChange={(e) => handleInputChange("facebook", e.target.value)} placeholder="facebook.com/tu-pagina" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-svc-website">Sitio web</Label>
+                  <Input id="edit-svc-website" value={formData.website} onChange={(e) => handleInputChange("website", e.target.value)} placeholder="https://..." />
+                </div>
+              </div>
+
+              {/* Dirección + GPS del servicio */}
+              <div className="space-y-3">
+                <Label htmlFor="edit-service-address">📍 Dirección del servicio</Label>
+                <Input
+                  id="edit-service-address"
+                  placeholder="Ej: Av. Corrientes 1234, Buenos Aires"
+                  value={formData.address}
+                  onChange={(e) => handleInputChange("address", e.target.value)}
+                  required
+                />
+
                 <Button
                   type="button"
                   variant="outline"
-                  className={`w-full ${locationStatus === 'success' ? 'border-green-500 text-green-600' : ''}`}
-                  disabled={locationStatus === 'loading'}
-                  onClick={async () => {
-                    setLocationStatus('loading')
-                    try {
-                      let lat, lon;
-                      if (Capacitor.isNativePlatform()) {
-                        const permissions = await Geolocation.checkPermissions()
-                        if (permissions.location !== 'granted') {
-                          await Geolocation.requestPermissions()
-                        }
-                        const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 10000 })
-                        lat = pos.coords.latitude
-                        lon = pos.coords.longitude
-                      } else {
-                        const pos = await new Promise<any>((resolve, reject) => {
-                          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 })
-                        })
-                        lat = pos.coords.latitude
-                        lon = pos.coords.longitude
-                      }
-                      
-                      setFormData(prev => ({ ...prev, latitude: lat, longitude: lon }))
-                      setLocationStatus('success')
-                    } catch (err) {
-                      console.error('Error capturando ubicación:', err)
-                      setLocationStatus('error')
-                      const manualCity = prompt("No pudimos obtener tu GPS. Introduce tu ciudad/barrio para actualizar:");
-                      if (manualCity) {
-                        setFormData(prev => ({ ...prev, latitude: -34.6, longitude: -58.4 }))
-                        setLocationStatus('success')
-                      }
-                    }
-                  }}
+                  className={`w-full ${gpsStatus === 'success' ? 'border-green-500 text-green-700 bg-green-50' : gpsStatus === 'error' ? 'border-orange-400 text-orange-600' : ''}`}
+                  disabled={gpsStatus === 'loading'}
+                  onClick={handleGetGPS}
                 >
-                  {locationStatus === 'loading' ? '⏳ Obteniendo GPS...' : 
-                   locationStatus === 'success' ? '✅ Ubicación actualizada' : 
-                   '📍 Actualizar mi ubicación'}
+                  {gpsStatus === 'loading' ? '⏳ Obteniendo ubicación...' :
+                   gpsStatus === 'success' ? `✅ GPS capturado (${gpsCoords?.lat.toFixed(4)}, ${gpsCoords?.lng.toFixed(4)})` :
+                   gpsStatus === 'error' ? '⚠️ GPS falló — Reintentar' :
+                   '📍 Usar mi GPS actual (recomendado)'}
                 </Button>
-                <p className="text-xs text-muted-foreground mt-2">Permite que los clientes vean si estás cerca de ellos.</p>
+
+                <p className="text-xs text-muted-foreground">
+                  {gpsStatus === 'success'
+                    ? "✅ Se usarán las coordenadas GPS para calcular la distancia con los clientes."
+                    : gpsStatus === 'error'
+                    ? "No pudimos obtener tu GPS. Igualmente se intentará calcular con la dirección que escribiste arriba."
+                    : "Escribe la dirección y/o presiona el botón de GPS para que los clientes vean qué tan cerca estás."}
+                </p>
               </div>
 
               <div className="flex gap-3 pt-4">
                 <Button type="submit" className="flex-1" disabled={loading}>
                   {loading ? "Guardando..." : "Guardar cambios"}
                 </Button>
-                <Button type="button" variant="outline" onClick={() => setFlow("services")} className="flex-1" disabled={loading}>
+                <Button type="button" variant="outline" onClick={() => setFlow("mi-servicio")} className="flex-1" disabled={loading}>
                   Cancelar
                 </Button>
               </div>
@@ -5781,7 +8081,7 @@ function ProviderStatistics({ setFlow, user, services, profileData }: { setFlow:
         </button>
         <h1 className="text-xl font-bold">Mis estadísticas</h1>
         <button className="p-2">
-          <Settings className="h-6 w-6" />
+          <AppIcon name="configuracion" className="h-6 w-6" />
         </button>
       </div>
 
@@ -5915,22 +8215,16 @@ function ProviderStatistics({ setFlow, user, services, profileData }: { setFlow:
       </div>
 
       {/* Footer Navigation */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 pb-safe z-40">
-        <div className="flex justify-around py-3">
-          <button onClick={() => setFlow("dashboard")} className="flex flex-col items-center gap-1">
-            <TrendingUp className="h-6 w-6 text-gray-400" />
-            <span className="text-[10px] font-medium text-gray-400">Dashboard</span>
-          </button>
-          <button onClick={() => setFlow("agenda")} className="flex flex-col items-center gap-1">
-            <Calendar className="h-6 w-6 text-gray-400" />
-            <span className="text-[10px] font-medium text-gray-400">Agenda</span>
-          </button>
-          <button onClick={() => setFlow("profile")} className="flex flex-col items-center gap-1">
-            <User className="h-6 w-6 text-gray-400" />
-            <span className="text-[10px] font-medium text-gray-400">Perfil</span>
-          </button>
-        </div>
-      </div>
+      <MainBottomNav
+          active="none"
+          onHome={() => setFlow("home")}
+          onMyService={() => setFlow("mi-servicio")}
+          onAgenda={() => setFlow("agenda")}
+          onProfile={() => setFlow("profile")}
+          user={user}
+          setFlow={setFlow}
+          zClass="z-40"
+        />
     </div>
   )
 }
@@ -5940,7 +8234,7 @@ function ProviderSubscription({ setFlow }: { setFlow: (flow: string) => void }) 
     <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Header */}
       <div className="bg-white shadow-sm p-4 flex items-center gap-3">
-        <Button variant="ghost" size="sm" onClick={() => setFlow("dashboard")}>
+        <Button variant="ghost" size="sm" onClick={() => setFlow("home")}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <h1 className="text-xl font-bold text-primary">Planes Premium</h1>
@@ -5962,10 +8256,10 @@ function ProviderSubscription({ setFlow }: { setFlow: (flow: string) => void }) 
 
             <div className="pt-6 border-t border-primary/10">
               <p className="font-bold text-gray-900 text-sm">Ceo</p>
-              <p className="text-xl font-serif text-primary">Mateo Yoyovich</p>
+              <p className="text-xl font-serif text-primary">Mateo Yovovich</p>
             </div>
 
-            <Button onClick={() => setFlow("dashboard")} className="w-full mt-4">
+            <Button onClick={() => setFlow("home")} className="w-full mt-4">
               Volver al Panel
             </Button>
           </CardContent>
@@ -5975,1350 +8269,161 @@ function ProviderSubscription({ setFlow }: { setFlow: (flow: string) => void }) 
   )
 }
 
-function AdminDashboard({ user, logout }: { user: any, logout: () => Promise<{ success: boolean }> }) {
-  const { categories, loading: categoriesLoading, createCategory, updateCategory, deleteCategory, toggleCategoryStatus } = useCategories()
-  const { services } = useServices()
-  const { bookings } = useBookings()
-  const { users, loading: usersLoading, updateUserRole, toggleUserStatus, deleteUser, getUsersByRole, verifyUser } = useUsers()
-  const { analytics, loading: analyticsLoading } = useAnalytics()
-  const { stats, loading: dashboardLoading, refresh } = useAdminDashboard()
 
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'categories' | 'users' | 'services' | 'analytics' | 'reports' | 'settings'>('dashboard')
-  const [showAlerts, setShowAlerts] = useState(false)
-  const [reportType, setReportType] = useState<'daily' | 'weekly' | 'monthly'>('daily')
-  const { dailyReport, weeklyReport, monthlyReport, loading: reportsLoading, generateDailyReport, generateWeeklyReport, generateMonthlyReport } = useReports()
-
-  // Generar informe diario automáticamente cuando se abre la pestaña de informes
-  useEffect(() => {
-    if (activeTab === 'reports' && reportType === 'daily' && !dailyReport && !reportsLoading) {
-      generateDailyReport()
-    }
-  }, [activeTab, reportType, dailyReport, reportsLoading])
-
-  const [showCreateCategory, setShowCreateCategory] = useState(false)
-  const [newCategory, setNewCategory] = useState({
-    name: '',
-    icon: '',
-    description: '',
-    active: true
-  })
-  const [editingCategory, setEditingCategory] = useState<any>(null)
-  const [editingUser, setEditingUser] = useState<any>(null)
-  const [userFilter, setUserFilter] = useState<'all' | 'client' | 'provider' | 'admin'>('all')
-  const [serviceFilter, setServiceFilter] = useState<'all' | 'active' | 'inactive'>('all')
-  const [isProcessing, setIsProcessing] = useState(false)
-  const [adminActionStatus, setAdminActionStatus] = useState<{type: 'success' | 'error', message: string} | null>(null)
-
-  // Estados para configuración
-  const [settings, setSettings] = useState({
-    emailNotifications: true,
-    pushNotifications: true,
-    appointmentReminders: true,
-    autoAcceptBookings: false,
-    emailVerificationRequired: true,
-    openRegistration: true,
-    sessionTimeout: 60,
-    commissionRate: 10,
-    minPrice: 50,
-    maxPrice: 10000,
-    appName: 'Punto Encuentro',
-    appDescription: 'Plataforma de servicios profesionales',
-    appEmail: 'contacto@puntoencuentro.com'
-  })
-
-  const handleCreateCategory = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!newCategory.name || !newCategory.icon) return
-
-    setIsProcessing(true)
-    const result = await createCategory(newCategory)
-    setIsProcessing(false)
-    if (result.success) {
-      setNewCategory({ name: '', icon: '', description: '', active: true })
-      setShowCreateCategory(false)
-      setAdminActionStatus({ type: 'success', message: 'Categoría creada exitosamente' })
-      setTimeout(() => setAdminActionStatus(null), 3000)
-    } else {
-      setAdminActionStatus({ type: 'error', message: 'Error al crear categoría' })
-    }
-  }
-
-  const handleEditCategory = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!editingCategory) return
-
-    setIsProcessing(true)
-    const result = await updateCategory(editingCategory.id, editingCategory)
-    setIsProcessing(false)
-    if (result.success) {
-      setEditingCategory(null)
-      setAdminActionStatus({ type: 'success', message: 'Categoría actualizada' })
-      setTimeout(() => setAdminActionStatus(null), 3000)
-    }
-  }
-
-  const handleDeleteCategory = async (id: string) => {
-    if (confirm('¿Estás seguro de que quieres eliminar esta categoría?')) {
-      setIsProcessing(true)
-      const result = await deleteCategory(id)
-      setIsProcessing(false)
-      if (result.success) {
-        setAdminActionStatus({ type: 'success', message: 'Categoría eliminada' })
-        setTimeout(() => setAdminActionStatus(null), 3000)
-      }
-    }
-  }
-
-  const handleUpdateUserRole = async (userId: string, newRole: string) => {
-    setIsProcessing(true)
-    const result = await updateUserRole(userId, newRole as any)
-    setIsProcessing(false)
-    if (result.success) {
-      setEditingUser(null)
-      setAdminActionStatus({ type: 'success', message: 'Rol de usuario actualizado' })
-      setTimeout(() => setAdminActionStatus(null), 3000)
-    }
-  }
-
-  const handleToggleUserStatus = async (userId: string) => {
-    setIsProcessing(true)
-    const result = await toggleUserStatus(userId)
-    setIsProcessing(false)
-    if (result.success) {
-      setAdminActionStatus({ type: 'success', message: 'Estado del usuario actualizado' })
-      setTimeout(() => setAdminActionStatus(null), 3000)
-    }
-  }
-
-  const handleDeleteUser = async (userId: string) => {
-    if (confirm('¿Estás seguro de que quieres eliminar este usuario?')) {
-      setIsProcessing(true)
-      const result = await deleteUser(userId)
-      setIsProcessing(false)
-      if (result.success) {
-        setAdminActionStatus({ type: 'success', message: 'Usuario eliminado correctamente' })
-        setTimeout(() => setAdminActionStatus(null), 3000)
-      }
-    }
-  }
-
-  const handleVerifyUser = async (userId: string) => {
-    setIsProcessing(true)
-    const result = await verifyUser(userId)
-    setIsProcessing(false)
-    if (result.success) {
-      setAdminActionStatus({ type: 'success', message: 'Usuario verificado correctamente' })
-      setTimeout(() => setAdminActionStatus(null), 3000)
-    }
-  }
-
-  const filteredUsers = users.filter(u => {
-    if (userFilter === 'all') return true
-    if (userFilter === 'pending') return !u.verified && u.role === 'provider'
-    return u.role === userFilter
-  })
-
-  const filteredServices = services.filter(service => {
-    if (serviceFilter === 'all') return true
-    if (serviceFilter === 'active') return (service as any).active !== false
-    if (serviceFilter === 'inactive') return (service as any).active === false
-    if (serviceFilter === 'pending') return (service as any).status === 'pending' || (service as any).status === 'review'
-    if (serviceFilter === 'reported') return (service as any).status === 'reported' || (service as any).reported === true
-    return true
-  })
-
-  // Funciones para configuración
-  const handleSettingChange = (key: string, value: any) => {
-    setSettings(prev => ({ ...prev, [key]: value }))
-  }
-
-  const saveSettings = async (section: string) => {
-    try {
-      // Aquí se guardaría en Firebase o base de datos
-      console.log(`Guardando configuración de ${section}:`, settings)
-      alert(`✅ Configuración de ${section} guardada exitosamente`)
-    } catch (error) {
-      console.error('Error guardando configuración:', error)
-      alert('❌ Error al guardar la configuración')
-    }
-  }
-
+function NavGlyph({ name, active }: { name: "inicio" | "agenda" | "perfil" | "chat" | "servicio"; active: boolean }) {
+  const isChat = name === "chat"
   return (
-    <div className="min-h-screen bg-gray-50/50 flex flex-col md:flex-row">
-      {/* Navegación para escritorio */}
-      <AdminSidebar activeTab={activeTab} setActiveTab={setActiveTab} logout={async () => {
-        const result = await logout()
-        if (result.success) {
-          localStorage.removeItem('userType')
-          window.location.reload()
-        }
-      }} />
+    <span className="h-9 w-9 overflow-hidden flex items-center justify-center">
+      <AppIcon
+        name={name === "servicio" ? "trabajo" : name}
+        active={active}
+        className={isChat ? "h-6 w-6" : "h-9 w-9 scale-[1.55]"}
+      />
+    </span>
+  )
+}
 
-      {/* Navegación para móvil */}
-      <AdminBottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
-
-      {/* Contenido Principal */}
-      <div className="flex-1 md:ml-64 flex flex-col min-h-screen">
-        {/* Header Superior con Glassmorphism */}
-        <header className="sticky top-0 z-40 w-full bg-white/80 backdrop-blur-md border-b">
-          <div className="flex h-16 items-center justify-between px-4 md:px-8">
-            <div className="flex items-center gap-3">
-              <div className="md:hidden">
-                <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center text-white text-xs font-black">P</div>
-              </div>
-              <div>
-                <h1 className="text-sm md:text-lg font-bold text-gray-900 leading-none">
-                  {activeTab === 'dashboard' && 'Panel de Control'}
-                  {activeTab === 'users' && 'Gestión de Usuarios'}
-                  {activeTab === 'services' && 'Gestión de Servicios'}
-                  {activeTab === 'categories' && 'Gestión de Categorías'}
-                  {activeTab === 'reports' && 'Informes y Reportes'}
-                  {activeTab === 'analytics' && 'Analíticas Avanzadas'}
-                  {activeTab === 'settings' && 'Configuración Global'}
-                </h1>
-                <p className="hidden md:block text-[10px] text-muted-foreground mt-1 tracking-tight">Bienvenido, {user?.displayName || user?.email}</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-4">
-              <Button variant="ghost" size="icon" className="relative">
-                <Bell className="h-5 w-5 text-gray-500" />
-                {stats.alerts.length > 0 && (
-                  <span className="absolute top-2 right-2 h-2 w-2 bg-red-500 rounded-full border-2 border-white" />
-                )}
-              </Button>
-              <div className="h-8 w-8 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center text-primary font-bold text-xs">
-                {(user?.displayName?.charAt(0) || user?.email?.charAt(0) || 'A').toUpperCase()}
-              </div>
-            </div>
-          </div>
-        </header>
-
-        {/* Área de Contenido */}
-        <main className="flex-1 p-4 md:p-8 pb-24 md:pb-8 max-w-7xl mx-auto w-full">
-          {adminActionStatus && (
-            <div className="mb-6 animate-in slide-in-from-top duration-300">
-               <CustomAlert 
-                type={adminActionStatus.type}
-                title={adminActionStatus.type === 'success' ? 'Éxito' : 'Error'}
-                message={adminActionStatus.message}
-                onClose={() => setAdminActionStatus(null)}
-               />
-            </div>
-          )}
-        {activeTab === 'dashboard' && (
-          <div className="space-y-4 md:space-y-6">
-            {dashboardLoading ? (
-              <div className="text-center py-8">
-                <div className="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-4"></div>
-                <p className="text-muted-foreground">Cargando estadísticas...</p>
-              </div>
-            ) : (
-              <>
-                {/* Botón de Alertas */}
-                <div className="flex justify-end">
-                  <Button
-                    onClick={() => setShowAlerts(!showAlerts)}
-                    variant={stats.alerts.length > 0 ? "default" : "outline"}
-                    className="relative"
-                  >
-                    🔔 Alertas
-                    {stats.alerts.length > 0 && (
-                      <span className="ml-2 px-2 py-0.5 bg-red-500 text-white text-xs rounded-full">
-                        {stats.alerts.reduce((sum, alert) => sum + alert.count, 0)}
-                      </span>
-                    )}
-                  </Button>
-                </div>
-
-                {/* Panel de Alertas */}
-                {showAlerts && (
-                  <Card className={stats.alerts.length > 0 ? "border-yellow-200 bg-yellow-50" : "border-gray-200 bg-gray-50"}>
-                    <CardContent className="p-4">
-                      <h3 className="font-semibold mb-3">⚠️ Alertas que necesitan atención</h3>
-                      {stats.alerts.length > 0 ? (
-                        <div className="space-y-2">
-                          {stats.alerts.map((alert, index) => (
-                            <button 
-                              key={index} 
-                              onClick={() => {
-                                if (alert.type === 'verification') {
-                                  setActiveTab('users')
-                                  setUserFilter('pending' as any)
-                                } else if (alert.type === 'publications') {
-                                  setActiveTab('services')
-                                  setServiceFilter('pending' as any)
-                                } else if (alert.type === 'reports') {
-                                  setActiveTab('services')
-                                  setServiceFilter('reported' as any)
-                                }
-                                setShowAlerts(false)
-                              }}
-                              className="w-full flex items-center justify-between p-3 bg-white rounded-xl border border-transparent hover:border-primary/20 hover:bg-primary/5 transition-all group"
-                            >
-                              <div className="flex items-center gap-3">
-                                <div className={`p-2 rounded-lg ${
-                                  alert.type === 'verification' ? 'bg-blue-50 text-blue-600' :
-                                  alert.type === 'reports' ? 'bg-red-50 text-red-600' :
-                                  'bg-orange-50 text-orange-600'
-                                }`}>
-                                  <AlertCircle className="h-4 w-4" />
-                                </div>
-                                <span className="text-sm font-medium text-gray-700">{alert.message}</span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span className="px-2.5 py-1 bg-red-100 text-red-800 text-[10px] font-black rounded-full">
-                                  {alert.count}
-                                </span>
-                                <ChevronRight className="h-4 w-4 text-gray-300 group-hover:text-primary transition-colors" />
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-sm text-gray-500 text-center py-4">✅ No hay alertas pendientes</p>
-                      )}
-                    </CardContent>
-                  </Card>
-                )}
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-8">
-              <AdminStatCard 
-                title="Usuarios Activos" 
-                value={stats.activeUsersToday} 
-                icon={Users} 
-                color="bg-blue-500" 
-              />
-              <AdminStatCard 
-                title="Nuevos Usuarios" 
-                value={stats.newUsersThisWeek} 
-                icon={Plus} 
-                color="bg-green-500" 
-              />
-              <AdminStatCard 
-                title="Comercios" 
-                value={stats.activeBusinesses} 
-                icon={Briefcase} 
-                color="bg-purple-500" 
-              />
-              <AdminStatCard 
-                title="Pendientes" 
-                value={stats.businessesPendingVerification} 
-                icon={Clock} 
-                color="bg-orange-500" 
-              />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
-              <AdminStatCard 
-                title="Publicaciones" 
-                value={stats.newPublications} 
-                icon={FileText} 
-                color="bg-indigo-500" 
-              />
-              <AdminStatCard 
-                title="Reportadas" 
-                value={stats.reportedPublications} 
-                icon={Shield} 
-                color="bg-red-500" 
-              />
-              <AdminStatCard 
-                title="Chats" 
-                value={stats.chatsInitiated} 
-                icon={Mail} 
-                color="bg-teal-500" 
-              />
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 mt-8">
-              {/* Alertas Premium */}
-              <Card className={`border-none shadow-sm ${stats.alerts.length > 0 ? 'bg-orange-50/50' : 'bg-white'}`}>
-                <CardContent className="p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-bold text-gray-900 flex items-center gap-2">
-                       <Bell className={`h-5 w-5 ${stats.alerts.length > 0 ? 'text-orange-500 animate-pulse' : 'text-gray-400'}`} />
-                       Alertas del Sistema
-                    </h3>
-                    <Badge variant={stats.alerts.length > 0 ? "destructive" : "outline"}>
-                      {stats.alerts.length} pendientes
-                    </Badge>
-                  </div>
-                  {stats.alerts.length > 0 ? (
-                    <div className="space-y-3">
-                      {stats.alerts.map((alert, index) => (
-                        <div key={index} className="flex items-center justify-between p-3 bg-white border border-orange-100 rounded-xl shadow-sm">
-                          <span className="text-sm font-medium text-gray-700">{alert.message}</span>
-                          <Badge variant="destructive" className="rounded-lg">
-                            {alert.count}
-                          </Badge>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-center py-8">
-                       <p className="text-sm text-muted-foreground">Sistema saludable. No hay alertas.</p>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* Top Búsquedas Premium */}
-              <Card className="border-none shadow-sm bg-white">
-                <CardContent className="p-6">
-                  <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
-                    <Search className="h-5 w-5 text-primary" />
-                    Búsquedas Populares (Hoy)
-                  </h3>
-                  {stats.topSearches.length > 0 ? (
-                    <div className="space-y-2">
-                      {stats.topSearches.slice(0, 5).map((search, index) => (
-                        <div key={index} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-xl transition-colors">
-                          <div className="flex items-center gap-3">
-                            <span className="text-xs font-bold text-primary bg-primary/10 w-6 h-6 rounded-lg flex items-center justify-center">
-                              {index + 1}
-                            </span>
-                            <span className="text-sm font-medium text-gray-700">{search.term}</span>
-                          </div>
-                          <span className="text-xs font-bold text-gray-400">{search.count} veces</span>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-gray-500 text-center py-8">Sin actividad registrada.</p>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-              </>
-            )}
-          </div>
+function ChatNavButton({ user, setFlow, active = false }: { user: any; setFlow: (flow: any) => void; active?: boolean }) {
+  const { totalUnread } = useChatInbox(user?.uid)
+  return (
+    <button type="button" onClick={() => setFlow('chats')} className="flex flex-col items-center gap-1 relative">
+      <div className="relative">
+        <NavGlyph name="chat" active={active} />
+        {totalUnread > 0 && (
+          <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center border-2 border-white">
+            {totalUnread > 99 ? '99+' : totalUnread}
+          </span>
         )}
+      </div>
+      <span className={`text-[11px] font-medium ${active ? 'text-primary' : 'text-gray-400'}`}>Chat</span>
+    </button>
+  )
+}
 
-        {activeTab === 'categories' && (
-          <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
-              <div className="hidden md:block">
-                <h2 className="text-xl font-bold text-gray-900 leading-none">Gestión de Categorías</h2>
-                <p className="text-xs text-muted-foreground mt-1">Administra los rubros disponibles en la plataforma</p>
-              </div>
-              <Button 
-                onClick={() => setShowCreateCategory(true)}
-                className="bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/20"
-              >
-                <Plus className="w-4 h-4 mr-2" />
-                Nueva Categoría
-              </Button>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-              {categoriesLoading ? (
-                <div className="col-span-full py-20 flex flex-col items-center justify-center">
-                   <div className="relative w-12 h-12">
-                      <div className="absolute inset-0 border-4 border-primary/20 rounded-full"></div>
-                      <div className="absolute inset-0 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-                   </div>
-                   <p className="mt-4 text-sm font-medium text-gray-500">Cargando categorías...</p>
-                </div>
-              ) : (
-                categories.map(category => (
-                  <Card key={category.id} className="group border-none shadow-sm hover:shadow-md transition-all duration-300 overflow-hidden bg-white">
-                    <CardContent className="p-5">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center gap-4 min-w-0">
-                          <div className="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center text-2xl shadow-inner group-hover:scale-110 transition-transform">
-                            {category.icon}
-                          </div>
-                          <div className="min-w-0">
-                            <h3 className="font-bold text-gray-900 truncate">{category.name}</h3>
-                            <div className="flex items-center gap-2 mt-1">
-                               <Badge variant={category.active ? "success" : "outline"} className="text-[10px] h-4">
-                                 {category.active ? 'Activa' : 'Inactiva'}
-                               </Badge>
-                               {category.isBase && (
-                                 <Badge variant="secondary" className="text-[10px] h-4 bg-primary/10 text-primary border-none">
-                                   BASE
-                                 </Badge>
-                               )}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex gap-1">
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            onClick={() => setEditingCategory(category)}
-                            className="h-8 w-8 rounded-lg text-gray-400 hover:text-primary hover:bg-primary/5"
-                          >
-                            <Settings className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            onClick={() => handleDeleteCategory(category.id)}
-                            className="h-8 w-8 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50"
-                          >
-                            <LogOut className="h-4 w-4" /> {/* Usando LogOut como icono de borrar temporalmente o similar */}
-                          </Button>
-                        </div>
-                      </div>
-                      
-                      {category.description && (
-                        <p className="text-xs text-gray-500 mt-4 line-clamp-2 leading-relaxed h-8">
-                          {category.description}
-                        </p>
-                      )}
-
-                      <div className="grid grid-cols-2 gap-2 mt-5">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => toggleCategoryStatus(category.id)}
-                          className={`text-[11px] font-bold h-9 rounded-xl ${
-                            category.active 
-                              ? 'text-gray-600 hover:bg-gray-50' 
-                              : 'bg-green-50 text-green-700 border-green-100 hover:bg-green-100'
-                          }`}
-                        >
-                          {category.active ? 'Desactivar' : 'Reactivar'}
-                        </Button>
-                        <Button
-                           variant="ghost"
-                           size="sm"
-                           className="text-[11px] font-bold h-9 rounded-xl text-primary hover:bg-primary/5"
-                        >
-                          Ver Detalles
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))
-              )}
-            </div>
-          </div>
+function MainBottomNav({
+  active,
+  onHome,
+  onMyService,
+  onAgenda,
+  onProfile,
+  user,
+  setFlow,
+  zClass = "z-40",
+}: {
+  active: "inicio" | "servicio" | "agenda" | "perfil" | "chat" | "none"
+  onHome: () => void
+  onMyService?: () => void
+  onAgenda: () => void
+  onProfile: () => void
+  user: any
+  setFlow: (flow: any) => void
+  zClass?: string
+}) {
+  const label = (key: typeof active) =>
+    `text-[11px] font-medium ${active === key ? "text-primary" : "text-gray-400"}`
+  return (
+    <div className={`fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-3 pb-safe ${zClass}`}>
+      <div className="flex justify-around py-2.5">
+        <button type="button" onClick={onHome} className="flex flex-col items-center gap-0.5 min-w-0 px-1">
+          <NavGlyph name="inicio" active={active === "inicio"} />
+          <span className={label("inicio")}>Inicio</span>
+        </button>
+        {onMyService && (
+          <button type="button" onClick={onMyService} className="flex flex-col items-center gap-0.5 min-w-0 px-1">
+            <NavGlyph name="servicio" active={active === "servicio"} />
+            <span className={`${label("servicio")} truncate max-w-[4.5rem]`}>Mi servicio</span>
+          </button>
         )}
-
-        {activeTab === 'users' && (
-          <div className="space-y-6 animate-in fade-in duration-500">
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
-              <div className="hidden md:block">
-                <h2 className="text-xl font-bold text-gray-900 leading-none">Control de Usuarios</h2>
-                <p className="text-xs text-muted-foreground mt-1">Gestión centralizada de cuentas y accesos</p>
-              </div>
-              
-              {/* Nota Informativa sobre aprobación automática */}
-              <div className="flex-1 max-w-md mx-4">
-                <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 flex items-start gap-3">
-                  <div className="bg-blue-100 p-1.5 rounded-lg text-blue-600">
-                    <Info className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-bold text-blue-900 leading-tight">Aprobación Automática</p>
-                    <p className="text-[10px] text-blue-700 mt-0.5 leading-snug">
-                      Los usuarios se activan automáticamente al registrarse. Puedes suspender cualquier cuenta de forma manual si es necesario.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 bg-white p-1 rounded-xl shadow-sm border border-gray-100">
-                {[
-                  { id: 'all', label: 'Todos', count: users.length },
-                  { id: 'client', label: 'Clientes', count: users.filter(u => u.role === 'client').length },
-                  { id: 'provider', label: 'Proveedores', count: users.filter(u => u.role === 'provider').length },
-                  { id: 'pending', label: 'Pendientes', count: users.filter(u => u.role === 'provider' && !u.verified).length }
-                ].map(filter => (
-                  <button
-                    key={filter.id}
-                    onClick={() => setUserFilter(filter.id as any)}
-                    className={`px-3 py-1.5 text-[10px] sm:text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
-                      userFilter === filter.id 
-                        ? 'bg-primary text-white shadow-sm' 
-                        : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
-                    }`}
-                  >
-                    <span>{filter.label}</span>
-                    <span className={`px-1.5 py-0.5 rounded-md text-[9px] ${
-                      userFilter === filter.id ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500'
-                    }`}>
-                      {filter.count}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Lista de usuarios - Mobile Cards */}
-            <div className="md:hidden space-y-4">
-              {usersLoading ? (
-                <div className="py-20 flex flex-col items-center justify-center">
-                   <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-                </div>
-              ) : (
-                filteredUsers.map(user => (
-                  <Card key={user.id} className="border-none shadow-sm bg-white overflow-hidden">
-                    <CardContent className="p-4">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="h-10 w-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold">
-                            {(user.displayName?.charAt(0) || user.email?.charAt(0) || 'U').toUpperCase()}
-                          </div>
-                          <div>
-                            <p className="text-sm font-bold text-gray-900">{user.displayName || 'Sin nombre'}</p>
-                            <p className="text-[10px] text-gray-500">{user.email}</p>
-                          </div>
-                        </div>
-                        <Badge variant="outline" className={`text-[9px] uppercase ${
-                          user.role === 'admin' ? 'border-primary text-primary' : 
-                          user.role === 'provider' ? 'border-purple-200 text-purple-700' : 
-                          'border-blue-200 text-blue-700'
-                        }`}>
-                          {user.role}
-                        </Badge>
-                      </div>
-                      <div className="grid grid-cols-4 gap-2 mt-4">
-                        {user.role === 'provider' && !user.verified && (
-                          <Button size="sm" variant="outline" className="h-8 text-[10px] rounded-lg bg-blue-50 text-blue-600 border-blue-100" onClick={() => handleVerifyUser(user.id)}>
-                            Verificar
-                          </Button>
-                        )}
-                        <Button size="sm" variant="outline" className="h-8 text-[10px] rounded-lg" onClick={() => setEditingUser(user)}>
-                          Editar
-                        </Button>
-                        <Button size="sm" variant="outline" className={`h-8 text-[10px] rounded-lg ${!user.isActive ? 'text-green-600' : 'text-orange-600'}`} onClick={() => handleToggleUserStatus(user.id)}>
-                          {!user.isActive ? 'Activar' : 'Suspender'}
-                        </Button>
-                        <Button size="sm" variant="outline" className="h-8 text-[10px] rounded-lg text-red-600" onClick={() => handleDeleteUser(user.id)}>
-                          Borrar
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))
-              )}
-            </div>
-
-            {/* Lista de usuarios - Desktop Table */}
-            <div className="hidden md:block bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-              <table className="w-full text-left">
-                <thead className="bg-gray-50/50 border-b border-gray-100">
-                  <tr>
-                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Usuario</th>
-                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Rol</th>
-                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Estado</th>
-                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {filteredUsers.map(user => (
-                    <tr key={user.id} className="hover:bg-gray-50/50 transition-colors">
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className="h-9 w-9 rounded-xl bg-gray-100 flex items-center justify-center font-bold text-gray-400 overflow-hidden">
-                             {user.photoURL ? <img src={user.photoURL} alt="" /> : (user.displayName?.charAt(0) || 'U').toUpperCase()}
-                          </div>
-                          <div>
-                            <p className="text-sm font-bold text-gray-900 leading-none">{user.displayName || 'Sin nombre'}</p>
-                            <p className="text-xs text-gray-500 mt-1">{user.email}</p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <Badge variant="secondary" className="bg-gray-100 text-gray-600 border-none font-bold text-[10px]">
-                          {user.role?.toUpperCase()}
-                        </Badge>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-1.5">
-                          <div className={`h-1.5 w-1.5 rounded-full ${user.isActive ? 'bg-green-500' : 'bg-red-500'}`} />
-                          <span className="text-xs font-medium text-gray-600">
-                            {user.isActive ? 'Activo' : 'Suspendido'}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2">
-                          {user.role === 'provider' && !user.verified && (
-                            <Button size="icon" variant="ghost" className="h-8 w-8 rounded-lg text-blue-400 hover:text-blue-600" onClick={() => handleVerifyUser(user.id)} title="Verificar comercio">
-                               <CheckCheck className="h-4 w-4" />
-                            </Button>
-                          )}
-                          <Button size="icon" variant="ghost" className="h-8 w-8 rounded-lg" onClick={() => setEditingUser(user)}>
-                            <Settings className="h-4 w-4 text-gray-400" />
-                          </Button>
-                          <Button size="icon" variant="ghost" className="h-8 w-8 rounded-lg text-orange-400 hover:text-orange-600" onClick={() => handleToggleUserStatus(user.id)} title={user.isActive ? 'Suspender' : 'Activar'}>
-                             {user.isActive ? <ShieldAlert className="h-4 w-4" /> : <Shield className="h-4 w-4" />}
-                          </Button>
-                          <Button size="icon" variant="ghost" className="h-8 w-8 rounded-lg text-red-400 hover:text-red-600" onClick={() => handleDeleteUser(user.id)} title="Borrar">
-                             <X className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'services' && (
-          <div className="space-y-6 animate-in fade-in duration-500">
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
-              <div className="hidden md:block">
-                <h2 className="text-xl font-bold text-gray-900 leading-none">Gestión de Servicios</h2>
-                <p className="text-xs text-muted-foreground mt-1">Supervisión de la oferta de servicios activa</p>
-              </div>
-              <div className="flex items-center gap-2 bg-white p-1 rounded-xl shadow-sm border border-gray-100">
-                {[
-                  { id: 'all', label: 'Todos' },
-                  { id: 'active', label: 'Activos' },
-                  { id: 'inactive', label: 'Inactivos' },
-                  { id: 'pending', label: 'Pendientes' },
-                  { id: 'reported', label: 'Denunciados' }
-                ].map(filter => (
-                  <button
-                    key={filter.id}
-                    onClick={() => setServiceFilter(filter.id as any)}
-                    className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${
-                      serviceFilter === filter.id 
-                        ? 'bg-primary text-white shadow-sm' 
-                        : 'text-gray-500 hover:text-gray-900'
-                    }`}
-                  >
-                    {filter.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-              {filteredServices.map(service => (
-                <Card key={service.id} className="border-none shadow-sm group hover:shadow-md transition-all overflow-hidden bg-white">
-                  <CardContent className="p-5">
-                    <div className="flex justify-between items-start mb-4">
-                      <div className="h-10 w-10 rounded-xl bg-gray-50 flex items-center justify-center text-xl shadow-inner">
-                        {categories.find(c => c.name === service.category)?.icon || '🛠️'}
-                      </div>
-                      <Badge variant={(service as any).isActive !== false ? "success" : "destructive"} className="text-[10px]">
-                        {(service as any).isActive !== false ? 'ACTIVO' : 'INACTIVO'}
-                      </Badge>
-                    </div>
-                    
-                    <h3 className="font-bold text-gray-900 truncate mb-1">{service.name}</h3>
-                    <p className="text-xs text-gray-500 line-clamp-2 h-8 leading-relaxed">
-                      {service.description}
-                    </p>
-                    
-                    <div className="mt-6 pt-4 border-t border-gray-50 space-y-3">
-                      <div className="flex justify-between items-center text-xs">
-                        <span className="text-gray-400 font-medium">Proveedor</span>
-                        <span className="font-bold text-gray-700 truncate max-w-[150px]">{service.providerName}</span>
-                      </div>
-                      <div className="flex justify-between items-center text-xs">
-                        <span className="text-gray-400 font-medium">Categoría</span>
-                        <Badge variant="secondary" className="bg-gray-100 text-gray-600 border-none px-1.5 h-5 text-[9px] font-bold">
-                          {service.category.toUpperCase()}
-                        </Badge>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-400 font-medium text-xs">Precio</span>
-                        <span className="text-lg font-black text-primary">${service.price}</span>
-                      </div>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-3 mt-6">
-                      <Button variant="outline" size="sm" className="rounded-xl h-10 font-bold text-xs">
-                        Editar
-                      </Button>
-                      <Button variant="ghost" size="sm" className="rounded-xl h-10 font-bold text-xs text-red-600 hover:bg-red-50">
-                        Eliminar
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'reports' && (
-          <div className="space-y-6 animate-in fade-in duration-500">
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
-              <div className="hidden md:block">
-                <h2 className="text-xl font-bold text-gray-900 leading-none">Informes de Actividad</h2>
-                <p className="text-xs text-muted-foreground mt-1">Reportes detallados por período</p>
-              </div>
-              <div className="flex items-center gap-1 bg-white p-1 rounded-xl shadow-sm border border-gray-100">
-                {[
-                  { id: 'daily', label: 'Diario', icon: Clock },
-                  { id: 'weekly', label: 'Semanal', icon: Calendar },
-                  { id: 'monthly', label: 'Mensual', icon: BarChart3 }
-                ].map(type => (
-                  <button
-                    key={type.id}
-                    onClick={() => {
-                      setReportType(type.id as any)
-                      if(type.id === 'daily') generateDailyReport()
-                      if(type.id === 'weekly') generateWeeklyReport()
-                      if(type.id === 'monthly') generateMonthlyReport()
-                    }}
-                    className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-lg transition-all ${
-                      reportType === type.id 
-                        ? 'bg-primary text-white shadow-sm' 
-                        : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
-                    }`}
-                  >
-                    <type.icon className="h-3 w-3" />
-                    {type.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {reportsLoading ? (
-              <div className="py-20 flex flex-col items-center justify-center">
-                 <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-                 <p className="mt-4 text-sm text-gray-500">Generando reporte...</p>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                {/* Informe Diario */}
-                {reportType === 'daily' && dailyReport && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                    <AdminStatCard title="Usuarios Activos" value={dailyReport.activeUsers} icon={Users} color="bg-blue-500" />
-                    <AdminStatCard title="Nuevas Publicaciones" value={dailyReport.newPublications} icon={FileText} color="bg-green-500" />
-                    <AdminStatCard title="Chats Iniciados" value={dailyReport.chatsInitiated} icon={Mail} color="bg-purple-500" />
-                    <AdminStatCard title="Denuncias" value={dailyReport.reports} icon={Shield} color="bg-red-500" />
-                  </div>
-                )}
-
-                {/* Informe Semanal */}
-                {reportType === 'weekly' && weeklyReport && (
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <Card className="border-none shadow-sm">
-                      <CardContent className="p-6">
-                         <h3 className="font-bold text-gray-900 mb-6 flex items-center gap-2">
-                           <MapPin className="h-4 w-4 text-primary" /> Búsquedas por Ciudad
-                         </h3>
-                         <div className="space-y-6">
-                           {weeklyReport.topSearchesByCity.map((cityData, index) => (
-                             <div key={index} className="space-y-3">
-                               <div className="flex items-center justify-between">
-                                  <span className="text-sm font-bold text-gray-700">{cityData.city}</span>
-                                  <Badge variant="secondary" className="text-[10px]">{cityData.searches.reduce((a,b) => a + b.count, 0)} total</Badge>
-                               </div>
-                               <div className="space-y-2">
-                                 {cityData.searches.slice(0, 3).map((s, i) => (
-                                   <div key={i} className="flex justify-between items-center p-2 bg-gray-50 rounded-lg text-xs">
-                                      <span className="text-gray-600">#{i+1} {s.term}</span>
-                                      <span className="font-bold text-gray-400">{s.count}</span>
-                                   </div>
-                                 ))}
-                               </div>
-                             </div>
-                           ))}
-                         </div>
-                      </CardContent>
-                    </Card>
-
-                    <Card className="border-none shadow-sm h-fit">
-                       <CardContent className="p-6">
-                          <h3 className="font-bold text-gray-900 mb-6 flex items-center gap-2">
-                            <TrendingUp className="h-4 w-4 text-green-500" /> Rendimiento de Promos
-                          </h3>
-                          <div className="space-y-4">
-                            <div className="p-4 bg-green-50/50 rounded-2xl border border-green-100">
-                               <p className="text-[10px] font-black text-green-600 uppercase tracking-wider mb-3">Top Rendimiento</p>
-                               {weeklyReport.bestPerformingPromos.slice(0, 3).map((p, i) => (
-                                 <div key={i} className="flex items-center justify-between mb-2 last:mb-0">
-                                   <span className="text-xs font-bold text-gray-700 truncate">{p.name}</span>
-                                   <span className="text-xs font-black text-green-600">{p.performance.toFixed(1)}%</span>
-                                 </div>
-                               ))}
-                            </div>
-                            <div className="p-4 bg-red-50/50 rounded-2xl border border-red-100">
-                               <p className="text-[10px] font-black text-red-600 uppercase tracking-wider mb-3">Bajo Rendimiento</p>
-                               {weeklyReport.worstPerformingPromos.slice(0, 3).map((p, i) => (
-                                 <div key={i} className="flex items-center justify-between mb-2 last:mb-0">
-                                   <span className="text-xs font-bold text-gray-700 truncate">{p.name}</span>
-                                   <span className="text-xs font-black text-red-600">{p.performance.toFixed(1)}%</span>
-                                 </div>
-                               ))}
-                            </div>
-                          </div>
-                       </CardContent>
-                    </Card>
-                  </div>
-                )}
-
-                {/* Informe Mensual */}
-                {reportType === 'monthly' && monthlyReport && (
-                  <div className="space-y-6">
-                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <Card className="border-none shadow-sm bg-gradient-to-br from-primary/5 to-transparent">
-                           <CardContent className="p-6">
-                              <p className="text-xs font-bold text-primary uppercase tracking-widest mb-1">Crecimiento</p>
-                              <h4 className="text-3xl font-black text-gray-900">{monthlyReport.userGrowth > 0 ? '+' : ''}{monthlyReport.userGrowth.toFixed(1)}%</h4>
-                              <p className="text-[10px] text-gray-500 mt-2">Comparado con el mes anterior</p>
-                           </CardContent>
-                        </Card>
-                        <Card className="border-none shadow-sm">
-                           <CardContent className="p-6">
-                              <p className="text-xs font-bold text-purple-600 uppercase tracking-widest mb-1">Retención</p>
-                              <h4 className="text-3xl font-black text-gray-900">{monthlyReport.userRetention.toFixed(1)}%</h4>
-                              <p className="text-[10px] text-gray-500 mt-2">{monthlyReport.returningUsers} usuarios recurrentes</p>
-                           </CardContent>
-                        </Card>
-                        <Card className="border-none shadow-sm">
-                           <CardContent className="p-6">
-                              <p className="text-xs font-bold text-green-600 uppercase tracking-widest mb-1">Ingresos</p>
-                              <h4 className="text-3xl font-black text-gray-900">${monthlyReport.promoSummary.totalRevenue.toLocaleString()}</h4>
-                              <p className="text-[10px] text-gray-500 mt-2">Generados por promociones</p>
-                           </CardContent>
-                        </Card>
-                     </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        {activeTab === 'analytics' && (
-          <div className="space-y-6 animate-in fade-in duration-500">
-            <div className="hidden md:block">
-              <h2 className="text-xl font-bold text-gray-900 leading-none">Analíticas Avanzadas</h2>
-              <p className="text-xs text-muted-foreground mt-1">Monitoreo de KPIs y rendimiento de la plataforma</p>
-            </div>
-            
-            {/* Métricas principales mejoradas */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
-              <AdminStatCard title="Usuarios Totales" value={analytics.activeUsers + analytics.inactiveUsers} icon={Users} color="bg-primary" />
-              <AdminStatCard title="Reservas" value={analytics.totalBookings} icon={Calendar} color="bg-blue-500" />
-              <AdminStatCard title="Ingresos" value={`$${analytics.totalRevenue.toLocaleString()}`} icon={Wallet} color="bg-green-500" />
-              <AdminStatCard title="Tickets" value={analytics.reportedPublications} icon={ShieldAlert} color="bg-orange-500" />
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-               {/* Servicios más populares */}
-               <Card className="border-none shadow-sm lg:col-span-1">
-                 <CardContent className="p-6">
-                   <h3 className="font-bold text-gray-900 mb-6 flex items-center gap-2">
-                     <Flame className="h-4 w-4 text-orange-500" /> Servicios Populares
-                   </h3>
-                   <div className="space-y-4">
-                     {analytics.topServices.map((service, index) => (
-                       <div key={index} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-2xl transition-colors">
-                         <div className="flex items-center gap-3">
-                           <span className="w-6 h-6 rounded-lg bg-gray-100 flex items-center justify-center text-[10px] font-black text-gray-400">{index + 1}</span>
-                           <span className="text-sm font-bold text-gray-700 truncate max-w-[120px]">{service.name}</span>
-                         </div>
-                         <Badge variant="secondary" className="bg-primary/5 text-primary border-none font-bold">{service.bookings}</Badge>
-                       </div>
-                     ))}
-                   </div>
-                 </CardContent>
-               </Card>
-
-               {/* Reservas recientes */}
-               <Card className="border-none shadow-sm lg:col-span-2">
-                 <CardContent className="p-6">
-                   <h3 className="font-bold text-gray-900 mb-6 flex items-center gap-2">
-                     <Activity className="h-4 w-4 text-blue-500" /> Actividad Reciente
-                   </h3>
-                   <div className="space-y-3">
-                     {analytics.recentBookings.length > 0 ? (
-                       analytics.recentBookings.slice(0, 6).map((booking, index) => (
-                         <div key={index} className="flex items-center justify-between p-4 bg-gray-50/50 rounded-2xl border border-gray-100/50">
-                           <div className="flex items-center gap-4">
-                             <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center shadow-sm">
-                                <CalendarCheck className="h-5 w-5 text-gray-400" />
-                             </div>
-                             <div>
-                               <p className="text-sm font-bold text-gray-900">{booking.serviceName}</p>
-                               <p className="text-[10px] text-gray-500">Cliente: {booking.clientName}</p>
-                             </div>
-                           </div>
-                           <div className="text-right">
-                             <p className="text-sm font-black text-primary">${booking.price}</p>
-                             <Badge className="text-[9px] h-4 mt-1 bg-green-100 text-green-700 border-none">{booking.status.toUpperCase()}</Badge>
-                           </div>
-                         </div>
-                       ))
-                     ) : (
-                       <div className="py-12 flex flex-col items-center justify-center text-center">
-                          <div className="w-12 h-12 rounded-full bg-gray-50 flex items-center justify-center mb-3">
-                             <TrendingUp className="h-6 w-6 text-gray-300" />
-                          </div>
-                          <p className="text-sm font-medium text-gray-400 italic">Aún no hay reservas registradas</p>
-                       </div>
-                     )}
-                   </div>
-                 </CardContent>
-               </Card>
-            </div>
-
-            {/* Mapa de Calor de Interacciones */}
-            <Card className="border-none shadow-sm overflow-hidden bg-white/50 backdrop-blur-sm border border-white/20">
-               <CardContent className="p-6 md:p-8">
-                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
-                   <div>
-                     <h3 className="text-xl font-black text-gray-900 flex items-center gap-2">
-                       <Flame className="h-5 w-5 text-orange-500 animate-pulse" /> Mapa de Calor de la Aplicación
-                     </h3>
-                     <p className="text-xs text-muted-foreground mt-1">Zonas de mayor interacción y clicks de los clientes</p>
-                   </div>
-                   <div className="flex items-center gap-2 px-3 py-1 bg-gray-50 border border-gray-100 rounded-lg">
-                      <div className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
-                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">En Tiempo Real</span>
-                   </div>
-                 </div>
-
-                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    {/* Visualización tipo Heatmap List */}
-                    <div className="space-y-6">
-                       {(() => {
-                         const heatmapData = [
-                           { key: 'buscador', area: "Buscador de Servicios", color: "bg-red-500" },
-                           { key: 'reserva_btn', area: "Botón 'Confirmar Turno'", color: "bg-orange-500" },
-                           { key: 'categorias', area: "Filtros de Categoría", color: "bg-yellow-400" },
-                           { key: 'perfil_proveedor', area: "Perfil de Proveedor", color: "bg-green-400" },
-                           { key: 'galeria', area: "Galería de Imágenes", color: "bg-blue-400" },
-                         ].map(item => ({
-                           ...item,
-                           clicks: analytics.interactions?.[item.key] || 0
-                         }))
-
-                         const totalClicks = heatmapData.reduce((sum, item) => sum + item.clicks, 0)
-                         if (totalClicks === 0) {
-                            return (
-                               <div className="h-full flex flex-col items-center justify-center py-20 bg-gray-50/30 rounded-[2rem] border border-dashed border-gray-200">
-                                  <Flame className="h-10 w-10 text-gray-200 mb-4" />
-                                  <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Aún no hay datos para mostrar</p>
-                                  <p className="text-[10px] text-gray-300 mt-1">Las interacciones aparecerán pronto</p>
-                               </div>
-                            )
-                         }
-
-                         const maxClicks = Math.max(...heatmapData.map(d => d.clicks), 1)
-
-                         return heatmapData.map((item, i) => (
-                           <div key={i} className="space-y-2 group">
-                              <div className="flex justify-between items-center">
-                                 <span className="text-sm font-bold text-gray-700">{item.area}</span>
-                                 <span className="text-[10px] font-black text-gray-400 uppercase">{item.clicks.toLocaleString()} clicks</span>
-                              </div>
-                              <div className="h-3 w-full bg-gray-100 rounded-full overflow-hidden">
-                                 <div 
-                                   className={`h-full ${item.color} rounded-full transition-all duration-1000 group-hover:brightness-110`}
-                                   style={{ width: `${(item.clicks / maxClicks) * 100}%` }}
-                                 />
-                              </div>
-                           </div>
-                         ))
-                       })()}
-                    </div>
-
-                    {/* Insights de Comportamiento */}
-                    <div className="bg-gradient-to-br from-gray-50 to-white p-6 rounded-[2rem] border border-gray-100">
-                       <h4 className="text-sm font-bold text-gray-900 mb-6">🎯 Puntos Calientes (Insights)</h4>
-                       <div className="space-y-4">
-                          {(() => {
-                             const totalClicks = Object.values(analytics.interactions || {}).reduce((a, b) => (a as number) + (b as number), 0);
-                             
-                             if (totalClicks === 0) {
-                                return (
-                                   <div className="py-20 text-center">
-                                      <p className="text-xs font-bold text-gray-400 animate-pulse">ESPERANDO DATOS...</p>
-                                   </div>
-                                )
-                             }
-
-                             const convRate = analytics.interactions?.reserva_btn 
-                               ? ((analytics.totalBookings / analytics.interactions.reserva_btn) * 100).toFixed(1) 
-                               : "0";
-                             
-                             const topInt = Object.entries(analytics.interactions || {})
-                               .sort(([,a], [,b]) => (b as number) - (a as number))[0] || ["-", 0];
-
-                             const lowInt = Object.entries(analytics.interactions || {})
-                               .filter(([k]) => k !== 'lastUpdated')
-                               .sort(([,a], [,b]) => (a as number) - (b as number))[0] || ["-", 0];
-
-                             return (
-                               <>
-                                 <div className="p-4 bg-red-50/50 rounded-2xl border border-red-100/50">
-                                   <p className="text-xs font-bold text-red-700">Tasa de Conversión</p>
-                                   <p className="text-[10px] text-red-600 mt-1">
-                                     Solo el {convRate}% de los que presionan 'Confirmar Turno' concretan la reserva. Considera simplificar el flujo de pago.
-                                   </p>
-                                 </div>
-                                 <div className="p-4 bg-orange-50/50 rounded-2xl border border-orange-100/50">
-                                   <p className="text-xs font-bold text-orange-700">Mayor Interacción</p>
-                                   <p className="text-[10px] text-orange-600 mt-1">
-                                     La sección '{topInt[0].replace('_', ' ')}' es la más usada con {topInt[1]} clicks reales.
-                                   </p>
-                                 </div>
-                                 <div className="p-4 bg-blue-50/50 rounded-2xl border border-blue-100/50">
-                                   <p className="text-xs font-bold text-blue-700">Zona Fría (Alerta)</p>
-                                   <p className="text-[10px] text-blue-600 mt-1">
-                                     '{lowInt[0].replace('_', ' ')}' tiene la menor tasa de interacción ({lowInt[1]} clicks). Podría necesitar una mejor ubicación visual.
-                                   </p>
-                                 </div>
-                               </>
-                             )
-                          })()}
-                       </div>
-                    </div>
-                 </div>
-               </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {activeTab === 'settings' && (
-          <div className="space-y-6 animate-in fade-in duration-500">
-            <div className="hidden md:block">
-              <h2 className="text-xl font-bold text-gray-900 leading-none">Configuración General</h2>
-              <p className="text-xs text-muted-foreground mt-1">Personalización y parámetros del sistema</p>
-            </div>
-            
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pb-20 md:pb-0">
-              {/* Aplicación */}
-              <Card className="border-none shadow-sm overflow-hidden bg-white">
-                <CardContent className="p-0">
-                  <div className="p-4 bg-gray-50 border-b border-gray-100 flex items-center gap-3">
-                    <div className="p-2 bg-primary/10 rounded-lg text-primary">
-                      <LayoutDashboard className="h-4 w-4" />
-                    </div>
-                    <h3 className="font-bold text-sm text-gray-900">Aplicación</h3>
-                  </div>
-                  <div className="p-6 space-y-4">
-                    <div className="space-y-2">
-                       <Label className="text-xs font-bold text-gray-500">Nombre del Sitio</Label>
-                       <Input value={settings.appName} onChange={(e) => handleSettingChange('appName', e.target.value)} className="rounded-xl border-gray-100 focus:ring-primary h-11" />
-                    </div>
-                    <div className="space-y-2">
-                       <Label className="text-xs font-bold text-gray-500">Descripción SEO</Label>
-                       <Input value={settings.appDescription} onChange={(e) => handleSettingChange('appDescription', e.target.value)} className="rounded-xl border-gray-100 h-11" />
-                    </div>
-                    <Button onClick={() => saveSettings('aplicación')} className="w-full rounded-xl h-11 font-bold">Actualizar Datos</Button>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Notificaciones */}
-              <Card className="border-none shadow-sm overflow-hidden bg-white">
-                <CardContent className="p-0">
-                  <div className="p-4 bg-gray-50 border-b border-gray-100 flex items-center gap-3">
-                    <div className="p-2 bg-blue-500/10 rounded-lg text-blue-500">
-                      <Bell className="h-4 w-4" />
-                    </div>
-                    <h3 className="font-bold text-sm text-gray-900">Notificaciones</h3>
-                  </div>
-                  <div className="p-6 space-y-6">
-                    {[
-                      { id: 'emailNotifications', label: 'Emails Transaccionales', desc: 'Alertas de nuevas reservas' },
-                      { id: 'pushNotifications', label: 'Push en Tiempo Real', desc: 'Notificaciones flotantes' },
-                      { id: 'appointmentReminders', label: 'Recordatorios', desc: 'Avisos automáticos a clientes' }
-                    ].map(item => (
-                      <div key={item.id} className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-bold text-gray-800">{item.label}</p>
-                          <p className="text-[10px] text-gray-500">{item.desc}</p>
-                        </div>
-                        <button
-                          onClick={() => handleSettingChange(item.id, !(settings as any)[item.id])}
-                          className={`w-10 h-5 rounded-full transition-colors relative ${
-                            (settings as any)[item.id] ? 'bg-primary' : 'bg-gray-200'
-                          }`}
-                        >
-                          <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${
-                            (settings as any)[item.id] ? 'left-6' : 'left-1'
-                          }`} />
-                        </button>
-                      </div>
-                    ))}
-                    <Button variant="outline" onClick={() => saveSettings('notificaciones')} className="w-full rounded-xl h-11 font-bold border-gray-100">Guardar Preferencias</Button>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Pagos y Comisiones */}
-              <Card className="border-none shadow-sm overflow-hidden bg-white">
-                <CardContent className="p-0">
-                  <div className="p-4 bg-gray-50 border-b border-gray-100 flex items-center gap-3">
-                    <div className="p-2 bg-green-500/10 rounded-lg text-green-500">
-                      <Wallet className="h-4 w-4" />
-                    </div>
-                    <h3 className="font-bold text-sm text-gray-900">Estructura Comercial</h3>
-                  </div>
-                  <div className="p-6 space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                       <div className="space-y-2">
-                          <Label className="text-xs font-bold text-gray-500">Comisión (%)</Label>
-                          <Input type="number" value={settings.commissionRate} onChange={(e) => handleSettingChange('commissionRate', parseInt(e.target.value))} className="rounded-xl border-gray-100" />
-                       </div>
-                       <div className="space-y-2">
-                          <Label className="text-xs font-bold text-gray-500">Precio Mín.</Label>
-                          <Input type="number" value={settings.minPrice} onChange={(e) => handleSettingChange('minPrice', parseInt(e.target.value))} className="rounded-xl border-gray-100" />
-                       </div>
-                    </div>
-                    <Button onClick={() => saveSettings('pagos')} className="w-full rounded-xl h-11 font-bold">Actualizar Precios</Button>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Seguridad */}
-              <Card className="border-none shadow-sm overflow-hidden bg-white">
-                <CardContent className="p-0">
-                  <div className="p-4 bg-gray-50 border-b border-gray-100 flex items-center gap-3">
-                    <div className="p-2 bg-red-500/10 rounded-lg text-red-500">
-                      <Shield className="h-4 w-4" />
-                    </div>
-                    <h3 className="font-bold text-sm text-gray-900">Seguridad</h3>
-                  </div>
-                  <div className="p-6 space-y-4">
-                    <div className="flex items-center justify-between p-3 bg-red-50/50 rounded-xl border border-red-100/50">
-                       <div className="flex items-center gap-3">
-                          <div className="h-8 w-8 rounded-lg bg-white flex items-center justify-center shadow-sm">
-                             <AlertCircle className="h-4 w-4 text-red-500" />
-                          </div>
-                          <div>
-                             <p className="text-xs font-bold text-gray-900">Registro Abierto</p>
-                             <p className="text-[10px] text-gray-500">Permitir nuevos usuarios</p>
-                          </div>
-                       </div>
-                       <button
-                          onClick={() => handleSettingChange('openRegistration', !settings.openRegistration)}
-                          className={`w-10 h-5 rounded-full transition-colors relative ${
-                            settings.openRegistration ? 'bg-red-500' : 'bg-gray-200'
-                          }`}
-                        >
-                          <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${
-                            settings.openRegistration ? 'left-6' : 'left-1'
-                          }`} />
-                        </button>
-                    </div>
-                    <Button variant="outline" onClick={() => saveSettings('seguridad')} className="w-full rounded-xl h-11 font-bold border-gray-100">Aplicar Políticas</Button>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </div>
-        )}
-
-        {/* Modales - Deben estar dentro del layout principal pero al final */}
-        {showCreateCategory && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100] animate-in fade-in zoom-in duration-300">
-            <Card className="w-full max-w-md border-none shadow-2xl bg-white overflow-hidden rounded-3xl">
-              <CardContent className="p-8">
-                <div className="flex justify-between items-center mb-8">
-                  <h3 className="text-2xl font-black text-gray-900">Nueva Categoría</h3>
-                  <Button variant="ghost" size="icon" onClick={() => setShowCreateCategory(false)} className="rounded-xl">
-                    <X className="h-5 w-5" />
-                  </Button>
-                </div>
-                <form onSubmit={handleCreateCategory} className="space-y-6">
-                  <div className="space-y-2">
-                    <Label className="text-xs font-black text-gray-400 uppercase">Nombre</Label>
-                    <Input value={newCategory.name} onChange={(e) => setNewCategory(prev => ({ ...prev, name: e.target.value }))} placeholder="Ej: Barbería" required className="h-12 rounded-xl" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                     <div className="space-y-2">
-                        <Label className="text-xs font-black text-gray-400 uppercase">Icono</Label>
-                        <Input value={newCategory.icon} onChange={(e) => setNewCategory(prev => ({ ...prev, icon: e.target.value }))} placeholder="💄" required className="h-12 rounded-xl text-center text-xl" />
-                     </div>
-                     <div className="space-y-2">
-                        <Label className="text-xs font-black text-gray-400 uppercase">Orden</Label>
-                        <Input type="number" placeholder="1" className="h-12 rounded-xl" />
-                     </div>
-                  </div>
-                  <Button type="submit" className="w-full h-14 rounded-2xl font-black text-lg shadow-lg shadow-primary/20">Crear Categoría</Button>
-                </form>
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {editingCategory && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100] animate-in fade-in zoom-in duration-300">
-            <Card className="w-full max-w-md border-none shadow-2xl bg-white overflow-hidden rounded-3xl">
-              <CardContent className="p-8">
-                <div className="flex justify-between items-center mb-8">
-                  <h3 className="text-2xl font-black text-gray-900">Editar Categoría</h3>
-                  <Button variant="ghost" size="icon" onClick={() => setEditingCategory(null)} className="rounded-xl">
-                    <X className="h-5 w-5" />
-                  </Button>
-                </div>
-                <form onSubmit={handleEditCategory} className="space-y-6">
-                  <div className="space-y-2">
-                    <Label className="text-xs font-black text-gray-400 uppercase">Nombre</Label>
-                    <Input value={editingCategory.name} onChange={(e) => setEditingCategory((prev: any) => ({ ...prev, name: e.target.value }))} required className="h-12 rounded-xl" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-xs font-black text-gray-400 uppercase">Icono</Label>
-                    <Input value={editingCategory.icon} onChange={(e) => setEditingCategory((prev: any) => ({ ...prev, icon: e.target.value }))} required className="h-12 rounded-xl text-center text-xl" />
-                  </div>
-                  <Button type="submit" className="w-full h-14 rounded-2xl font-black text-lg">Guardar Cambios</Button>
-                </form>
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {editingUser && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100] animate-in fade-in zoom-in duration-300">
-            <Card className="w-full max-w-md border-none shadow-2xl bg-white overflow-hidden rounded-3xl">
-              <CardContent className="p-8">
-                <div className="flex justify-between items-center mb-8">
-                  <h3 className="text-2xl font-black text-gray-900">Rol de Usuario</h3>
-                  <Button variant="ghost" size="icon" onClick={() => setEditingUser(null)} className="rounded-xl">
-                    <X className="h-5 w-5" />
-                  </Button>
-                </div>
-                <div className="mb-8 p-4 bg-gray-50 rounded-2xl border border-gray-100">
-                   <p className="text-sm font-bold text-gray-900">{editingUser.displayName || 'Sin nombre'}</p>
-                   <p className="text-xs text-gray-500">{editingUser.email}</p>
-                </div>
-                <form onSubmit={async (e) => {
-                  e.preventDefault()
-                  setIsProcessing(true)
-                  const formData = new FormData(e.target as HTMLFormElement)
-                  const newRole = formData.get('role') as string
-                  await handleUpdateUserRole(editingUser.id, newRole)
-                  setIsProcessing(false)
-                  setAdminActionStatus({ type: 'success', message: 'Rol actualizado correctamente' })
-                  setTimeout(() => setAdminActionStatus(null), 3000)
-                }} className="space-y-6">
-                  <div className="space-y-2">
-                    <Label className="text-xs font-black text-gray-400 uppercase">Asignar Rol</Label>
-                    <select name="role" defaultValue={editingUser.role} className="w-full h-12 px-4 rounded-xl border border-gray-100 bg-white text-sm font-bold focus:ring-2 focus:ring-primary outline-none appearance-none">
-                      <option value="client">Cliente Estándar</option>
-                      <option value="provider">Proveedor de Servicios</option>
-                      <option value="admin">Administrador Total</option>
-                    </select>
-                  </div>
-                  <Button 
-                    type="submit" 
-                    disabled={isProcessing}
-                    className="w-full h-14 rounded-2xl font-black text-lg flex items-center justify-center gap-2"
-                  >
-                    {isProcessing ? (
-                      <>
-                        <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                        Procesando...
-                      </>
-                    ) : 'Confirmar Rol'}
-                  </Button>
-                </form>
-              </CardContent>
-            </Card>
-          </div>
-        )}
-      </main>
+        <button type="button" onClick={onAgenda} className="flex flex-col items-center gap-0.5 min-w-0 px-1">
+          <NavGlyph name="agenda" active={active === "agenda"} />
+          <span className={label("agenda")}>Agenda</span>
+        </button>
+        <ChatNavButton user={user} setFlow={setFlow} active={active === "chat"} />
+        <button type="button" onClick={onProfile} className="flex flex-col items-center gap-0.5 min-w-0 px-1">
+          <NavGlyph name="perfil" active={active === "perfil"} />
+          <span className={label("perfil")}>Perfil</span>
+        </button>
+      </div>
     </div>
-  </div>
-)
+  )
+}
+
+function ChatInboxRow({ chat, onOpen }: { chat: any; onOpen: () => void }) {
+  const { online, lastSeen } = usePartnerPresence(chat.partnerId)
+  return (
+    <button type="button" onClick={onOpen} className="w-full flex items-center gap-3 p-4 bg-white rounded-2xl text-left shadow-sm border border-gray-50">
+      <div className="relative w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+        <span className="font-bold text-primary">{chat.partnerName?.charAt(0)?.toUpperCase() || 'U'}</span>
+        <span className={`absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full border-2 border-white ${online ? 'bg-green-500' : 'bg-gray-300'}`} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between gap-3">
+          <p className="font-semibold text-gray-900 truncate">{chat.partnerName}</p>
+          <span className="text-[10px] text-gray-400 flex-shrink-0">
+            {chat.lastMessageAt.getTime() > 0 ? chat.lastMessageAt.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : ''}
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-3 mt-0.5">
+          <div className="min-w-0">
+            <p className={`text-sm truncate ${chat.unreadCount > 0 ? 'font-semibold text-gray-800' : 'text-gray-500'}`}>{chat.lastMessage}</p>
+            <p className={`text-[10px] ${online ? 'text-green-500' : 'text-gray-400'}`}>
+              {online ? 'En línea' : lastSeen ? `Últ. vez ${lastSeen.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}` : 'Desconectado'}
+            </p>
+          </div>
+          {chat.unreadCount > 0 && (
+            <span className="min-w-6 h-6 px-1.5 rounded-full bg-primary text-white text-xs font-bold flex items-center justify-center flex-shrink-0">
+              {chat.unreadCount > 99 ? '99+' : chat.unreadCount}
+            </span>
+          )}
+        </div>
+      </div>
+    </button>
+  )
+}
+
+function ChatInbox({ user, setFlow, setActiveChat, homeFlow }: { user: any; setFlow: (flow: any) => void; setActiveChat: (chat: any) => void; homeFlow: 'home' | 'dashboard' }) {
+  const { chats, totalUnread, loading } = useChatInbox(user?.uid)
+  return (
+    <div className="min-h-screen bg-gray-50 pb-24">
+      <div className="sticky top-0 z-20 bg-white border-b border-gray-100 px-4 py-4 flex items-center gap-3">
+        <Button variant="ghost" size="sm" onClick={() => setFlow(homeFlow)}><ArrowLeft className="h-5 w-5" /></Button>
+        <div>
+          <h1 className="text-xl font-bold">Mensajes</h1>
+          <p className="text-xs text-muted-foreground">{totalUnread > 0 ? `${totalUnread} sin leer` : 'Todo al día'}</p>
+        </div>
+      </div>
+
+      <div className="p-4 space-y-3">
+        {loading ? (
+          <div className="py-16 flex justify-center"><div className="animate-spin w-7 h-7 border-2 border-primary border-t-transparent rounded-full" /></div>
+        ) : chats.length > 0 ? chats.map((chat) => (
+          <ChatInboxRow key={chat.id} chat={chat} onOpen={() => {
+            setActiveChat({ partnerId: chat.partnerId, partnerName: chat.partnerName, from: 'inbox' })
+            setFlow('chat')
+          }} />
+        )) : (
+          <div className="text-center py-20 px-6">
+            <div className="w-16 h-16 rounded-full bg-white flex items-center justify-center mx-auto mb-4 overflow-hidden shadow-sm">
+              <AppIcon name="chat" className="h-12 w-12" />
+            </div>
+            <h2 className="font-semibold">Todavía no hay conversaciones</h2>
+            <p className="text-sm text-muted-foreground mt-1">Los mensajes y respuestas a historias aparecerán aquí.</p>
+          </div>
+        )}
+      </div>
+
+      <MainBottomNav
+          active="chat"
+          onHome={() => setFlow(homeFlow === "dashboard" ? "home" : homeFlow)}
+          onMyService={() => setFlow("mi-servicio")}
+          onAgenda={() => setFlow("agenda")}
+          onProfile={() => setFlow("profile")}
+          user={user}
+          setFlow={setFlow}
+          zClass="z-40"
+        />
+    </div>
+  )
 }
 
 function ChatWindow({
@@ -7335,9 +8440,23 @@ function ChatWindow({
   const [messages, setMessages] = useState<any[]>([])
   const [newMessage, setNewMessage] = useState("")
   const [loading, setLoading] = useState(true)
+  const [partnerLastReadAt, setPartnerLastReadAt] = useState<Date | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const composerRef = useRef<HTMLDivElement>(null)
+  const viewport = useVisibleViewport()
+  const { online: partnerOnline, lastSeen: partnerLastSeen } = usePartnerPresence(partnerId)
 
   const chatId = partnerId ? [user.uid, partnerId].sort().join('_') : null
+
+  useEffect(() => {
+    if (!chatId || !user?.uid || !partnerId) return
+    void ensureChatDocument({
+      sender: user,
+      partnerId,
+      partnerName,
+    })
+  }, [chatId, user, partnerId, partnerName])
 
   useEffect(() => {
     if (!chatId) return
@@ -7354,59 +8473,94 @@ function ChatWindow({
       }))
       setMessages(msgs)
       setLoading(false)
+    }, (error) => {
+      console.error('Error loading chat messages:', error)
+      setLoading(false)
     })
 
     return () => unsubscribe()
   }, [chatId])
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [messages])
+    if (!chatId || !user?.uid) return
+    const unsubscribe = onSnapshot(doc(db, 'chats', chatId), (snapshot) => {
+      const value = snapshot.data()?.lastReadAt?.[partnerId]
+      setPartnerLastReadAt(value?.toDate ? value.toDate() : value ? new Date(value) : null)
+    }, (error) => {
+      console.error('Error loading chat meta:', error)
+    })
+    return unsubscribe
+  }, [chatId, partnerId, user?.uid])
+
+  useEffect(() => {
+    if (chatId && user?.uid) void markChatRead(chatId, user.uid)
+  }, [chatId, user?.uid, messages.length])
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
+  }, [messages, viewport.height, viewport.keyboardInset])
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow
+    const previousHtml = document.documentElement.style.overflow
+    document.body.style.overflow = "hidden"
+    document.documentElement.style.overflow = "hidden"
+    return () => {
+      document.body.style.overflow = previousOverflow
+      document.documentElement.style.overflow = previousHtml
+    }
+  }, [])
+
+  const handleComposerFocus = () => {
+    window.setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ block: "end" })
+      composerRef.current?.scrollIntoView({ block: "nearest" })
+    }, 120)
+  }
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!newMessage.trim() || !user || !chatId) return
 
-    try {
-      await addDoc(collection(db, 'chats', chatId, 'messages'), {
-        text: newMessage,
-        senderId: user.uid,
-        senderName: user.displayName || user.email,
-        createdAt: serverTimestamp()
-      })
-
-      await setDoc(doc(db, 'chats', chatId), {
-        lastMessage: newMessage,
-        lastMessageAt: serverTimestamp(),
-        participants: [user.uid, partnerId],
-        participantNames: {
-          [user.uid]: user.displayName || user.email,
-          [partnerId]: partnerName
-        },
-        updatedAt: serverTimestamp()
-      }, { merge: true })
-
+    const result = await sendChatMessage({
+      sender: user,
+      partnerId,
+      partnerName,
+      text: newMessage,
+    })
+    if (result.success) {
       setNewMessage("")
-    } catch (error) {
-      console.error("Error al enviar mensaje:", error)
     }
   }
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50">
-      <div className="bg-white shadow-sm p-4 flex items-center justify-between">
+    <div
+      className="fixed inset-0 z-[80] flex flex-col bg-gray-50 overflow-hidden"
+      style={
+        viewport.keyboardInset > 0
+          ? { paddingBottom: viewport.keyboardInset }
+          : undefined
+      }
+    >
+      <div className="bg-white shadow-sm p-4 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="sm" onClick={onBack}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>
             <h2 className="font-bold text-lg">{partnerName}</h2>
-            <p className="text-xs text-green-500 font-medium">En línea</p>
+            <p className={`text-xs font-medium ${partnerOnline ? 'text-green-500' : 'text-gray-400'}`}>
+              {partnerOnline
+                ? 'En línea'
+                : partnerLastSeen
+                  ? `Última vez ${partnerLastSeen.toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`
+                  : 'Desconectado'}
+            </p>
           </div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
         {loading ? (
           <div className="flex justify-center items-center h-full">
             <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full"></div>
@@ -7430,6 +8584,31 @@ function ChatWindow({
                   : "bg-white border text-gray-800 rounded-tl-none"
                   }`}
               >
+                {msg.type === 'story_reply' && msg.story && (
+                  <div className={`mb-2 overflow-hidden rounded-xl border ${msg.senderId === user?.uid ? 'border-white/25 bg-white/10' : 'border-gray-100 bg-gray-50'}`}>
+                    <div className="flex items-center gap-2 p-2">
+                      <div className="w-12 h-12 rounded-lg overflow-hidden bg-gray-200 flex-shrink-0">
+                        {msg.story.mediaType === 'video' ? (
+                          <video src={msg.story.mediaUrl} className="w-full h-full object-cover" muted />
+                        ) : (
+                          <img src={msg.story.mediaUrl} alt="Historia respondida" className="w-full h-full object-cover" />
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-[10px] uppercase tracking-wider opacity-70 font-semibold">Respuesta a una historia</p>
+                        <p className="text-xs font-semibold truncate">{msg.story.serviceName || msg.story.providerName}</p>
+                        {msg.story.caption && <p className="text-[11px] opacity-75 line-clamp-1">{msg.story.caption}</p>}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {Array.isArray(msg.imageUrls) && msg.imageUrls.length > 0 && (
+                  <div className="mb-2 grid grid-cols-2 gap-1">
+                    {msg.imageUrls.map((url: string) => (
+                      <img key={url} src={url} alt="Foto adjunta" className="w-full h-24 object-cover rounded-lg" />
+                    ))}
+                  </div>
+                )}
                 <p className="text-sm">{msg.text}</p>
                 <p className={`text-[10px] mt-1 opacity-70 text-right`}>
                   {msg.createdAt?.toDate ?
@@ -7437,6 +8616,11 @@ function ChatWindow({
                     "Enviando..."
                   }
                 </p>
+                {msg.senderId === user?.uid && partnerLastReadAt && msg.createdAt?.toDate && msg.createdAt.toDate().getTime() <= partnerLastReadAt.getTime() && (
+                  <p className="text-[10px] mt-0.5 text-right opacity-80 flex items-center justify-end gap-1">
+                    <CheckCheck className="h-3 w-3" /> Visto
+                  </p>
+                )}
               </div>
             </div>
           ))
@@ -7444,12 +8628,18 @@ function ChatWindow({
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="bg-white p-4 border-t">
-        <form onSubmit={handleSendMessage} className="flex gap-2">
+      <div
+        ref={composerRef}
+        className={`bg-white px-4 pt-3 border-t shrink-0 ${viewport.keyboardInset > 0 ? "pb-3" : "pb-safe"}`}
+      >
+        <form onSubmit={handleSendMessage} className="flex gap-2 items-end">
           <Input
+            ref={inputRef}
             placeholder="Escribe un mensaje..."
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
+            onFocus={handleComposerFocus}
+            enterKeyHint="send"
             className="flex-1 rounded-full bg-gray-100 border-none focus-visible:ring-primary"
           />
           <Button type="submit" disabled={!newMessage.trim()} className="rounded-full w-10 h-10 p-0 flex items-center justify-center shrink-0">

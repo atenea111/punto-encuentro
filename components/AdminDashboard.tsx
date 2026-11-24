@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge"
 import { useServices } from "@/hooks/useServices"
 import { useBookings } from "@/hooks/useBookings"
 import { useAdminDashboard } from "@/hooks/useAdminDashboard"
+import { SupportCenter } from "@/components/SupportCenter"
 import { useReports } from "@/hooks/useReports"
 import { useCategories } from "@/hooks/useCategories"
 import { useUsers } from "@/hooks/useUsers"
@@ -94,6 +95,7 @@ const AdminSidebar = ({ activeTab, setActiveTab, logout }: { activeTab: string, 
         { id: 'reports', label: 'Reportes', icon: FileText },
         { id: 'analytics', label: 'Estadísticas', icon: BarChart3, uiIcon: 'estadisticas' as const },
         { id: 'notifications', label: 'Notificaciones', icon: Bell, uiIcon: 'notificacionesActivo' as const },
+        { id: 'support', label: 'Consultas', icon: Bell, uiIcon: 'notificacionesActivo' as const },
         { id: 'settings', label: 'Ajustes', icon: Settings, uiIcon: 'configuracion' as const },
       ].map((item) => (
         <Button
@@ -147,7 +149,7 @@ const AdminBottomNav = ({
         <AppIcon name={item.uiIcon} className="w-6 h-6" active={activeTab === item.id} />
       </Button>
     ))}
-    <Button variant="ghost" onClick={onOpenMenu} className={['moderation', 'categories', 'reports', 'analytics', 'notifications', 'settings'].includes(activeTab) ? 'text-primary' : ''}>
+    <Button variant="ghost" onClick={onOpenMenu} className={['moderation', 'categories', 'reports', 'analytics', 'notifications', 'support', 'settings'].includes(activeTab) ? 'text-primary' : ''}>
       <Menu className="w-6 h-6" />
     </Button>
     <Button variant="ghost" className="text-red-500" onClick={onLogout}>
@@ -166,7 +168,7 @@ export function AdminDashboard({ user, logout }: { user: any, logout: () => Prom
   const { settings, setSettings, loading: settingsLoading, saveSettings: persistSettings } = useAppSettings()
   const { logs: auditLogs, loading: auditLoading, refresh: refreshAudit, logAdminAction: writeAudit } = useAdminAudit(80)
 
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'categories' | 'users' | 'services' | 'bookings' | 'moderation' | 'analytics' | 'reports' | 'notifications' | 'settings'>('dashboard')
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'categories' | 'users' | 'services' | 'bookings' | 'moderation' | 'analytics' | 'reports' | 'notifications' | 'settings' | 'support'>('dashboard')
   const [showAlerts, setShowAlerts] = useState(false)
   const [showAdminMobileMenu, setShowAdminMobileMenu] = useState(false)
   const [reportType, setReportType] = useState<'daily' | 'weekly' | 'monthly'>('daily')
@@ -565,6 +567,7 @@ export function AdminDashboard({ user, logout }: { user: any, logout: () => Prom
               { id: 'reports', label: 'Reportes' },
               { id: 'analytics', label: 'Estadísticas' },
               { id: 'notifications', label: 'Notificaciones' },
+              { id: 'support', label: 'Consultas' },
               { id: 'settings', label: 'Ajustes' },
             ].map((item) => (
               <Button
@@ -603,6 +606,7 @@ export function AdminDashboard({ user, logout }: { user: any, logout: () => Prom
                   {activeTab === 'reports' && 'Informes y Reportes'}
                   {activeTab === 'analytics' && 'Analíticas Avanzadas'}
                   {activeTab === 'notifications' && 'Notificaciones'}
+                  {activeTab === 'support' && 'Consultas'}
                   {activeTab === 'settings' && 'Configuración Global'}
                 </h1>
                 <p className="hidden md:block text-[10px] text-muted-foreground mt-1 tracking-tight">Bienvenido, {user?.displayName || user?.email}</p>
@@ -1679,6 +1683,7 @@ export function AdminDashboard({ user, logout }: { user: any, logout: () => Prom
           </div>
         )}
 
+        {activeTab === 'support' && <SupportCenter uid={user.uid} admin />}
         {activeTab === 'notifications' && (
           <div className="space-y-6 animate-in fade-in duration-500 pb-20 md:pb-0">
             <div className="hidden md:block">

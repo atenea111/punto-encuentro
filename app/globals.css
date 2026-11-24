@@ -131,6 +131,8 @@
     @apply bg-background text-foreground;
     /* Fondo con petróleo de baja opacidad */
     background-color: oklch(0.98 0.01 200);
+    min-height: 100svh;
+    overscroll-behavior-y: none;
   }
 }
 
@@ -165,11 +167,39 @@
   }
   
   /* Safe area for mobile */
+  .pb-safe {
+    padding-bottom: max(env(safe-area-inset-bottom, 0px), 0.875rem);
+  }
+
   .safe-area-top {
-    padding-top: env(safe-area-inset-top);
+    padding-top: max(env(safe-area-inset-top, 0px), 0px);
   }
   
   .safe-area-bottom {
-    padding-bottom: env(safe-area-inset-bottom);
+    padding-bottom: max(env(safe-area-inset-bottom, 0px), 0.875rem);
   }
+
+}
+
+/* NearBy map (Leaflet polish) */
+.nearby-map-container .leaflet-control-attribution {
+  font-size: 9px !important;
+  background: rgba(255, 255, 255, 0.75) !important;
+  margin-bottom: 7.5rem !important;
+}
+.nearby-map-container .leaflet-popup-content-wrapper {
+  border-radius: 18px !important;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18) !important;
+  padding: 2px !important;
+}
+.nearby-map-container .leaflet-popup-content {
+  margin: 8px 10px !important;
+}
+.nearby-map-container .leaflet-popup-tip {
+  box-shadow: none !important;
+}
+.nearby-category-marker,
+.nearby-user-marker {
+  background: transparent !important;
+  border: none !important;
 }

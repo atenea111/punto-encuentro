@@ -36,8 +36,13 @@ export function useUsers() {
     try {
       setLoading(true)
       const usersRef = collection(db, 'users')
-      const q = query(usersRef, orderBy('createdAt', 'desc'))
-      const querySnapshot = await getDocs(q)
+      let querySnapshot
+      try {
+        const q = query(usersRef, orderBy('createdAt', 'desc'))
+        querySnapshot = await getDocs(q)
+      } catch {
+        querySnapshot = await getDocs(usersRef)
+      }
       
       const usersData = querySnapshot.docs.map(doc => {
         const data = doc.data()

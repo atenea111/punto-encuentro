@@ -16,8 +16,8 @@ export async function uploadImage(file: File, path: string): Promise<string> {
 
   // Validar tamaño (máximo 5 MB)
   const MAX_SIZE = 5 * 1024 * 1024
-  if (file.size > MAX_SIZE) {
-    throw new Error('La imagen es demasiado grande. Máximo 5 MB')
+  if (file.size >= MAX_SIZE) {
+    throw new Error('La imagen debe pesar menos de 5 MiB.')
   }
 
   // Generar nombre único para evitar colisiones
@@ -25,10 +25,23 @@ export async function uploadImage(file: File, path: string): Promise<string> {
   const fileName = `${path}_${Date.now()}.${extension}`
   const storageRef = ref(storage, fileName)
 
-  // Subir
-  await uploadBytes(storageRef, file)
-
-  // Obtener URL pública
-  const downloadURL = await getDownloadURL(storageRef)
-  return downloadURL
+  let operation = 'subir la foto'
+  try {
+    await uploadBytes(storageRef, file, { contentType: file.type })
+    operation = 'obtener el enlace de la foto'
+    return await getDownloadURL(storageRef)
+  } catch (error) {
+    const code = (error as { code?: string } | null)?.code
+    console.error('[Storage]', { operation, code, size: file.size, contentType: file.type })
+    if (code === 'storage/unauthenticated') {
+      throw new Error('Volvé a iniciar sesión antes de subir fotos.')
+    }
+    if (code === 'storage/unauthorized') {
+      throw new Error(`Firebase denegó el permiso para ${operation}. (${code})`)
+    }
+    if (code === 'storage/retry-limit-exceeded') {
+      throw new Error(`Se agotó el tiempo al intentar ${operation}. (${code})`)
+    }
+    throw error
+  }
 }

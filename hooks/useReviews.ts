@@ -1,12 +1,11 @@
 import { useState, useEffect } from 'react'
-import { 
+import {
   collection, 
   getDocs, 
   addDoc, 
   updateDoc, 
   doc, 
   query, 
-  orderBy,
   where,
   serverTimestamp,
   getDoc
@@ -37,11 +36,7 @@ export function useReviews(serviceId?: string) {
     try {
       setLoading(true)
       const reviewsRef = collection(db, 'reviews')
-      const q = query(
-        reviewsRef, 
-        where('serviceId', '==', sid),
-        orderBy('createdAt', 'desc')
-      )
+      const q = query(reviewsRef, where('serviceId', '==', sid))
       const querySnapshot = await getDocs(q)
       
       const reviewsData = querySnapshot.docs.map(doc => {
@@ -51,7 +46,7 @@ export function useReviews(serviceId?: string) {
           ...data,
           createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(data.createdAt || Date.now())
         }
-      }) as Review[]
+      }).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()) as Review[]
       
       setReviews(reviewsData)
     } catch (error) {
@@ -63,19 +58,41 @@ export function useReviews(serviceId?: string) {
 
   const addReview = async (reviewData: Omit<Review, 'id' | 'createdAt'>, bookingId?: string) => {
     try {
-      // 1. Agregar la reseña
+      if (!reviewData.clientId || !reviewData.serviceId) {
+        return { success: false, error: 'Inicia sesión para dejar una reseña.' }
+      }
+
+      // Una sola reseña por usuario y servicio
+      const existingQuery = query(
+        collection(db, 'reviews'),
+        where('serviceId', '==', reviewData.serviceId),
+        where('clientId', '==', reviewData.clientId)
+      )
+      const existingSnap = await getDocs(existingQuery)
+      if (!existingSnap.empty) {
+        return { success: false, error: 'Ya dejaste una reseña en este servicio.' }
+      }
+
+      // Validar antes de crear para evitar reseñas duplicadas por reserva
+      if (bookingId) {
+        const bookingRef = doc(db, 'bookings', bookingId)
+        const bookingSnap = await getDoc(bookingRef)
+        if (bookingSnap.exists() && bookingSnap.data().reviewed) {
+          return { success: false, error: 'Esta reserva ya fue calificada.' }
+        }
+      }
+
       const docRef = await addDoc(collection(db, 'reviews'), {
         ...reviewData,
+        bookingId: bookingId || null,
         createdAt: serverTimestamp()
       })
 
-      // 2. Marcar la reserva como reseñada si existe bookingId
       if (bookingId) {
-        const bookingRef = doc(db, 'bookings', bookingId)
-        await updateDoc(bookingRef, { reviewed: true })
+        await updateDoc(doc(db, 'bookings', bookingId), { reviewed: true, updatedAt: new Date() })
       }
 
-      // 3. Actualizar el promedio y total en el servicio
+      // Actualizar el promedio y total en el servicio
       const serviceRef = doc(db, 'services', reviewData.serviceId)
       const serviceSnap = await getDoc(serviceRef)
       
@@ -93,6 +110,10 @@ export function useReviews(serviceId?: string) {
         })
       }
 
+      if (serviceId === reviewData.serviceId) {
+        await fetchReviews(reviewData.serviceId)
+      }
+
       return { success: true, id: docRef.id }
     } catch (error: any) {
       console.error('Error adding review:', error)
@@ -100,10 +121,16 @@ export function useReviews(serviceId?: string) {
     }
   }
 
+  const hasUserReviewed = (clientId?: string) => {
+    if (!clientId) return false
+    return reviews.some((review) => review.clientId === clientId)
+  }
+
   return {
     reviews,
     loading,
     fetchReviews,
-    addReview
+    addReview,
+    hasUserReviewed,
   }
 }

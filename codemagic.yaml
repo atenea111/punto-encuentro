@@ -1,0 +1,42 @@
+workflows:
+  ios-release:
+    name: Punto Encuentro iOS
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      node: 22
+      xcode: latest
+      cocoapods: default
+      groups:
+        - ios_configuration
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.encuentro12
+    scripts:
+      - name: Preparar Firebase para iOS
+        script: |
+          set -euo pipefail
+          python3 scripts/prepare-ios-codemagic.py
+      - name: Instalar dependencias
+        script: |
+          set -euo pipefail
+          npm ci --legacy-peer-deps --no-audit --no-fund
+      - name: Construir la web y sincronizar iOS
+        script: |
+          set -euo pipefail
+          unset VERCEL
+          npm run build:ios
+      - name: Configurar recursos y versión de Xcode
+        script: ruby scripts/configure-ios-codemagic.rb
+      - name: Aplicar firma de distribución
+        script: xcode-project use-profiles
+      - name: Generar IPA
+        script: |
+          xcode-project build-ipa \
+            --workspace ios/App/App.xcworkspace \
+            --scheme App \
+            --config Release
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM

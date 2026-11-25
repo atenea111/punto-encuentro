@@ -6,7 +6,7 @@ const vm = require('node:vm')
 const ts = require('typescript')
 
 // Verifica las decisiones del código compartido; no sustituye pruebas en iPhone.
-function loadSource(relativePath, dependencies, env = {}) {
+function loadSource(relativePath, dependencies, env = {}, globals = {}) {
   const source = fs.readFileSync(path.join(__dirname, '..', relativePath), 'utf8')
   const compiled = ts.transpileModule(source, {
     compilerOptions: {
@@ -26,11 +26,94 @@ function loadSource(relativePath, dependencies, env = {}) {
     process: { env },
     console,
     Date,
+    ...globals,
   }, { filename: relativePath })
   return module.exports
 }
 
 const flush = () => new Promise(resolve => setImmediate(resolve))
+
+function mountViewport(platform, addListener) {
+  let cleanup
+  let frame
+  let changes = 0
+  const scrollCalls = []
+  const keyboardEvents = new Map()
+  const viewportEvents = new Map()
+  const visualViewport = {
+    offsetTop: 0, height: 800,
+    addEventListener: (name, listener) => viewportEvents.set(name, listener),
+    removeEventListener: name => viewportEvents.delete(name),
+  }
+  const code = loadSource('hooks/useKeyboardInset.ts', {
+    react: {
+      useState(initial) {
+        frame = initial()
+        return [frame, value => {
+          const next = typeof value === 'function' ? value(frame) : value
+          if (next !== frame) changes++
+          frame = next
+        }]
+      },
+      useEffect(effect) { cleanup = effect() },
+    },
+    '@capacitor/core': { Capacitor: {
+      isNativePlatform: () => platform !== 'web', getPlatform: () => platform,
+    } },
+    '@capacitor/keyboard': { Keyboard: {
+      async setScroll(value) { scrollCalls.push(value.isDisabled) },
+      addListener: addListener || (async (name, listener) => {
+        keyboardEvents.set(name, listener)
+        return { remove() { keyboardEvents.delete(name) } }
+      }),
+    } },
+  }, {}, { window: {
+    innerHeight: 800, visualViewport,
+    addEventListener() {}, removeEventListener() {},
+  } })
+  code.useVisibleViewport()
+  return { cleanup: () => cleanup(), scrollCalls, keyboardEvents, viewportEvents,
+    visualViewport, frame: () => frame, changes: () => changes }
+}
+
+for (const platform of ['ios', 'android', 'web']) {
+  test(`El teclado conserva el scroll de la página en ${platform}`, async () => {
+    const viewport = mountViewport(platform)
+    await flush()
+    assert.deepEqual(viewport.scrollCalls, platform === 'ios' ? [false] : [])
+    assert.equal(viewport.changes(), 0, 'Montar el hook no cambia una geometría idéntica')
+    viewport.viewportEvents.get('scroll')()
+    viewport.viewportEvents.get('scroll')()
+    assert.equal(viewport.changes(), 0, 'Desplazarse sin cambiar el área visible no debe volver a renderizar')
+    if (platform !== 'web') {
+      viewport.keyboardEvents.get('keyboardWillShow')({ keyboardHeight: 300 })
+      assert.equal(viewport.frame().keyboardInset, 300)
+      assert.equal(viewport.frame().height, 500)
+      viewport.keyboardEvents.get('keyboardDidShow')({ keyboardHeight: 300 })
+      assert.equal(viewport.changes(), 1, 'El mismo evento didShow no duplica el render')
+      viewport.keyboardEvents.get('keyboardDidHide')()
+      assert.equal(viewport.frame().height, 800)
+      assert.equal(viewport.frame().keyboardInset, 0)
+    }
+    viewport.cleanup()
+    assert.equal(viewport.keyboardEvents.size, 0)
+    assert.equal(viewport.viewportEvents.size, 0)
+  })
+}
+
+test('El teclado elimina los listeners que terminan de registrarse después de salir', async () => {
+  const releases = []
+  let removed = 0
+  const viewport = mountViewport('ios', () => new Promise(resolve => {
+    releases.push(() => resolve({ remove() { removed++ } }))
+  }))
+  await flush()
+  assert.equal(releases.length, 4)
+  viewport.cleanup()
+  releases.forEach(release => release())
+  await flush()
+  assert.equal(removed, 4)
+})
 
 for (const platform of ['ios', 'web', 'android']) {
   test(`La política Android ${platform === 'android' ? 'bloquea Android antiguo' : `no bloquea ${platform}`}`, async () => {

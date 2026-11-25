@@ -30,6 +30,14 @@ export function useVisibleViewport(): VisibleViewport {
     let cancelled = false
     const handles: Array<{ remove: () => void | Promise<void> }> = []
 
+    const updateFrame = (next: VisibleViewport) => {
+      setFrame((current) =>
+        current.top === next.top && current.height === next.height && current.keyboardInset === next.keyboardInset
+          ? current
+          : next,
+      )
+    }
+
     const apply = () => {
       if (cancelled) return
       const vv = window.visualViewport
@@ -47,7 +55,7 @@ export function useVisibleViewport(): VisibleViewport {
       const reportedInset = Math.max(keyboardHeight, overlapInset)
 
       if (layoutAlreadyShrunk) {
-        setFrame({
+        updateFrame({
           top: 0,
           height: Math.max(120, overlapInset > 40 ? vvHeight : layoutHeight),
           keyboardInset: 0,
@@ -56,7 +64,7 @@ export function useVisibleViewport(): VisibleViewport {
       }
 
       const inset = reportedInset > 40 ? reportedInset : 0
-      setFrame({
+      updateFrame({
         top: 0,
         height: Math.max(120, layoutHeight - inset),
         keyboardInset: inset,
@@ -74,7 +82,15 @@ export function useVisibleViewport(): VisibleViewport {
       void import("@capacitor/keyboard")
         .then(({ Keyboard }) => {
           if (cancelled) return
-          void Keyboard.setScroll({ isDisabled: true }).catch(() => undefined)
+          // setScroll controla todo el WebView en iOS, no sólo el teclado.
+          // El asistente monta este hook aun cerrado: nunca bloquear la página.
+          if (Capacitor.getPlatform() === "ios") {
+            void Keyboard.setScroll({ isDisabled: false }).catch(() => undefined)
+          }
+          const keepHandle = (handle: { remove: () => void | Promise<void> }) => {
+            if (cancelled) void handle.remove()
+            else handles.push(handle)
+          }
           const onShow = (info: { keyboardHeight: number }) => {
             keyboardHeight = Math.round(info.keyboardHeight || 0)
             apply()
@@ -83,10 +99,10 @@ export function useVisibleViewport(): VisibleViewport {
             keyboardHeight = 0
             apply()
           }
-          void Keyboard.addListener("keyboardWillShow", onShow).then((h) => handles.push(h))
-          void Keyboard.addListener("keyboardDidShow", onShow).then((h) => handles.push(h))
-          void Keyboard.addListener("keyboardWillHide", onHide).then((h) => handles.push(h))
-          void Keyboard.addListener("keyboardDidHide", onHide).then((h) => handles.push(h))
+          void Keyboard.addListener("keyboardWillShow", onShow).then(keepHandle)
+          void Keyboard.addListener("keyboardDidShow", onShow).then(keepHandle)
+          void Keyboard.addListener("keyboardWillHide", onHide).then(keepHandle)
+          void Keyboard.addListener("keyboardDidHide", onHide).then(keepHandle)
         })
         .catch(() => {
           // Plugin ausente: solo visualViewport
